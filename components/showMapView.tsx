@@ -3,6 +3,8 @@ import { Dimensions, View } from "react-native";
 import { WebView } from "react-native-webview";
 type Photo = {
   localUri: string;
+  city?: string;
+  country?: string;
   location?: {
     latitude: string | number;
     longitude: string | number;
@@ -24,6 +26,8 @@ export default class PhotoMap extends Component<Props, State> {
       .map((photo) => ({
         latitude: Number(photo.location!.latitude),
         longitude: Number(photo.location!.longitude),
+        city: photo.city,
+        country: photo.country,
       }));
 
     // Pass coordinates to WebView as JSON
@@ -62,7 +66,7 @@ export default class PhotoMap extends Component<Props, State> {
           coordinates.forEach((c, i) => {
             L.marker([c.latitude, c.longitude])
               .addTo(map)
-              .bindPopup('Photo ' + (i+1));
+              .bindPopup(c.city + ', ' +c.country || i);
           });
 
           // Fit all markers
