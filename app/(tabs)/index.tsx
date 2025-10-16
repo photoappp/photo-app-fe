@@ -1,7 +1,17 @@
 import ParallaxScrollView from "@/components/ParallaxScrollView";
 import * as MediaLibrary from "expo-media-library";
 import { useEffect, useState } from "react";
-import { Alert, Dimensions, Image, StyleSheet, Text, View } from "react-native";
+import {
+  Alert,
+  Button,
+  Dimensions,
+  Image,
+  Modal,
+  StyleSheet,
+  Text,
+  TouchableOpacity,
+  View,
+} from "react-native";
 
 const screenWidth = Dimensions.get("window").width;
 const minImageWidth = 100;
@@ -13,17 +23,18 @@ const numColumns = Math.max(
 const imageWidth = Math.floor(
   (screenWidth - numColumns * imageMargin * 2) / numColumns
 );
-
 export default function HomeScreen() {
   const [images, setImages] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-
+  const [selectedImage, setSelectedImage] = useState<string | null>(null);
   useEffect(() => {
     const loadImages = async () => {
       try {
-        console.log("Requesting permissions...");
-        const { status } = await MediaLibrary.requestPermissionsAsync();
+        const { status } = await (MediaLibrary.requestPermissionsAsync as any)(
+          false,
+          ["photo"]
+        );
 
         if (status !== "granted") {
           setError("Permission denied to access media library");
@@ -35,16 +46,10 @@ export default function HomeScreen() {
           return;
         }
 
-        console.log("Permission granted, fetching assets...");
-
-        // Get first 10 photos
         const assets = await MediaLibrary.getAssetsAsync({
-          first: 10,
-          mediaType: "photo",
-          sortBy: "creationTime",
+          first: 50,
+          mediaType: MediaLibrary.MediaType.photo,
         });
-
-        // console.log(`Found ${assets.assets.length} assets`);
 
         if (assets.assets.length === 0) {
           setError("No images found in media library");
@@ -57,11 +62,10 @@ export default function HomeScreen() {
           assets.assets.map(async (asset) => {
             try {
               const info = await MediaLibrary.getAssetInfoAsync(asset.id);
-              //   console.log("Asset info:", info);
               return info;
             } catch (err) {
               console.error("Error getting asset info:", err);
-              return asset; // fallback to basic asset info
+              return asset;
             }
           })
         );
@@ -120,9 +124,13 @@ export default function HomeScreen() {
     >
       <View style={styles.container}>
         {images.map((img, index) => (
-          <View key={img.id || index} style={styles.imageContainer}>
+          <TouchableOpacity
+            key={img.id || index}
+            style={styles.imageContainer}
+            onPress={() => setSelectedImage(img.localUri)}
+          >
             <Image
-              source={{ uri: img.localUri }}
+              source={{ uri: img.uri }}
               style={styles.image}
               onError={(error) => {
                 console.error("Image load error:", error);
@@ -131,9 +139,23 @@ export default function HomeScreen() {
                 console.log("Image loaded successfully:", img.uri);
               }}
             />
-          </View>
+          </TouchableOpacity>
         ))}
       </View>
+      <Modal visible={!!selectedImage} animationType="slide">
+        <Image
+          source={{ uri: selectedImage || "" }}
+          style={{
+            flex: 1,
+            width: "100%",
+            height: "100%",
+            resizeMode: "contain",
+          }}
+        />
+        <View style={{ position: "absolute", top: 40, left: 20 }}>
+          <Button title="Close" onPress={() => setSelectedImage(null)} />
+        </View>
+      </Modal>
     </ParallaxScrollView>
   );
 }
