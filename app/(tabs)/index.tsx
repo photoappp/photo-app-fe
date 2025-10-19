@@ -1,4 +1,6 @@
 import ParallaxScrollView from "@/components/ParallaxScrollView";
+import { ThemedText } from "@/components/ThemedText";
+import { Colors } from "@/constants/Colors";
 import * as MediaLibrary from "expo-media-library";
 import { useEffect, useState } from "react";
 import {
@@ -7,12 +9,15 @@ import {
   Dimensions,
   Image,
   Modal,
+  Platform,
   StyleSheet,
   Text,
   TouchableOpacity,
+  useColorScheme,
   View,
 } from "react-native";
 
+// Responsive image grid calculations
 const screenWidth = Dimensions.get("window").width;
 const minImageWidth = 100;
 const imageMargin = 2;
@@ -23,11 +28,14 @@ const numColumns = Math.max(
 const imageWidth = Math.floor(
   (screenWidth - numColumns * imageMargin * 2) / numColumns
 );
+
 export default function HomeScreen() {
   const [images, setImages] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [selectedImage, setSelectedImage] = useState<string | null>(null);
+  const colorScheme = useColorScheme();
+
   useEffect(() => {
     const loadImages = async () => {
       try {
@@ -62,7 +70,9 @@ export default function HomeScreen() {
           assets.assets.map(async (asset) => {
             try {
               const info = await MediaLibrary.getAssetInfoAsync(asset.id);
-              return info;
+              const imageUri =
+                Platform.OS === "ios" ? info.localUri ?? info.uri : info.uri;
+              return { ...info, imageUri: imageUri };
             } catch (err) {
               console.error("Error getting asset info:", err);
               return asset;
@@ -81,81 +91,67 @@ export default function HomeScreen() {
     loadImages();
   }, []);
 
-  if (loading) {
-    return (
-      <ParallaxScrollView
-        headerBackgroundColor={{ light: "#A1CEDC", dark: "#1D3D47" }}
-        headerImage={
-          <Image
-            source={require("@/assets/images/partial-react-logo.png")}
-            style={styles.reactLogo}
-          />
-        }
-      >
+  return (
+    <ParallaxScrollView
+      headerBackgroundColor={{
+        light: Colors.light.background,
+        dark: Colors.dark.background,
+      }}
+      headerTitle={
+        <ThemedText
+          type="title"
+          style={{ color: Colors[colorScheme ?? "light"].text }}
+        >
+          PhoView
+        </ThemedText>
+      }
+    >
+      {loading ? (
         <View style={styles.centerContainer}>
           <Text>Loading images...</Text>
         </View>
-      </ParallaxScrollView>
-    );
-  }
-
-  if (error) {
-    return (
-      <ParallaxScrollView
-        headerBackgroundColor={{ light: "#A1CEDC", dark: "#1D3D47" }}
-        headerImage={
-          <Image
-            source={require("@/assets/images/partial-react-logo.png")}
-            style={styles.reactLogo}
-          />
-        }
-      >
+      ) : error ? (
         <View style={styles.centerContainer}>
           <Text style={styles.errorText}>{error}</Text>
         </View>
-      </ParallaxScrollView>
-    );
-  }
-
-  return (
-    <ParallaxScrollView
-      headerBackgroundColor={{ light: "#A1CEDC", dark: "#1D3D47" }}
-      headerTitle="PhoSearch"
-    >
-      <View style={styles.container}>
-        {images.map((img, index) => (
-          <TouchableOpacity
-            key={img.id || index}
-            style={styles.imageContainer}
-            onPress={() => setSelectedImage(img.localUri)}
-          >
+      ) : (
+        <>
+          <View style={styles.container}>
+            {images.map((img, index) => (
+              <TouchableOpacity
+                key={img.id || index}
+                style={styles.imageContainer}
+                onPress={() => setSelectedImage(img.imageUri)}
+              >
+                <Image
+                  source={{ uri: img.imageUri }}
+                  style={styles.image}
+                  onError={(error) => {
+                    console.error("Image load error:", error);
+                  }}
+                  onLoad={() => {
+                    console.log("Image loaded successfully:", img.uri);
+                  }}
+                />
+              </TouchableOpacity>
+            ))}
+          </View>
+          <Modal visible={!!selectedImage} animationType="slide">
             <Image
-              source={{ uri: img.uri }}
-              style={styles.image}
-              onError={(error) => {
-                console.error("Image load error:", error);
-              }}
-              onLoad={() => {
-                console.log("Image loaded successfully:", img.uri);
+              source={{ uri: selectedImage || "" }}
+              style={{
+                flex: 1,
+                width: "100%",
+                height: "100%",
+                resizeMode: "contain",
               }}
             />
-          </TouchableOpacity>
-        ))}
-      </View>
-      <Modal visible={!!selectedImage} animationType="slide">
-        <Image
-          source={{ uri: selectedImage || "" }}
-          style={{
-            flex: 1,
-            width: "100%",
-            height: "100%",
-            resizeMode: "contain",
-          }}
-        />
-        <View style={{ position: "absolute", top: 40, left: 20 }}>
-          <Button title="Close" onPress={() => setSelectedImage(null)} />
-        </View>
-      </Modal>
+            <View style={{ position: "absolute", top: 40, left: 20 }}>
+              <Button title="Close" onPress={() => setSelectedImage(null)} />
+            </View>
+          </Modal>
+        </>
+      )}
     </ParallaxScrollView>
   );
 }
@@ -183,12 +179,5 @@ const styles = StyleSheet.create({
     color: "red",
     textAlign: "center",
     fontSize: 16,
-  },
-  reactLogo: {
-    height: 178,
-    width: 290,
-    bottom: 0,
-    left: 0,
-    position: "absolute",
   },
 });

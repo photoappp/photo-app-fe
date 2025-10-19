@@ -23,6 +23,30 @@ In the output, you'll find options to open the app in a
 - [iOS simulator](https://docs.expo.dev/workflow/ios-simulator/)
 - [Expo Go](https://expo.dev/go), a limited sandbox for trying out app development with Expo
 
+## How to Prebuild and Run Your Expo App
+
+1. Generate Native Projects.  
+   This creates the android/ and ios/ folders for your project:
+
+   ```bash
+   npx expo prebuild
+   ```
+
+2. Run on a Device or Emulator.  
+   Depending on which platform you want to test, run:
+   ```bash
+   npx expo run:android
+   npx expo run:ios
+   ```
+3. Start the App with Dev Client
+   If you want to run the prebuilt version using Expo’s development client:
+
+   You only need to prebuild again if you add or change native modules. Otherwise, you can just use --dev-client to run your app.
+
+   ```bash
+   npx expo start --dev-client
+   ```
+
 You can start developing by editing the files inside the **app** directory. This project uses [file-based routing](https://docs.expo.dev/router/introduction).
 
 ## Get a fresh project
