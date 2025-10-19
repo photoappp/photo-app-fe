@@ -29,6 +29,30 @@ const imageWidth = Math.floor(
   (screenWidth - numColumns * imageMargin * 2) / numColumns
 );
 
+async function getAllImages() {
+  let allAssets: MediaLibrary.Asset[] = [];
+  let hasNextPage = true;
+  let after: string | undefined = undefined;
+  try {
+    while (hasNextPage) {
+      const result = await MediaLibrary.getAssetsAsync({
+        first: 100,
+        mediaType: MediaLibrary.MediaType.photo,
+        after,
+      });
+
+      allAssets = allAssets.concat(result.assets);
+      hasNextPage = result.hasNextPage;
+      after = result.endCursor;
+    }
+  } catch (error) {
+    console.error("Error fetching media library assets:", error);
+    return { assets: [] };
+  }
+
+  return { assets: allAssets };
+}
+
 export default function HomeScreen() {
   const [images, setImages] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
@@ -54,11 +78,7 @@ export default function HomeScreen() {
           return;
         }
 
-        const assets = await MediaLibrary.getAssetsAsync({
-          first: 50,
-          mediaType: MediaLibrary.MediaType.photo,
-        });
-
+        const assets = await getAllImages();
         if (assets.assets.length === 0) {
           setError("No images found in media library");
           setLoading(false);
