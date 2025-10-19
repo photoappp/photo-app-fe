@@ -1,5 +1,5 @@
-import { Component } from "react";
-import { Dimensions, View } from "react-native";
+import { useState } from "react";
+import { Button, Dimensions, Modal, StyleSheet, View } from "react-native";
 import { WebView } from "react-native-webview";
 type Image = {
   localUri: string;
@@ -14,24 +14,22 @@ type Props = {
   images: Image[];
 };
 
-export default class PhotoMap extends Component<Props> {
-  render() {
-    const { images } = this.props;
+export default function MapView({ images }: Props) {
+  const [visible, setVisible] = useState(false);
+  // Collect coordinates from images
+  const coordinates = images
+    .filter((image) => image.location)
+    .map((image) => ({
+      latitude: Number(image.location!.latitude),
+      longitude: Number(image.location!.longitude),
+      city: image.city,
+      country: image.country,
+    }));
 
-    // Collect coordinates from images
-    const coordinates = images
-      .filter((image) => image.location)
-      .map((image) => ({
-        latitude: Number(image.location!.latitude),
-        longitude: Number(image.location!.longitude),
-        city: image.city,
-        country: image.country,
-      }));
+  // Pass coordinates to WebView as JSON
+  const coordJSON = JSON.stringify(coordinates);
 
-    // Pass coordinates to WebView as JSON
-    const coordJSON = JSON.stringify(coordinates);
-
-    const html = `
+  const html = `
       <!DOCTYPE html>
       <html>
       <head>
@@ -81,17 +79,36 @@ export default class PhotoMap extends Component<Props> {
       </html>
     `;
 
-    return (
-      <View style={{ flex: 1 }}>
-        <WebView
-          originWhitelist={["*"]}
-          source={{ html }}
-          style={{
-            width: Dimensions.get("window").width,
-            height: Dimensions.get("window").height,
-          }}
-        />
-      </View>
-    );
-  }
+  return (
+    <View>
+      <Button title="Show on Map" onPress={() => setVisible(true)} />
+
+      <Modal visible={visible} animationType="slide">
+        <View style={styles.container}>
+          <WebView
+            originWhitelist={["*"]}
+            source={{ html }}
+            style={styles.webview}
+          />
+          <View style={styles.closeButton}>
+            <Button title="X" onPress={() => setVisible(false)} />
+          </View>
+        </View>
+      </Modal>
+    </View>
+  );
 }
+
+const styles = StyleSheet.create({
+  container: { flex: 1 },
+  webview: {
+    width: Dimensions.get("window").width,
+    height: Dimensions.get("window").height,
+  },
+  closeButton: {
+    position: "absolute",
+    top: "5%",
+    right: "4%",
+    zIndex: 10,
+  },
+});

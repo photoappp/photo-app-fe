@@ -1,5 +1,5 @@
-import MapView from "@/components/MapView";
 import ParallaxScrollView from "@/components/ParallaxScrollView";
+import ShowOnMap from "@/components/ShowOnMap";
 import { ThemedText } from "@/components/ThemedText";
 import { Colors } from "@/constants/Colors";
 import * as Location from "expo-location";
@@ -61,7 +61,7 @@ export default function HomeScreen() {
   const [error, setError] = useState<string | null>(null);
   const [selectedImage, setSelectedImage] = useState<string | null>(null);
   const colorScheme = useColorScheme();
-  const [mapViewVisible, setMapViewVisible] = useState(false);
+
   useEffect(() => {
     const loadImages = async () => {
       try {
@@ -141,7 +141,6 @@ export default function HomeScreen() {
     return updated;
   }
 
-  const toggleMapView = () => setMapViewVisible((prev) => !prev);
   return (
     <ParallaxScrollView
       headerBackgroundColor={{
@@ -168,7 +167,7 @@ export default function HomeScreen() {
       ) : (
         <>
           <View style={styles.mapContainer}>
-            <Button title="Show on Map" onPress={toggleMapView} />
+            <ShowOnMap images={images} />
           </View>
           <View style={styles.container}>
             {images.map((img, index) => (
@@ -202,14 +201,6 @@ export default function HomeScreen() {
             />
             <View style={{ position: "absolute", top: 40, left: 20 }}>
               <Button title="Close" onPress={() => setSelectedImage(null)} />
-            </View>
-          </Modal>
-          <Modal visible={mapViewVisible} animationType="slide">
-            <View style={{ flex: 1 }}>
-              <View style={styles.map}>
-                <Button title="X" onPress={toggleMapView} />
-              </View>
-              <MapView images={images} />
             </View>
           </Modal>
         </>
@@ -247,12 +238,5 @@ const styles = StyleSheet.create({
     justifyContent: "center",
     alignItems: "center",
     gap: 20,
-  },
-  map: {
-    position: "absolute",
-    top: 40,
-    right: 20,
-    zIndex: 10,
-    backgroundColor: "rgba(128,128,128,0.8)",
   },
 });
