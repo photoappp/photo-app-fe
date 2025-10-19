@@ -1,6 +1,8 @@
+import MapView from "@/components/MapView";
 import ParallaxScrollView from "@/components/ParallaxScrollView";
 import { ThemedText } from "@/components/ThemedText";
 import { Colors } from "@/constants/Colors";
+import * as Location from "expo-location";
 import * as MediaLibrary from "expo-media-library";
 import { useEffect, useState } from "react";
 import {
@@ -59,7 +61,7 @@ export default function HomeScreen() {
   const [error, setError] = useState<string | null>(null);
   const [selectedImage, setSelectedImage] = useState<string | null>(null);
   const colorScheme = useColorScheme();
-
+  const [mapViewVisible, setMapViewVisible] = useState(false);
   useEffect(() => {
     const loadImages = async () => {
       try {
@@ -76,6 +78,14 @@ export default function HomeScreen() {
           );
           setLoading(false);
           return;
+        }
+
+        if (Platform.OS === "android") {
+          const { status } = await Location.requestForegroundPermissionsAsync();
+          if (status !== "granted") {
+            console.warn("Android location permission denied");
+            setError("Android location permission denied");
+          }
         }
 
         const assets = await getAllImages();
@@ -99,8 +109,8 @@ export default function HomeScreen() {
             }
           })
         );
-
-        setImages(assetInfos);
+        const imagesWithLocations = await imagesWithLocation(assetInfos);
+        setImages(imagesWithLocations);
       } catch (err) {
         console.error("Error loading images:", err);
       } finally {
@@ -110,7 +120,28 @@ export default function HomeScreen() {
 
     loadImages();
   }, []);
+  async function imagesWithLocation(images: any[]) {
+    const updated = await Promise.all(
+      images.map(async (img) => {
+        if (!img.location) {
+          return { ...img, country: null, city: null };
+        }
 
+        const [place] = await Location.reverseGeocodeAsync({
+          latitude: Number(img.location?.latitude),
+          longitude: Number(img.location?.longitude),
+        });
+        return {
+          ...img,
+          country: place?.country ?? null,
+          city: place?.city ?? place?.subregion ?? null,
+        };
+      })
+    );
+    return updated;
+  }
+
+  const toggleMapView = () => setMapViewVisible((prev) => !prev);
   return (
     <ParallaxScrollView
       headerBackgroundColor={{
@@ -136,6 +167,9 @@ export default function HomeScreen() {
         </View>
       ) : (
         <>
+          <View style={styles.mapContainer}>
+            <Button title="Show on Map" onPress={toggleMapView} />
+          </View>
           <View style={styles.container}>
             {images.map((img, index) => (
               <TouchableOpacity
@@ -170,6 +204,14 @@ export default function HomeScreen() {
               <Button title="Close" onPress={() => setSelectedImage(null)} />
             </View>
           </Modal>
+          <Modal visible={mapViewVisible} animationType="slide">
+            <View style={{ flex: 1 }}>
+              <View style={styles.map}>
+                <Button title="X" onPress={toggleMapView} />
+              </View>
+              <MapView images={images} />
+            </View>
+          </Modal>
         </>
       )}
     </ParallaxScrollView>
@@ -199,5 +241,18 @@ const styles = StyleSheet.create({
     color: "red",
     textAlign: "center",
     fontSize: 16,
+  },
+  mapContainer: {
+    flexDirection: "row",
+    justifyContent: "center",
+    alignItems: "center",
+    gap: 20,
+  },
+  map: {
+    position: "absolute",
+    top: 40,
+    right: 20,
+    zIndex: 10,
+    backgroundColor: "rgba(128,128,128,0.8)",
   },
 });

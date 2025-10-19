@@ -46,7 +46,8 @@
       "package": "com.photoapp.fe",
       "permissions": [
         "READ_MEDIA_IMAGES",
-        "READ_EXTERNAL_STORAGE"
+        "READ_EXTERNAL_STORAGE",
+        "ACCESS_FINE_LOCATION"
       ]
     },
     "web": {
