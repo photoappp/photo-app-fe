@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { Button, Dimensions, Modal, StyleSheet, View } from "react-native";
 import { WebView } from "react-native-webview";
+/* 타입 일치를 위해 Photo로 병합
 type Image = {
   localUri: string;
   city?: string;
@@ -9,9 +10,22 @@ type Image = {
     latitude: string | number;
     longitude: string | number;
   };
+};*/
+type Photo = {
+  uri: string;
+  takenAt?: number | null;  // 있으면 쓰고, 아니면 빼도 됨
+
+  //localUri: string;
+  city?: string;
+  country?: string;
+  location?: {
+    latitude: string | number;
+    longitude: string | number;
+  } | null; // 데이터 없는 경우를 위해 null 추가
 };
 type Props = {
-  images: Image[];
+  //images: Image[];
+  images: Photo[];
 };
 
 export default function MapView({ images }: Props) {
