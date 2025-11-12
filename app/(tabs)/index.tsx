@@ -1,3 +1,4 @@
+//import ParallaxScrollView from "@/components/ParallaxScrollView";
 import DateTimeFilter from "@/components/DateTimeFilter";
 import ShowOnMap from "@/components/ShowOnMap";
 import * as Location from "expo-location";
@@ -12,15 +13,20 @@ import {
   Image,
   ListRenderItem,
   Modal,
+  PermissionsAndroid,
   Platform,
   StyleSheet,
   Text,
   TouchableOpacity,
   useColorScheme,
-  View
+  View,
 } from "react-native";
 import ImageViewing from 'react-native-image-viewing';
 import { SafeAreaView } from 'react-native-safe-area-context';
+
+// const [progress, setProgress] = useState<{loaded:number; total:number|null}>({ loaded: 0, total: null });
+// const [isScanning, setIsScanning] = useState(false);
+
 
 // Responsive image grid calculations
 const screenWidth = Dimensions.get("window").width;
@@ -64,6 +70,8 @@ type DateTimeFilterState = {
   timeStart: number;
   timeEnd: number;
 };
+
+
 
 /** ---------- HomeScreen ---------- */
 export default function HomeScreen() {
@@ -117,6 +125,8 @@ export default function HomeScreen() {
     timeEnd: 1440,
   });
 
+  
+  
   async function imagesWithLocation(
     images: any[],
     opts?: { maxLookups?: number; precision?: number; delayMs?: number }
@@ -167,19 +177,121 @@ export default function HomeScreen() {
 
   // ---- 권한 요청 ----
   const requestPermission = useCallback(async (): Promise<boolean> => {
-    // iOS와 Android 공통 처리
-    const { status, canAskAgain } = await MediaLibrary.getPermissionsAsync();
-  
-    if (status !== "granted" && canAskAgain) {
-      const req = await MediaLibrary.requestPermissionsAsync(false);
-      return req.status === "granted";
+    if (Platform.OS === 'android') {
+      // SDK33+ READ_MEDIA_IMAGES, 그 이하 READ_EXTERNAL_STORAGE
+      const perm =
+        Platform.Version >= 33
+          ? PermissionsAndroid.PERMISSIONS.READ_MEDIA_IMAGES
+          : PermissionsAndroid.PERMISSIONS.READ_EXTERNAL_STORAGE;
+
+      const granted = await PermissionsAndroid.request(perm);
+      return granted === PermissionsAndroid.RESULTS.GRANTED;
     }
-  
-    return status === "granted";
+    // iOS는 getPhotos 호출시 시스템 권한 플로우
+    return true;
   }, []);
-  
 
   const PAGE_SIZE = 50;
+
+  /* const loadPhotos = useCallback(
+    async ({ reset = false }: { reset?: boolean } = {}) => {
+
+      const { dateStart, dateEnd, timeStart, timeEnd } = filter;
+
+      // 1) 권한 확인
+      const hasPerm = await requestPermission();
+      if (!hasPerm) {
+        Alert.alert('권한 필요', '사진 접근 권한이 필요합니다.');
+        return;
+      }
+  
+      // 2) 중복 호출 방지 / 다음 페이지 없으면 종료
+      if (loading) return;
+      if (!reset && !hasNextPage) return;
+  
+      setLoading(true);
+  
+      try {
+        // 3) MediaLibrary에서 한 페이지 가져오기
+        const result = await MediaLibrary.getAssetsAsync({
+          first: PAGE_SIZE,
+          mediaType: MediaLibrary.MediaType.photo,
+          // reset이면 처음부터, 아니면 이전 endCursor 이후부터
+          after: reset ? undefined : endCursor ?? undefined,
+          // 정렬 옵션은 필요하면 추가 (최신순 등)
+          sortBy: [MediaLibrary.SortBy.creationTime],
+        });
+  
+        const assets = result.assets ?? [];
+  
+        // 4) 날짜 + 시간 필터 적용
+        const filtered = assets.filter((a) => {
+          const tsMs = a.creationTime ?? a.modificationTime ?? null;
+          if (!tsMs) return false;
+  
+          // 날짜 범위
+          if (tsMs < dayStartMs(dateStart) || tsMs >= dayEndNextMs(dateEnd)) {
+            return false;
+          }
+  
+          // 시간대 범위 (이미 만들었던 함수)
+          return inTimeWindow(tsMs, timeStart, timeEnd);
+        });
+
+        // ❗ iOS에서는 localUri를 가져온다
+        const infos: Photo[] = await Promise.all(
+          filtered.map(async (a) => {
+            try {
+              const info = await MediaLibrary.getAssetInfoAsync(a.id);
+              const uri =
+                Platform.OS === "ios"
+                  ? info.localUri ?? info.uri
+                  : info.uri;
+        
+              return {
+                uri,
+                takenAt: info.creationTime ?? a.creationTime ?? null,
+              };
+            } catch (e) {
+              // 실패 시에도 최소한 죽지 않게 fallback
+              return {
+                uri: a.uri,
+                takenAt: a.creationTime ?? null,
+              };
+            }
+          })
+        );
+        
+        // 최종적으로 photos에는 infos를 넣어야 함
+        setPhotos((prev) => (reset ? infos : [...prev, ...infos]));
+  
+        // 5) 화면용 데이터로 매핑
+        // const mapped: Photo[] = filtered.map((a) => ({
+        //   uri: a.uri,
+        //   takenAt: a.creationTime ?? null,
+        // }));
+  
+        // 6) reset이면 갈아끼우고, 아니면 뒤에 이어 붙이기
+        //setPhotos((prev) => (reset ? mapped : [...prev, ...mapped]));
+  
+        // 7) 다음 페이지 정보 업데이트
+        setEndCursor(result.endCursor ?? null);
+        setHasNextPage(result.hasNextPage);
+      } catch (err) {
+        console.log('MediaLibrary 오류:', err);
+        Alert.alert('오류', '사진을 불러오는 중 문제가 발생했습니다.');
+      } finally {
+        setLoading(false);
+      }
+    },
+    [
+      requestPermission,
+      loading,
+      hasNextPage,
+      endCursor,
+      filter
+    ]
+  );*/
 
   const loadPhotos = useCallback(
     async ({ reset = false }: { reset?: boolean } = {}) => {
@@ -284,14 +396,163 @@ export default function HomeScreen() {
     ]
   );
   
+
+
   useEffect(() => {
+    // const loadImages = async () => {
+    //   try {
+
+    //     const { status } = await (MediaLibrary.requestPermissionsAsync as any)(
+    //       false,
+    //       ["photo"]
+    //     );
+
+    //     if (status !== "granted") {
+    //       setError("Permission denied to access media library");
+    //       Alert.alert(
+    //         "Permission Required",
+    //         "Please grant permission to access photos"
+    //       );
+    //       setLoading(false);
+    //       return;
+    //     }
+
+    //     if (Platform.OS === "android") {
+    //       const { status } = await Location.requestForegroundPermissionsAsync();
+    //       if (status !== "granted") {
+    //         console.warn("Android location permission denied");
+    //         setError("Android location permission denied");
+    //       }
+    //     }
+
+    //     const assets = await getAllImages();
+    //     if (assets.assets.length === 0) {
+    //       setError("No images found in media library");
+    //       setLoading(false);
+    //       return;
+    //     }
+
+    //     // Get detailed info for each asset
+    //     const assetInfos = await Promise.all(
+    //       assets.assets.map(async (asset) => {
+    //         try {
+    //           const info = await MediaLibrary.getAssetInfoAsync(asset.id);
+    //           const imageUri =
+    //             Platform.OS === "ios" ? info.localUri ?? info.uri : info.uri;
+    //           return { ...info, imageUri: imageUri };
+    //         } catch (err) {
+    //           console.error("Error getting asset info:", err);
+    //           return asset;
+    //         }
+    //       })
+    //     );
+    //     const imagesWithLocations = await imagesWithLocation(assetInfos);
+    //     setImages(imagesWithLocations);
+    //   } catch (err) {
+    //     console.error("Error loading images:", err);
+    //   } finally {
+    //     setLoading(false);
+    //   }
+    // };
+
+
+
+    /* const loadImages = async () => {
+      try {
+        //setLoading(true);
+        setIsScanning(true);
+    
+        // 권한: 올바른 시그니처로 수정
+        let perm = await MediaLibrary.getPermissionsAsync();
+        if (perm.status !== "granted" && perm.canAskAgain) {
+          const perm = await (MediaLibrary.requestPermissionsAsync as any)({ writeOnly: false });
+        }
+        if (perm.status !== "granted") {
+          setError("Permission denied to access media library");
+          Alert.alert("Permission Required", "Please grant permission to access photos");
+          return;
+        }
+    
+        if (Platform.OS === "android") {
+          const { status } = await Location.requestForegroundPermissionsAsync();
+          if (status !== "granted") {
+            console.warn("Android location permission denied");
+            setError("Android location permission denied");
+          }
+        }
+    
+        const assets = await getAllImages();
+        if (assets.assets.length === 0) {
+          setError("No images found in media library");
+          return;
+        }
+    
+        // 진행률 계산 대상 총 개수
+        const total = assets.assets.length;
+        setProgress({ loaded: 0, total });
+    
+        // 상세 메타(URI 등) 순차 처리 + 진행률 반영
+        const assetInfos: any[] = [];
+        for (let i = 0; i < total; i++) {
+          const asset = assets.assets[i];
+          try {
+            const info = await MediaLibrary.getAssetInfoAsync(asset.id);
+            const imageUri = Platform.OS === "ios" ? info.localUri ?? info.uri : info.uri;
+            assetInfos.push({ ...info, imageUri });
+          } catch (err) {
+            console.error("Error getting asset info:", err);
+            assetInfos.push(asset);
+          }
+          setProgress({ loaded: i + 1, total });
+    
+          // 초기 표시 가속: 24개 단위로 한 번씩 화면에 반영 (원치 않으면 제거)
+          if ((i + 1) % 24 === 0 && i + 1 < total) {
+            setImages(assetInfos.slice());
+          }
+        }
+    
+        //const imagesWithLocations = await imagesWithLocation(assetInfos);
+        const imagesWithLocations = await imagesWithLocation(assetInfos, { maxLookups: 60, precision: 2, delayMs: 150 });
+
+        setImages(imagesWithLocations);
+      } catch (err) {
+        console.error("Error loading images:", err);
+        setError("Failed to load photos");
+      } finally {
+        setIsScanning(false);
+        //setLoading(false);
+      }
+    }; */
+    
+    //loadImages();
 
     // 필터 바뀌면 페이지네이션 리셋 후 처음부터 다시 로드
     setEndCursor(null);
     setHasNextPage(true);
     loadPhotos({ reset: true });
 
-  }, [filter]); 
+  }, [filter]); //, loadPhotos]);
+
+  // async function imagesWithLocation(images: any[]) {
+  //   const updated = await Promise.all(
+  //     images.map(async (img) => {
+  //       if (!img.location) {
+  //         return { ...img, country: null, city: null };
+  //       }
+
+  //       const [place] = await Location.reverseGeocodeAsync({
+  //         latitude: Number(img.location?.latitude),
+  //         longitude: Number(img.location?.longitude),
+  //       });
+  //       return {
+  //         ...img,
+  //         country: place?.country ?? null,
+  //         city: place?.city ?? place?.subregion ?? null,
+  //       };
+  //     })
+  //   );
+  //   return updated;
+  // }
 
   type Photo = {
     uri: string;
@@ -320,6 +581,33 @@ export default function HomeScreen() {
     )
   };
 
+
+  /* async function getAllImagesFromUser(): Promise<MediaLibrary.Asset[]> {
+
+    let allAssets: MediaLibrary.Asset[] = [];
+    let hasNextPage = true;
+    let after: string | undefined = undefined;
+
+    try {
+      while (hasNextPage) {
+        const result = await MediaLibrary.getAssetsAsync({
+          first: 100,
+          mediaType: MediaLibrary.MediaType.photo,
+          after,
+        });
+  
+        allAssets = allAssets.concat(result.assets);
+        hasNextPage = result.hasNextPage;
+        after = result.endCursor;
+      }
+    } catch (error) {
+      console.error("Error fetching media library assets:", error);
+      return [];
+    }
+  
+    return allAssets;
+  } */
+
   // 시각(분) 윈도우 판정: timeStart~timeEnd(분), 1440=24:00 처리 포함
   const inTimeWindow = (tsMs: string | number | Date, timeStart: number, timeEnd: number) => {
     const local = new Date(tsMs);
@@ -330,6 +618,61 @@ export default function HomeScreen() {
     // return mins >= timeStart || mins <= timeEnd;
     return mins >= timeStart && mins <= timeEnd; // 기본: 정상 구간
   };
+
+
+
+  /* const loadPhotos = useCallback(async ({ reset = false } = {}) => {
+
+    const hasPerm = await requestPermission();
+    if (!hasPerm) {
+      Alert.alert('권한 필요', '사진 접근 권한이 필요합니다.');
+      return;
+    }
+
+    if (loading) return;
+    setLoading(true);
+
+    try {
+      // 1) 최초 로딩 시 한달전 데이타부터 표출
+      const params = {
+        first: 60,
+        assetType: 'Photos',
+        fromTime: dayStartMs(dateStart), // 기본: 한달전
+        toTime:   dayEndNextMs(dateEnd), // 기본: 오늘
+        after: endCursor ?? undefined,  // ← 이전에 받은 cursor (string | null)
+      };
+      if (!reset && endCursor) params.after = endCursor;
+
+      //const result = await CameraRoll.getPhotos(params);
+      //const nextEdges = result.edges ?? [];
+      const assets = await getAllImagesFromUser();
+      const nextEdges = assets ?? [];
+
+      const filtered = nextEdges.filter((e) => {
+        // 카메라롤 라이브러리 사용시 e.node로 접근
+        const tsMs = e.creationTime ? Math.round(e.creationTime * 1000) : null;
+        if (!tsMs) return false;
+        // 
+        if (tsMs < dayStartMs(dateStart) || tsMs >= dayEndNextMs(dateEnd)) return false;
+        return inTimeWindow(tsMs, timeStart, timeEnd);
+      });
+
+      const mapped = filtered.map((e) => ({
+        uri: e.uri,
+        takenAt: e?.creationTime ? Math.round(e.creationTime * 1000) : null,
+      }));
+
+      setPhotos((prev) => (reset ? mapped : [...prev, ...mapped]));
+      setEndCursor(assets);
+      setHasNextPage(Boolean(result.page_info?.has_next_page));
+      
+    } catch (err) {
+      console.log('CameraRoll 오류:', err);
+      Alert.alert('오류', '사진을 불러오는 중 문제가 발생했습니다.');
+    } finally {
+      setLoading(false);
+    }
+  }, [requestPermission, loading, endCursor, dateStart, dateEnd, timeStart, timeEnd]); */
 
   const fmtDateTime = (ms: string | number | Date | null | undefined) => {
     if (!ms) return 'Unknown';
@@ -436,7 +779,9 @@ export default function HomeScreen() {
         }}
 
         ListFooterComponent={
+          //loading ? <ActivityIndicator style={{ marginVertical: 12 }} /> : null
           // 사용자가 스크롤해서 로딩하는 경우에만 표시(초기 자동 로딩 표시 억제)
+          //userScrolled && loading ? <ActivityIndicator style={{ marginVertical: 12 }} /> : null
           (isPaginatingRef.current && loading) ? <ActivityIndicator style={{ marginVertical: 12 }} /> : null
         }
 
@@ -445,6 +790,7 @@ export default function HomeScreen() {
         }}
         
         onContentSizeChange={(_, ch) => {
+          // ch: contentHeight
           // 화면보다 컨텐츠가 클 때만 다음 페이지 로딩 허용
           setListCanScroll(ch > 0);
         }}
@@ -466,6 +812,10 @@ export default function HomeScreen() {
         doubleTapToZoomEnabled
       />
 
+      {/* {loading ? (
+        <View style={styles.centerContainer}>
+          <Text>June: Loading images......,,,</Text>
+        </View> */}
       {(loading || isScanning) ? (
         <View style={styles.centerContainer}>
           <ActivityIndicator />
