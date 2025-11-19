@@ -31,14 +31,14 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 // Responsive image grid calculations
 const screenWidth = Dimensions.get("window").width;
 const minImageWidth = 100;
+const horizontalPadding = 4;
 const imageMargin = 2;
+const usableWidth = screenWidth - horizontalPadding * 2;
 const numColumns = Math.max(
   5,
-  Math.floor(screenWidth / (minImageWidth + imageMargin * 2))
+  Math.floor(usableWidth / (minImageWidth + imageMargin * 2))
 );
-const imageWidth = Math.floor(
-  (screenWidth - numColumns * imageMargin * 2) / numColumns
-);
+const imageWidth = (usableWidth - numColumns * imageMargin * 2) / numColumns;
 
 async function getAllImages() {
   let allAssets: MediaLibrary.Asset[] = [];
@@ -572,12 +572,17 @@ export default function HomeScreen() {
     console.log('PHOTO URI >>>', item.uri);
     return (
       <TouchableOpacity
-      activeOpacity={0.9}
-      onPress={() => { setViewerIndex(index); setViewerVisible(true); }}
-    >
-      {/* <Image source={{ uri: item.uri }} style={styles.thumb} /> */}
-      <Image source={{ uri: item.uri }} style={{ width: 90, height: 90, margin: 2, borderRadius: 6 }} />
-    </TouchableOpacity>
+        style={styles.imageContainer}
+        activeOpacity={0.9}
+        onPress={() => { setViewerIndex(index); setViewerVisible(true); }}
+      >
+        {/* <Image source={{ uri: item.uri }} style={styles.thumb} /> */}
+        <Image 
+          source={{ uri: item.uri }} 
+          style={styles.image} 
+          resizeMode="cover"
+        />
+      </TouchableOpacity>
     )
   };
 
@@ -746,7 +751,11 @@ export default function HomeScreen() {
         numColumns={numColumns}
         keyExtractor={(_, i) => i.toString()}
         renderItem={renderItem}
-        contentContainerStyle={{ padding: 4 }}
+        contentContainerStyle={{ 
+          paddingHorizontal: horizontalPadding,
+          paddingTop: 4,
+          paddingBottom: 16,
+         }}
         onScrollBeginDrag={() => { 
           setUserScrolled(true); 
         }}
@@ -881,6 +890,8 @@ const styles = StyleSheet.create({
   image: {
     width: "100%",
     aspectRatio: 1,
+    height: imageWidth,
+    borderRadius: 6,
   },
   errorText: {
     color: "red",
