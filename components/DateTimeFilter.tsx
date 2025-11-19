@@ -333,7 +333,6 @@ export default function DateTimeFilter({ onChange }: DateTimeFilterProps) {
   
   
     return (
-      // <View style={{ flex: 1, paddingTop: 48 }}>
       <View>
         {/* 상단 검색 바 */}
         <View style={styles.bar}>

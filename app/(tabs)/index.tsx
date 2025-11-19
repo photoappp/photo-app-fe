@@ -730,8 +730,7 @@ export default function HomeScreen() {
 
   return (
 
-    <SafeAreaView style={{ flex: 1, paddingTop: 48 }}>
-
+    <SafeAreaView style={{ flex: 1 }} edges={['left','right','bottom']}>
       {/* 지도에서 보기 */}
       <View style={styles.mapContainer}>
         {/* <ShowOnMap images={images} /> */}
