@@ -27,10 +27,12 @@ import { SafeAreaView } from "react-native-safe-area-context";
 // Responsive image grid calculations
 const screenWidth = Dimensions.get("window").width;
 const minImageWidth = 100;
+const horizontalPadding = 4;
 const imageMargin = 2;
+const usableWidth = screenWidth - horizontalPadding * 2;
 const numColumns = Math.max(
   5,
-  Math.floor(screenWidth / (minImageWidth + imageMargin * 2))
+  Math.floor(usableWidth / (minImageWidth + imageMargin * 2))
 );
 const imageWidth = Math.floor(
   (screenWidth - numColumns * imageMargin * 2) / numColumns
@@ -289,9 +291,10 @@ export default function HomeScreen() {
 
   // 썸네일 그리드에 사진 데이터 렌더링
   const renderItem: ListRenderItem<Photo> = ({ item, index }) => {
-    // console.log("PHOTO URI >>>", item.uri);
+    console.log("PHOTO URI >>>", item.uri);
     return (
       <TouchableOpacity
+        style={styles.imageContainer}
         activeOpacity={0.9}
         onPress={() => {
           setViewerIndex(index);
@@ -301,7 +304,8 @@ export default function HomeScreen() {
         {/* <Image source={{ uri: item.uri }} style={styles.thumb} /> */}
         <Image
           source={{ uri: item.uri }}
-          style={{ width: 90, height: 90, margin: 2, borderRadius: 6 }}
+          style={styles.image}
+          resizeMode="cover"
         />
       </TouchableOpacity>
     );
@@ -365,7 +369,7 @@ export default function HomeScreen() {
   );
 
   return (
-    <SafeAreaView style={{ flex: 1, paddingTop: 48 }}>
+    <SafeAreaView style={{ flex: 1 }} edges={["left", "right", "bottom"]}>
       {/* 날짜/시간으로 필터링 모듈 Start 
           - 유저가 조작한 값을 모듈에서 받은 후 Prop으로 메인 소스에 넘겨 갱신한다.
       */}
@@ -389,7 +393,11 @@ export default function HomeScreen() {
         numColumns={numColumns}
         keyExtractor={(_, i) => i.toString()}
         renderItem={renderItem}
-        contentContainerStyle={{ padding: 4 }}
+        contentContainerStyle={{
+          paddingHorizontal: horizontalPadding,
+          paddingTop: 4,
+          paddingBottom: 16,
+        }}
         onScrollBeginDrag={() => {
           setUserScrolled(true);
         }}
@@ -527,6 +535,8 @@ const styles = StyleSheet.create({
   image: {
     width: "100%",
     aspectRatio: 1,
+    height: imageWidth,
+    borderRadius: 6,
   },
   errorText: {
     color: "red",
