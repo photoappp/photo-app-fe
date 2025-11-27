@@ -1,5 +1,7 @@
 import DateTimeFilter from "@/components/DateTimeFilter";
+import LocationSelector from "@/components/LocationSelector";
 import ShowOnMap from "@/components/ShowOnMap";
+import { Photo } from "@/types/Photo";
 import * as Location from "expo-location";
 import * as MediaLibrary from "expo-media-library";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -17,10 +19,10 @@ import {
   Text,
   TouchableOpacity,
   useColorScheme,
-  View
+  View,
 } from "react-native";
-import ImageViewing from 'react-native-image-viewing';
-import { SafeAreaView } from 'react-native-safe-area-context';
+import ImageViewing from "react-native-image-viewing";
+import { SafeAreaView } from "react-native-safe-area-context";
 
 // Responsive image grid calculations
 const screenWidth = Dimensions.get("window").width;
@@ -32,31 +34,9 @@ const numColumns = Math.max(
   5,
   Math.floor(usableWidth / (minImageWidth + imageMargin * 2))
 );
-const imageWidth = (usableWidth - numColumns * imageMargin * 2) / numColumns;
-
-async function getAllImages() {
-  let allAssets: MediaLibrary.Asset[] = [];
-  let hasNextPage = true;
-  let after: string | undefined = undefined;
-  try {
-    //while (hasNextPage) {
-      const result = await MediaLibrary.getAssetsAsync({
-        first: 30,
-        mediaType: MediaLibrary.MediaType.photo,
-        after,
-      });
-
-      allAssets = allAssets.concat(result.assets);
-      hasNextPage = result.hasNextPage;
-      after = result.endCursor;
-    //}
-  } catch (error) {
-    console.error("Error fetching media library assets:", error);
-    return { assets: [] };
-  }
-
-  return { assets: allAssets };
-}
+const imageWidth = Math.floor(
+  (screenWidth - numColumns * imageMargin * 2) / numColumns
+);
 
 type DateTimeFilterState = {
   dateStart: Date;
@@ -65,17 +45,24 @@ type DateTimeFilterState = {
   timeEnd: number;
 };
 
+type LocationFilterState = {
+  continents: string[];
+  countries: string[];
+  cities: string[];
+};
+type FilterState = DateTimeFilterState & LocationFilterState;
+
 /** ---------- HomeScreen ---------- */
 export default function HomeScreen() {
-
-  const [images, setImages] = useState<any[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [selectedImage, setSelectedImage] = useState<string | null>(null);
   const [isScanning, setIsScanning] = useState(false);
-  const [progress, setProgress] = useState<{ loaded: number; total: number | null }>({ loaded: 0, total: null });
-
+  const [progress, setProgress] = useState<{
+    loaded: number;
+    total: number | null;
+  }>({ loaded: 0, total: null });
   const colorScheme = useColorScheme();
-  const sleep = (ms: number) => new Promise(res => setTimeout(res, ms));
+  const sleep = (ms: number) => new Promise((res) => setTimeout(res, ms));
 
   // ---- 사진 목록/페이지네이션 ----
   const [photos, setPhotos] = useState<Photo[]>([]); // 화면에 뿌릴 가공된 데이터
@@ -90,41 +77,57 @@ export default function HomeScreen() {
 
   // ImageViewing 에 넘길 images 배열 (형식: { uri: string }[])
   const viewerImages = useMemo(
-    () => photos.map(p => ({ uri: p.uri })),
+    () => photos.map((p) => ({ uri: p.uri })),
     [photos]
   );
 
   const lastEndCallRef = useRef(0);
   const onEndLockRef = useRef(false); // 연속 호출 잠금
   const onEndDuringMomentumRef = useRef(true); // 모멘텀 중 중복 호출 방지
-  const isPaginatingRef = useRef(false);       // footer 로딩바 표시에만 사용
+  const isPaginatingRef = useRef(false); // footer 로딩바 표시에만 사용
 
   // 날짜,시간 필터링 관련 ===> 컴포넌트로 분리하기!!
-  const dayStartMs = (d: Date) => new Date(d.getFullYear(), d.getMonth(), d.getDate(), 0, 0, 0, 0).getTime();
-  const dayEndNextMs = (d: Date) => new Date(d.getFullYear(), d.getMonth(), d.getDate() + 1, 0, 0, 0, 0).getTime();
+  const dayStartMs = (d: Date) =>
+    new Date(d.getFullYear(), d.getMonth(), d.getDate(), 0, 0, 0, 0).getTime();
+  const dayEndNextMs = (d: Date) =>
+    new Date(
+      d.getFullYear(),
+      d.getMonth(),
+      d.getDate() + 1,
+      0,
+      0,
+      0,
+      0
+    ).getTime();
 
   const today = new Date();
-  const oneMonthAgo = new Date(today.getFullYear(), today.getMonth() - 1, today.getDate());
-  // const [dateStart, setDateStart] = useState(oneMonthAgo);
-  // const [dateEnd, setDateEnd] = useState(today);
-  // const [timeStart, setTimeStart] = useState(0);
-  // const [timeEnd, setTimeEnd] = useState(1440);
+  const oneMonthAgo = new Date(
+    today.getFullYear(),
+    today.getMonth() - 1,
+    today.getDate()
+  );
 
-  const [filter, setFilter] = useState<DateTimeFilterState>({
+  const [filter, setFilter] = useState<FilterState>({
     dateStart: oneMonthAgo,
     dateEnd: new Date(),
     timeStart: 0,
     timeEnd: 1440,
+    continents: [],
+    countries: [],
+    cities: [],
   });
 
   async function imagesWithLocation(
     images: any[],
     opts?: { maxLookups?: number; precision?: number; delayMs?: number }
   ) {
-    const maxLookups = opts?.maxLookups ?? 60;   // 한 번 로드에서 지오코딩 최대 호출 수
-    const precision  = opts?.precision  ?? 2;    // 좌표 라운딩 자릿수(2 ≈ ~1km)
-    const delayMs    = opts?.delayMs    ?? 150;  // 호출 간 지연(ms)
-    const cache = new Map<string, { country: string | null; city: string | null }>();
+    const maxLookups = opts?.maxLookups ?? 60; // 한 번 로드에서 지오코딩 최대 호출 수
+    const precision = opts?.precision ?? 2; // 좌표 라운딩 자릿수(2 ≈ ~1km)
+    const delayMs = opts?.delayMs ?? 150; // 호출 간 지연(ms)
+    const cache = new Map<
+      string,
+      { country: string | null; city: string | null }
+    >();
     const updated: any[] = [];
     let lookups = 0;
 
@@ -141,7 +144,10 @@ export default function HomeScreen() {
 
       if (!place && lookups < maxLookups) {
         try {
-          const [res] = await Location.reverseGeocodeAsync({ latitude: lat, longitude: lon });
+          const [res] = await Location.reverseGeocodeAsync({
+            latitude: lat,
+            longitude: lon,
+          });
           place = {
             country: res?.country ?? null,
             city: res?.city ?? res?.subregion ?? null,
@@ -165,39 +171,31 @@ export default function HomeScreen() {
     return updated;
   }
 
-  // ---- 권한 요청 ----
-  const requestPermission = useCallback(async (): Promise<boolean> => {
-    // iOS와 Android 공통 처리
-    const { status, canAskAgain } = await MediaLibrary.getPermissionsAsync();
-  
-    if (status !== "granted" && canAskAgain) {
-      const req = await MediaLibrary.requestPermissionsAsync(false);
-      return req.status === "granted";
-    }
-  
-    return status === "granted";
-  }, []);
-  
-
   const PAGE_SIZE = 50;
-
+  const { dateStart, dateEnd, timeStart, timeEnd, countries, cities } = filter;
   const loadPhotos = useCallback(
     async ({ reset = false }: { reset?: boolean } = {}) => {
-      const { dateStart, dateEnd, timeStart, timeEnd } = filter;
-  
       // 1) 권한 확인
-      const hasPerm = await requestPermission();
+      const { status, canAskAgain } = await MediaLibrary.getPermissionsAsync();
+
+      let hasPerm = status === "granted";
+
+      if (!hasPerm && canAskAgain) {
+        const req = await MediaLibrary.requestPermissionsAsync(false);
+        hasPerm = req.status === "granted";
+      }
+
       if (!hasPerm) {
-        Alert.alert('권한 필요', '사진 접근 권한이 필요합니다.');
+        Alert.alert("권한 필요", "사진 접근 권한이 필요합니다.");
         return;
       }
-  
+
       // 2) 중복 호출 / 페이지 끝 체크
       if (loading) return;
       if (!reset && !hasNextPage) return;
-  
+
       setLoading(true);
-  
+
       try {
         // 3) 한 페이지 가져오기
         const result = await MediaLibrary.getAssetsAsync({
@@ -206,31 +204,27 @@ export default function HomeScreen() {
           after: reset ? undefined : endCursor ?? undefined,
           sortBy: [MediaLibrary.SortBy.creationTime],
         });
-  
+
         const assets = result.assets ?? [];
-  
         // 4) 날짜/시간 필터
         const filtered = assets.filter((a) => {
           const tsMs = a.creationTime ?? a.modificationTime ?? null;
           if (!tsMs) return false;
-  
+
           if (tsMs < dayStartMs(dateStart) || tsMs >= dayEndNextMs(dateEnd)) {
             return false;
           }
-  
+
           return inTimeWindow(tsMs, timeStart, timeEnd);
         });
-  
+
         // 5) 상세 정보 + 위치 포함해서 Photo로 매핑
         const baseInfos: Photo[] = await Promise.all(
           filtered.map(async (a) => {
             try {
               const info = await MediaLibrary.getAssetInfoAsync(a.id);
               const uri =
-                Platform.OS === "ios"
-                  ? info.localUri ?? info.uri
-                  : info.uri;
-  
+                Platform.OS === "ios" ? info.localUri ?? info.uri : info.uri;
               return {
                 uri,
                 takenAt: info.creationTime ?? a.creationTime ?? null,
@@ -256,77 +250,73 @@ export default function HomeScreen() {
             }
           })
         );
-  
+
         // 6) 위치 정보 기반으로 country/city 붙이기
         const withPlaces = await imagesWithLocation(baseInfos, {
           maxLookups: 60,
           precision: 2,
           delayMs: 150,
         });
-  
+        const filteredWithLocation = withPlaces.filter((photo) => {
+          if (countries.length === 0 && cities.length === 0) {
+            return true;
+          }
+          if (cities.length > 0) {
+            return cities.includes(photo.city ?? "");
+          }
+          return countries.includes(photo.country ?? "");
+        });
         // 7) 상태 업데이트
-        setPhotos((prev) => (reset ? withPlaces : [...prev, ...withPlaces]));
+        setPhotos((prev) =>
+          reset ? filteredWithLocation : [...prev, ...filteredWithLocation]
+        );
         setEndCursor(result.endCursor ?? null);
         setHasNextPage(result.hasNextPage);
       } catch (err) {
-        console.log('MediaLibrary 오류:', err);
-        Alert.alert('오류', '사진을 불러오는 중 문제가 발생했습니다.');
+        console.log("MediaLibrary 오류:", err);
+        Alert.alert("오류", "사진을 불러오는 중 문제가 발생했습니다.");
       } finally {
         setLoading(false);
       }
     },
-    [
-      requestPermission,
-      loading,
-      hasNextPage,
-      endCursor,
-      filter,
-    ]
+    [loading, hasNextPage, endCursor, filter]
   );
-  
-  useEffect(() => {
 
+  useEffect(() => {
     // 필터 바뀌면 페이지네이션 리셋 후 처음부터 다시 로드
     setEndCursor(null);
     setHasNextPage(true);
     loadPhotos({ reset: true });
-
-  }, [filter]); 
-
-  type Photo = {
-    uri: string;
-    takenAt?: number | null;  // 있으면 쓰고, 아니면 빼도 됨
-
-    //localUri: string;
-    city?: string;
-    country?: string;
-    location?: {
-      latitude: string | number;
-      longitude: string | number;
-    } | null;
-  };
+  }, [filter]);
 
   // 썸네일 그리드에 사진 데이터 렌더링
   const renderItem: ListRenderItem<Photo> = ({ item, index }) => {
-    console.log('PHOTO URI >>>', item.uri);
+    console.log("PHOTO URI >>>", item.uri);
     return (
       <TouchableOpacity
         style={styles.imageContainer}
         activeOpacity={0.9}
-        onPress={() => { setViewerIndex(index); setViewerVisible(true); }}
+        onPress={() => {
+          setViewerIndex(index);
+          setViewerVisible(true);
+        }}
       >
         {/* <Image source={{ uri: item.uri }} style={styles.thumb} /> */}
-        <Image 
-          source={{ uri: item.uri }} 
-          style={styles.image} 
+        <Image
+          source={{ uri: item.uri }}
+          style={styles.image}
           resizeMode="cover"
         />
       </TouchableOpacity>
-    )
+    );
   };
 
   // 시각(분) 윈도우 판정: timeStart~timeEnd(분), 1440=24:00 처리 포함
-  const inTimeWindow = (tsMs: string | number | Date, timeStart: number, timeEnd: number) => {
+  const inTimeWindow = (
+    tsMs: string | number | Date,
+    timeStart: number,
+    timeEnd: number
+  ) => {
     const local = new Date(tsMs);
     const mins = local.getHours() * 60 + local.getMinutes();
     if (timeEnd === 1440) return mins >= timeStart && mins <= 1439; // 24:00은 하루 끝까지
@@ -337,69 +327,65 @@ export default function HomeScreen() {
   };
 
   const fmtDateTime = (ms: string | number | Date | null | undefined) => {
-    if (!ms) return 'Unknown';
+    if (!ms) return "Unknown";
     const d = new Date(ms);
     const yyyy = d.getFullYear();
-    const MM = `${d.getMonth()+1}`.padStart(2, '0');
-    const DD = `${d.getDate()}`.padStart(2, '0');
-    const hh = `${d.getHours()}`.padStart(2, '0');
-    const mm = `${d.getMinutes()}`.padStart(2, '0');
+    const MM = `${d.getMonth() + 1}`.padStart(2, "0");
+    const DD = `${d.getDate()}`.padStart(2, "0");
+    const hh = `${d.getHours()}`.padStart(2, "0");
+    const mm = `${d.getMinutes()}`.padStart(2, "0");
     return `${yyyy}/${MM}/${DD} ${hh}:${mm}`;
   };
-
-  const viewerStyles = StyleSheet.create({
-    header: {
-      position: 'absolute',
-      top: 44,                // 노치 고려해서 여백
-      left: 16,
-      right: 16,
-      flexDirection: 'row',
-      alignItems: 'center',
-      justifyContent: 'space-between',
-    },
-    counter: { color: '#fff', fontSize: 16, fontWeight: '600' },
-    metaTxt: { color: '#fff', fontSize: 14, fontWeight: '600' },
-    closeBtn: {
-      zIndex: 999,
-      width: 32, height: 32, borderRadius: 16,
-      backgroundColor: 'rgba(255,255,255,0.16)',
-      alignItems: 'center', justifyContent: 'center',
-    },
-    closeTxt: { color: '#fff', fontSize: 18, fontWeight: '700' },
-  });
 
   const Header = useCallback(() => {
     const current = photos[viewerIndex];
     return (
-      <View style={viewerStyles.header}>
-        <Text style={viewerStyles.metaTxt}>
-          {current ? fmtDateTime(current.takenAt) : ''}
+      <View style={styles.header}>
+        <Text style={styles.metaTxt}>
+          {current ? fmtDateTime(current.takenAt) : ""}
         </Text>
         <TouchableOpacity
           onPress={() => setViewerVisible(false)}
-          style={viewerStyles.closeBtn}
+          style={styles.closeBtn}
         >
-          <Text style={viewerStyles.closeTxt}>✕</Text>
+          <Text style={styles.closeTxt}>✕</Text>
         </TouchableOpacity>
       </View>
     );
-  }, [photos, viewerIndex]);  
+  }, [photos, viewerIndex]);
+
+  const handleSelectionChange = (selections: LocationFilterState) => {
+    setFilter((prev) => ({ ...prev, ...selections }));
+  };
+
+  const handleDateTimeChange = useCallback(
+    (selections: Partial<DateTimeFilterState>) => {
+      setFilter((prev) => ({
+        ...prev,
+        ...selections,
+      }));
+    },
+    []
+  );
 
   return (
-
-    <SafeAreaView style={{ flex: 1 }} edges={['left','right','bottom']}>
+    <SafeAreaView style={{ flex: 1 }} edges={["left", "right", "bottom"]}>
+      {/* 날짜/시간으로 필터링 모듈 Start 
+          - 유저가 조작한 값을 모듈에서 받은 후 Prop으로 메인 소스에 넘겨 갱신한다.
+      */}
+      <DateTimeFilter onChange={handleDateTimeChange} />
+      {/* 날짜/시간으로 필터링 모듈 End */}
+      <View style={{ flexDirection: "row", alignItems: "center", padding: 12 }}>
+        <LocationSelector
+          photos={photos}
+          onSelectionChange={handleSelectionChange}
+        />
+      </View>
       {/* 지도에서 보기 */}
       <View style={styles.mapContainer}>
         {/* <ShowOnMap images={images} /> */}
         <ShowOnMap images={photos} />
       </View>
-
-      {/* 날짜/시간으로 필터링 모듈 Start 
-          - 유저가 조작한 값을 모듈에서 받은 후 Prop으로 메인 소스에 넘겨 갱신한다.
-      */}
-        <DateTimeFilter onChange={setFilter} />
-      {/* 날짜/시간으로 필터링 모듈 End */}
-
       {/* 썸네일 그리드 */}
       <FlatList<Photo>
         style={{ flex: 1 }} // 리스트가 남은 세로 공간을 다 차지
@@ -407,20 +393,20 @@ export default function HomeScreen() {
         numColumns={numColumns}
         keyExtractor={(_, i) => i.toString()}
         renderItem={renderItem}
-        contentContainerStyle={{ 
+        contentContainerStyle={{
           paddingHorizontal: horizontalPadding,
           paddingTop: 4,
           paddingBottom: 16,
-         }}
-        onScrollBeginDrag={() => { 
-          setUserScrolled(true); 
         }}
-        onMomentumScrollBegin={() => { 
-          setUserScrolled(true); 
-          onEndDuringMomentumRef.current = false; 
+        onScrollBeginDrag={() => {
+          setUserScrolled(true);
         }}
-        onMomentumScrollEnd={() => { 
-          onEndDuringMomentumRef.current = true; 
+        onMomentumScrollBegin={() => {
+          setUserScrolled(true);
+          onEndDuringMomentumRef.current = false;
+        }}
+        onMomentumScrollEnd={() => {
+          onEndDuringMomentumRef.current = true;
         }}
         onEndReachedThreshold={0.4}
         onEndReached={() => {
@@ -442,16 +428,19 @@ export default function HomeScreen() {
             isPaginatingRef.current = false;
           });
         }}
-
         ListFooterComponent={
           // 사용자가 스크롤해서 로딩하는 경우에만 표시(초기 자동 로딩 표시 억제)
-          (isPaginatingRef.current && loading) ? <ActivityIndicator style={{ marginVertical: 12 }} /> : null
+          isPaginatingRef.current && loading ? (
+            <ActivityIndicator style={{ marginVertical: 12 }} />
+          ) : null
         }
-
-        onLayout={({nativeEvent:{layout:{height: lh}}}) => {
+        onLayout={({
+          nativeEvent: {
+            layout: { height: lh },
+          },
+        }) => {
           // 높이는 onContentSizeChange에서 비교
         }}
-        
         onContentSizeChange={(_, ch) => {
           // 화면보다 컨텐츠가 클 때만 다음 페이지 로딩 허용
           setListCanScroll(ch > 0);
@@ -465,23 +454,32 @@ export default function HomeScreen() {
         imageIndex={viewerIndex}
         visible={viewerVisible}
         onRequestClose={() => setViewerVisible(false)}
-        onImageIndexChange={(i: number) => setViewerIndex(i)}  // ← 추가
+        onImageIndexChange={(i: number) => setViewerIndex(i)} // ← 추가
         // 선택: 상단 닫기버튼(간단한 헤더)
         HeaderComponent={Header}
         // 선택: 바닥 여백(제스처 충돌 완화)
         backgroundColor="rgba(0,0,0,0.98)"
-        swipeToCloseEnabled={false}   // ← 스와이프 제스처가 터치 선점하는 것 방지
+        swipeToCloseEnabled={false} // ← 스와이프 제스처가 터치 선점하는 것 방지
         doubleTapToZoomEnabled
       />
 
-      {(loading || isScanning) ? (
+      {loading || isScanning ? (
         <View style={styles.centerContainer}>
           <ActivityIndicator />
           <Text style={{ marginTop: 8 }}>
-            Loading photos… {progress.loaded}{progress.total ? ` / ${progress.total}` : ""}
+            Loading photos… {progress.loaded}
+            {progress.total ? ` / ${progress.total}` : ""}
           </Text>
           {progress.total ? (
-            <View style={{ width: 220, height: 6, backgroundColor: "#e5e7eb", marginTop: 8, borderRadius: 3 }}>
+            <View
+              style={{
+                width: 220,
+                height: 6,
+                backgroundColor: "#e5e7eb",
+                marginTop: 8,
+                borderRadius: 3,
+              }}
+            >
               <View
                 style={{
                   width: `${(progress.loaded / progress.total) * 100}%`,
@@ -493,7 +491,6 @@ export default function HomeScreen() {
             </View>
           ) : null}
         </View>
-
       ) : error ? (
         <View style={styles.centerContainer}>
           <Text style={styles.errorText}>{error}</Text>
@@ -515,8 +512,7 @@ export default function HomeScreen() {
             </View>
           </Modal>
         </>
-      )
-    }
+      )}
     </SafeAreaView>
   );
 }
@@ -553,4 +549,25 @@ const styles = StyleSheet.create({
     alignItems: "center",
     gap: 20,
   },
+  header: {
+    position: "absolute",
+    top: 44, // 노치 고려해서 여백
+    left: 16,
+    right: 16,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+  },
+  counter: { color: "#fff", fontSize: 16, fontWeight: "600" },
+  metaTxt: { color: "#fff", fontSize: 14, fontWeight: "600" },
+  closeBtn: {
+    zIndex: 999,
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    backgroundColor: "rgba(255,255,255,0.16)",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  closeTxt: { color: "#fff", fontSize: 18, fontWeight: "700" },
 });
