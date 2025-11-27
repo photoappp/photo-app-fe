@@ -50,7 +50,7 @@
       "permissions": [
         "READ_MEDIA_IMAGES",
         "READ_EXTERNAL_STORAGE",
-        "ACCESS_FINE_LOCATION",
+        "ACCESS_FINE_LOCATION"
       ]
     },
     "web": {

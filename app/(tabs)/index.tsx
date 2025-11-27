@@ -14,6 +14,7 @@ import {
   Image,
   ListRenderItem,
   Modal,
+  Platform,
   StyleSheet,
   Text,
   TouchableOpacity,
@@ -168,25 +169,20 @@ export default function HomeScreen() {
     return updated;
   }
 
-  // ---- 권한 요청 ----
-  const requestPermission = useCallback(async (): Promise<boolean> => {
-    // iOS와 Android 공통 처리
-    const { status, canAskAgain } = await MediaLibrary.getPermissionsAsync();
-
-    if (status !== "granted" && canAskAgain) {
-      const req = await MediaLibrary.requestPermissionsAsync(false);
-      return req.status === "granted";
-    }
-
-    return status === "granted";
-  }, []);
-
   const PAGE_SIZE = 50;
   const { dateStart, dateEnd, timeStart, timeEnd, countries, cities } = filter;
   const loadPhotos = useCallback(
     async ({ reset = false }: { reset?: boolean } = {}) => {
       // 1) 권한 확인
-      const hasPerm = await requestPermission();
+      const { status, canAskAgain } = await MediaLibrary.getPermissionsAsync();
+
+      let hasPerm = status === "granted";
+
+      if (!hasPerm && canAskAgain) {
+        const req = await MediaLibrary.requestPermissionsAsync(false);
+        hasPerm = req.status === "granted";
+      }
+
       if (!hasPerm) {
         Alert.alert("권한 필요", "사진 접근 권한이 필요합니다.");
         return;
@@ -225,8 +221,8 @@ export default function HomeScreen() {
           filtered.map(async (a) => {
             try {
               const info = await MediaLibrary.getAssetInfoAsync(a.id);
-              const uri = info.localUri ?? info.uri;
-              // Platform.OS === "ios" ? info.localUri ?? info.uri : info.uri;
+              const uri =
+                Platform.OS === "ios" ? info.localUri ?? info.uri : info.uri;
               return {
                 uri,
                 takenAt: info.creationTime ?? a.creationTime ?? null,
@@ -281,7 +277,7 @@ export default function HomeScreen() {
         setLoading(false);
       }
     },
-    [requestPermission, loading, hasNextPage, endCursor, filter]
+    [loading, hasNextPage, endCursor, filter]
   );
 
   useEffect(() => {
