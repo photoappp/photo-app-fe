@@ -40,4 +40,21 @@ app-example
 
 # Ignore prebuilt native folders
 android/
-ios/
+
+# ================================
+# iOS (필수 보존 파일 제외)
+# ================================
+ios/Pods/         # Git에 포함 금지(용량 폭발 + 충돌 원인)
+ios/Podfile.lock  
+
+# iOS/Xcode generated
+**/*.pbxuser
+!default.pbxuser
+**/*.mode1v3
+**/*.mode2v3
+**/*.perspectivev3
+**/*.xcworkspacedata
+**/*.xcuserstate
+ios/DerivedData/
+ios/*.xcworkspace
+ios/build/
