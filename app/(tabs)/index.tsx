@@ -81,6 +81,9 @@ export default function HomeScreen() {
     [photos]
   );
 
+  const photosRef = useRef<Photo[]>(photos);
+  const viewerIndexRef = useRef<number>(viewerIndex);
+
   const lastEndCallRef = useRef(0);
   const onEndLockRef = useRef(false); // 연속 호출 잠금
   const onEndDuringMomentumRef = useRef(true); // 모멘텀 중 중복 호출 방지
@@ -348,7 +351,7 @@ export default function HomeScreen() {
           onPress={() => setViewerVisible(false)}
           style={styles.closeBtn}
         >
-          <Text style={styles.closeTxt}>✕</Text>
+          <Text style={styles.closeTxt}>X</Text>
         </TouchableOpacity>
       </View>
     );
@@ -450,11 +453,14 @@ export default function HomeScreen() {
       {/* 전체화면 이미지 뷰어 (핀치줌/스와이프) */}
       <ImageViewing
         //images={photos.map(p => ({ uri: p.uri }))}
+        onImageIndexChange={(i: number) => {
+          viewerIndexRef.current = i;  // 화면 재렌더 없이 최신 index만 기억
+        }}
         images={viewerImages}
         imageIndex={viewerIndex}
         visible={viewerVisible}
         onRequestClose={() => setViewerVisible(false)}
-        onImageIndexChange={(i: number) => setViewerIndex(i)} // ← 추가
+        //onImageIndexChange={(i: number) => setViewerIndex(i)} // ← 추가
         // 선택: 상단 닫기버튼(간단한 헤더)
         HeaderComponent={Header}
         // 선택: 바닥 여백(제스처 충돌 완화)
