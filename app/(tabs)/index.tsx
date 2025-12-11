@@ -20,22 +20,26 @@ import {
   TouchableOpacity,
   useColorScheme,
   View,
+  PermissionsAndroid
 } from "react-native";
 import ImageViewing from "react-native-image-viewing";
 import { SafeAreaView } from "react-native-safe-area-context";
+import { LinearGradient } from 'expo-linear-gradient';
+import { Ionicons } from '@expo/vector-icons';
+import { useNavigation } from '@react-navigation/native';
+
 
 // Responsive image grid calculations
 const screenWidth = Dimensions.get("window").width;
 const minImageWidth = 100;
 const horizontalPadding = 4;
 const imageMargin = 2;
-const usableWidth = screenWidth - horizontalPadding * 2;
-const numColumns = Math.max(
-  5,
-  Math.floor(usableWidth / (minImageWidth + imageMargin * 2))
-);
+const numColumns = 5;
+// ✅ 실제로 쓸 수 있는 폭: 화면 - (바깥 24 + 안쪽 horizontalPadding) * 2
+const usableWidth = screenWidth - (24 + horizontalPadding) * 2;
+// ✅ 이 usableWidth 기준으로 5등분 + margin
 const imageWidth = Math.floor(
-  (screenWidth - numColumns * imageMargin * 2) / numColumns
+  (usableWidth - numColumns * imageMargin * 2) / numColumns
 );
 
 type DateTimeFilterState = {
@@ -54,6 +58,14 @@ type FilterState = DateTimeFilterState & LocationFilterState;
 
 /** ---------- HomeScreen ---------- */
 export default function HomeScreen() {
+
+  const navigation = useNavigation<any>();
+
+  const handleOpenSettings = () => {
+    //navigation.navigate('Settings'); // 실제 설정 스크린 이름으로 바꿔 사용
+    console.log("Move to Setting page");
+  };
+
   const [error, setError] = useState<string | null>(null);
   const [selectedImage, setSelectedImage] = useState<string | null>(null);
   const [isScanning, setIsScanning] = useState(false);
@@ -176,7 +188,9 @@ export default function HomeScreen() {
 
   const PAGE_SIZE = 50;
   const { dateStart, dateEnd, timeStart, timeEnd, countries, cities } = filter;
+
   const loadPhotos = useCallback(
+
     async ({ reset = false }: { reset?: boolean } = {}) => {
       // 1) 권한 확인
       const { status, canAskAgain } = await MediaLibrary.getPermissionsAsync();
@@ -191,6 +205,8 @@ export default function HomeScreen() {
       if (!hasPerm) {
         Alert.alert("권한 필요", "사진 접근 권한이 필요합니다.");
         return;
+      } else {
+        console.log("Access permit OK")
       }
 
       // 2) 중복 호출 / 페이지 끝 체크
@@ -209,10 +225,31 @@ export default function HomeScreen() {
         });
 
         const assets = result.assets ?? [];
+
         // 4) 날짜/시간 필터
         const filtered = assets.filter((a) => {
-          const tsMs = a.creationTime ?? a.modificationTime ?? null;
-          if (!tsMs) return false;
+          const created =
+            a.creationTime && a.creationTime > 0 ? a.creationTime : null;
+
+          const modified =
+            a.modificationTime && a.modificationTime > 0 ? a.modificationTime : null;
+
+          const tsMs = created ?? modified;
+
+          console.log(
+            "creation:", a.creationTime,
+            "mod:", a.modificationTime,
+            "tsMs:", tsMs
+          );
+
+          // 1) 진짜로 둘 다 없으면 어떻게 할지 정책
+          if (!tsMs) {
+            // A. 날짜 모르는 애는 아예 빼고 싶으면:
+            // return false;
+
+            // B. 일단은 보여주고 싶으면:
+            return true;
+          }
 
           if (tsMs < dayStartMs(dateStart) || tsMs >= dayEndNextMs(dateEnd)) {
             return false;
@@ -221,13 +258,17 @@ export default function HomeScreen() {
           return inTimeWindow(tsMs, timeStart, timeEnd);
         });
 
+        console.log('filtered length:::', filtered.length);
+
+
         // 5) 상세 정보 + 위치 포함해서 Photo로 매핑
         const baseInfos: Photo[] = await Promise.all(
           filtered.map(async (a) => {
             try {
               const info = await MediaLibrary.getAssetInfoAsync(a.id);
               const uri =
-                Platform.OS === "ios" ? info.localUri ?? info.uri : info.uri;
+                true ? info.localUri ?? info.uri : info.uri;
+              console.log("uri: ", uri);
               return {
                 uri,
                 takenAt: info.creationTime ?? a.creationTime ?? null,
@@ -253,6 +294,8 @@ export default function HomeScreen() {
             }
           })
         );
+
+        console.log("photos.length 1: ", photos.length)
 
         // 6) 위치 정보 기반으로 country/city 붙이기
         const withPlaces = await imagesWithLocation(baseInfos, {
@@ -371,84 +414,130 @@ export default function HomeScreen() {
     []
   );
 
-  return (
-    <SafeAreaView style={{ flex: 1 }} edges={["left", "right", "bottom"]}>
-      {/* 날짜/시간으로 필터링 모듈 Start 
-          - 유저가 조작한 값을 모듈에서 받은 후 Prop으로 메인 소스에 넘겨 갱신한다.
-      */}
-      <DateTimeFilter onChange={handleDateTimeChange} />
-      {/* 날짜/시간으로 필터링 모듈 End */}
-      <View style={{ flexDirection: "row", alignItems: "center", padding: 12 }}>
-        <LocationSelector
-          photos={photos}
-          onSelectionChange={handleSelectionChange}
-        />
-      </View>
-      {/* 지도에서 보기 */}
-      <View style={styles.mapContainer}>
-        {/* <ShowOnMap images={images} /> */}
-        <ShowOnMap images={photos} />
-      </View>
-      {/* 썸네일 그리드 */}
-      <FlatList<Photo>
-        style={{ flex: 1 }} // 리스트가 남은 세로 공간을 다 차지
-        data={photos}
-        numColumns={numColumns}
-        keyExtractor={(_, i) => i.toString()}
-        renderItem={renderItem}
-        contentContainerStyle={{
-          paddingHorizontal: horizontalPadding,
-          paddingTop: 4,
-          paddingBottom: 16,
-        }}
-        onScrollBeginDrag={() => {
-          setUserScrolled(true);
-        }}
-        onMomentumScrollBegin={() => {
-          setUserScrolled(true);
-          onEndDuringMomentumRef.current = false;
-        }}
-        onMomentumScrollEnd={() => {
-          onEndDuringMomentumRef.current = true;
-        }}
-        onEndReachedThreshold={0.4}
-        onEndReached={() => {
-          // 1) 스크롤 시작 전이면 무시
-          if (!userScrolled) return;
-          // 2) 모멘텀 중 첫 호출만 허용
-          if (onEndDuringMomentumRef.current) return;
-          // 3) 이미 로딩 중/락이면 무시
-          if (loading || onEndLockRef.current) return;
-          // 4) 더 불러올 페이지 없으면 무시
-          if (!hasNextPage) return;
-          // ---- 페이지네이션 시작 ----
-          onEndLockRef.current = true;
-          onEndDuringMomentumRef.current = true; // 이번 모멘텀 사이클에서는 한 번만
-          isPaginatingRef.current = true;
+  const handleSlideshow = () => {
+    console.log("Slideshow start");
+  };
 
-          loadPhotos({ reset: false }).finally(() => {
-            onEndLockRef.current = false;
-            isPaginatingRef.current = false;
-          });
-        }}
-        ListFooterComponent={
-          // 사용자가 스크롤해서 로딩하는 경우에만 표시(초기 자동 로딩 표시 억제)
-          isPaginatingRef.current && loading ? (
-            <ActivityIndicator style={{ marginVertical: 12 }} />
-          ) : null
-        }
-        onLayout={({
-          nativeEvent: {
-            layout: { height: lh },
-          },
-        }) => {
-          // 높이는 onContentSizeChange에서 비교
-        }}
-        onContentSizeChange={(_, ch) => {
-          // 화면보다 컨텐츠가 클 때만 다음 페이지 로딩 허용
-          setListCanScroll(ch > 0);
-        }}
-      />
+  const handleShowOnMap = () => {
+    <View style={styles.mapContainer}>
+      <ShowOnMap images={photos} />
+    </View>
+    console.log("Show on map, photos: ", photos.length);
+  };
+
+
+  return (
+    <LinearGradient
+    colors={['#E8F2FF', '#F9F3FF']} // 연한 하늘색 + 약간 보라 느낌
+    style={styles.screen}
+    >
+    <SafeAreaView style={{ flex: 1 }} edges={["left", "right"]}>
+      <View style={{ flex: 1 }}>
+        <View style={styles.topArea}>
+
+          {/* 상단버튼영역 */}
+          <View style={styles.topButtonsRow}>
+
+              {/* 설정 아이콘 버튼 */}
+              <TouchableOpacity
+                onPress={handleOpenSettings}
+                activeOpacity={0.7}
+                style={styles.iconButton}
+              >
+                <Ionicons name="settings-outline" size={30} color="#374151" />
+              </TouchableOpacity>
+
+              {/* 슬라이드쇼 버튼 (파란 그라디언트) */}
+              <TouchableOpacity onPress={handleSlideshow} activeOpacity={0.9}>
+                <LinearGradient
+                  colors={['#2B7FFF', '#AD46FF']}
+                  start={{ x: 0, y: 0 }}
+                  end={{ x: 1, y: 0 }}
+                  style={styles.primaryButton}
+                >
+                  <Ionicons
+                    name="play-circle-outline"
+                    size={18}
+                    color="#FFFFFF"
+                    style={{ marginRight: 6 }}
+                  />
+                  <Text style={styles.primaryButtonText}>Slideshow</Text>
+                </LinearGradient>
+              </TouchableOpacity>
+      
+              {/* Show on map 버튼 (화이트 카드) */}
+              <View style={styles.secondaryButton}>
+                <ShowOnMap images={photos} />
+              </View>
+            </View>
+            
+          {/* 썸네일 그리드 */}
+          <FlatList<Photo>
+            style={{ flex: 1 }} // 리스트가 남은 세로 공간을 다 차지
+            data={photos}
+            numColumns={numColumns}
+            keyExtractor={(_, i) => i.toString()}
+            renderItem={renderItem}
+            contentContainerStyle={{
+              paddingHorizontal: horizontalPadding,
+              padding: 8,
+              backgroundColor: "#FFF",
+              borderRadius: 10,
+            }}
+            onScrollBeginDrag={() => {
+              setUserScrolled(true);
+            }}
+            onMomentumScrollBegin={() => {
+              setUserScrolled(true);
+              onEndDuringMomentumRef.current = false;
+            }}
+            onMomentumScrollEnd={() => {
+              onEndDuringMomentumRef.current = true;
+            }}
+            onEndReachedThreshold={0.4}
+            onEndReached={() => {
+              // 1) 스크롤 시작 전이면 무시
+              if (!userScrolled) return;
+              // 2) 모멘텀 중 첫 호출만 허용
+              if (onEndDuringMomentumRef.current) return;
+              // 3) 이미 로딩 중/락이면 무시
+              if (loading || onEndLockRef.current) return;
+              // 4) 더 불러올 페이지 없으면 무시
+              if (!hasNextPage) return;
+              // ---- 페이지네이션 시작 ----
+              onEndLockRef.current = true;
+              onEndDuringMomentumRef.current = true; // 이번 모멘텀 사이클에서는 한 번만
+              isPaginatingRef.current = true;
+
+              loadPhotos({ reset: false }).finally(() => {
+                onEndLockRef.current = false;
+                isPaginatingRef.current = false;
+              });
+            }}
+            ListFooterComponent={
+              // 사용자가 스크롤해서 로딩하는 경우에만 표시(초기 자동 로딩 표시 억제)
+              isPaginatingRef.current && loading ? (
+                <ActivityIndicator style={{ marginVertical: 12 }} />
+              ) : null
+            }
+            onLayout={({
+              nativeEvent: {
+                layout: { height: lh },
+              },
+            }) => {
+              // 높이는 onContentSizeChange에서 비교
+            }}
+            onContentSizeChange={(_, ch) => {
+              // 화면보다 컨텐츠가 클 때만 다음 페이지 로딩 허용
+              setListCanScroll(ch > 0);
+            }}
+          />
+        </View>
+        <View style={styles.bottomArea}>
+          <DateTimeFilter onChange={handleDateTimeChange} />
+        </View>
+      </View>
+    
 
       {/* 전체화면 이미지 뷰어 (핀치줌/스와이프) */}
       <ImageViewing
@@ -520,10 +609,90 @@ export default function HomeScreen() {
         </>
       )}
     </SafeAreaView>
+    </LinearGradient>
   );
 }
 
 const styles = StyleSheet.create({
+  screen: {
+    flex: 1,
+    paddingHorizontal: 20,
+    ...Platform.select({
+      ios: { paddingTop: 20 }, 
+      android: { paddingTop: 50 },
+    }),
+  },
+  main: {
+    flex: 1,
+    paddingHorizontal: 16,
+    paddingTop: 24,
+  },
+  topArea: {
+    flex: 1,              // 남은 공간 다 차지
+    // 여기 안에서 썸네일 카드에 shadow, radius 등 주면 됨
+    paddingBottom: 12,    // 밑 여백
+  },
+  bottomArea: {
+    //paddingBottom: 15,    // 밑 여백
+    ...Platform.select({
+      ios: { paddingBottom: 10 }, 
+      android: { paddingBottom: 20 },
+    }),
+    paddingTop: 8,
+  },
+  topButtonsRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    marginBottom: 16,
+  },
+  iconButton: {
+    marginLeft: 12,
+    padding: 6,
+  },
+  // 메인 파란 버튼
+  primaryButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: 20,
+    height: 40,
+    borderRadius: 999,
+    shadowColor: '#2563EB',
+    shadowOpacity: 0.25,
+    shadowRadius: 10,
+    shadowOffset: { width: 0, height: 6 },
+    elevation: 4,
+  },
+  primaryButtonText: {
+    color: '#FFFFFF',
+    fontSize: 14,
+    fontWeight: '600',
+  },
+  // 흰색 보조 버튼
+  secondaryButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: 20,
+    height: 40,
+    borderRadius: 999,
+    backgroundColor: '#FFFFFF',
+    borderWidth: 1,
+    borderColor: 'rgba(148,163,184,0.5)',
+    shadowColor: '#000',
+    shadowOpacity: 0.08,
+    shadowRadius: 10,
+    shadowOffset: { width: 0, height: 4 },
+    elevation: 2,
+  },
+  secondaryButtonText: {
+    color: '#111827',
+    fontSize: 14,
+    fontWeight: '600',
+  },
+  filtersSection: {
+    marginTop: 16,
+  },
   container: {
     flexDirection: "row",
     flexWrap: "wrap",
@@ -542,7 +711,12 @@ const styles = StyleSheet.create({
     width: "100%",
     aspectRatio: 1,
     height: imageWidth,
-    borderRadius: 6,
+    borderRadius: 10,
+    // 살짝 떠 있는 느낌
+    shadowColor: '#000',
+    shadowOpacity: 0.1,
+    shadowRadius: 10,
+    shadowOffset: { width: 0, height: 10 },
   },
   errorText: {
     color: "red",
@@ -576,4 +750,17 @@ const styles = StyleSheet.create({
     justifyContent: "center",
   },
   closeTxt: { color: "#fff", fontSize: 18, fontWeight: "700" },
+  thumbnailCard: {
+    backgroundColor: '#FFFFFF',   // 내부 흰색
+    borderRadius: 32,             // 모서리 둥글게
+    padding: 12,
+    marginTop: 12,
+    // 살짝 떠 있는 느낌
+    shadowColor: '#000',
+    shadowOpacity: 0.08,
+    shadowRadius: 20,
+    shadowOffset: { width: 0, height: 10 },
+    elevation: 6,                 // Android
+  },
+
 });

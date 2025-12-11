@@ -1,5 +1,5 @@
 // App.js
-import DateTimePicker from '@react-native-community/datetimepicker';
+import { LinearGradient } from 'expo-linear-gradient';
 import {
   SetStateAction,
   useEffect,
@@ -13,6 +13,8 @@ import {
   //Button, Image, FlatList, PermissionsAndroid, 
   TouchableOpacity, useWindowDimensions, View,
 } from 'react-native';
+import DateTimePicker from './DateTimePicker';
+
 
 type DatePickersResponsiveProps = {
     dateStart: Date;
@@ -30,47 +32,12 @@ const DatePickersResponsive = ({ dateStart, dateEnd, onChangeStart, onChangeEnd 
   return (
     <>
       <View style={[styles.row, stack && { flexDirection: 'column', alignItems: 'stretch' }]}>
-        <Text style={styles.section}>Select date</Text>
-      </View>
-
-      <View style={[styles.row, stack && { flexDirection: 'column', alignItems: 'stretch' }]}>
-        {/* START */}
         <View style={[styles.pickerBox, stack && styles.pickerBoxStack]}>
-          <DateTimePicker
-            value={dateStart}
-            mode="date"
-            display="spinner"
-            onChange={(_, d) => { if (d) onChangeStart(d); }}
-            style={{
-              height: 220,               // 네이티브 기본 높이 유지
-              transform: [
-                { scale: 0.95 },         // 글자/휠 축소(원하면 0.85~0.95에서 조절)
-                { translateY: 0 },      // 중앙선 보정(기기별로 -4 ~ -12 사이에서 미세 튜닝)
-              ],
-            }}
-            themeVariant="light"      // 👈 다크모드여도 라이트 테마 강제
-            textColor="#000000"       // 👈 글자색 직접 지정
-          />
+          <DateTimePicker mode="date" value={dateStart} onChange={onChangeStart}/>
         </View>
 
-        {/* END */}
         <View style={[styles.pickerBox, stack && styles.pickerBoxStack]}>
-          {/* stack 모드에서는 상단 라벨이 Start만 보이므로 End 라벨 추가 */}
-          <DateTimePicker
-            value={dateEnd}
-            mode="date"
-            display="spinner"
-            onChange={(_, d) => { if (d) onChangeEnd(d); }}
-            style={{
-              height: 220,               // 네이티브 기본 높이 유지
-              transform: [
-                { scale: 0.95 },         // 글자/휠 축소(원하면 0.85~0.95에서 조절)
-                { translateY: 0 },      // 중앙선 보정(기기별로 -4 ~ -12 사이에서 미세 튜닝)
-              ],
-            }}    
-            themeVariant="light"      // 👈 다크모드여도 라이트 테마 강제
-            textColor="#000000"       // 👈 글자색 직접 지정      
-          />
+          <DateTimePicker mode="date" value={dateEnd} onChange={onChangeEnd}/>
         </View>
       </View>
     </>
@@ -134,6 +101,14 @@ export default function DateTimeFilter({ onChange }: DateTimeFilterProps) {
     useEffect(() => {
         onChange?.({ dateStart, dateEnd, timeStart, timeEnd });
     }, [dateStart, dateEnd, timeStart, timeEnd, onChange]);
+
+    useEffect(() => {
+      console.log('dateModalVisible =', dateModalVisible);
+    }, [dateModalVisible]);
+
+    useEffect(() => {
+      console.log('timeModalVisible =', timeModalVisible);
+    }, [timeModalVisible]);
   
     // 분→라벨 보조(필요시)
     const mm = (m: number) => `${`${Math.floor(m/60)}`.padStart(2,'0')}:${`${m%60}`.padStart(2,'0')}`;
@@ -196,46 +171,63 @@ export default function DateTimeFilter({ onChange }: DateTimeFilterProps) {
     };
   
     // ---- 렌더 ----
-    const dateLabel = `Date: ${fmtDate(dateStart)} – ${fmtDate(dateEnd)}`;
-    const timeLabel = `Time: ${fmtTime(timeStart)} – ${fmtTime(timeEnd)}`;
+    const dateLabel = `${fmtDate(dateStart)} – ${fmtDate(dateEnd)}`;
+    const timeLabel = `${fmtTime(timeStart)} – ${fmtTime(timeEnd)}`;
   
     return (
       <View>
-        {/* 상단 검색 바 */}
-        <View style={styles.bar}>
-          <Chip label={dateLabel} 
-            onPress={
-              //() => setDateModalVisible(true)
-              () => {
-              if (isIOS) {
-                setDateModalVisible(true); // iOS: 기존 bottom sheet
-              } else {
-                setAndroidDateField('start'); // Android: start 날짜부터 선택
-              }
-            }}
-            onReset={() => { setDateStart(oneYearAgo); 
-            setDateEnd(today); }} />
-          <Chip
-            label={timeLabel}
-            onPress={() => {
-              if (isIOS) {
-                setTimeModalVisible(true); // iOS: 기존 bottom sheet
-              } else {
-                setAndroidTimeField('start'); // Android: start 시간부터 선택
-              }
-            }}
-            onReset={() => {
-              setTimeStart(0);
-              setTimeEnd(1440);
-            }}
-          />
-          {/* <TouchableOpacity onPress={resetAll} style={styles.resetBtn}>
-            <Text style={styles.resetTxt}>Reset</Text>
-          </TouchableOpacity> */}
+        {/* 하단 고정 필터 패널 */}
+        <View style={styles.filterPanel}>
+          {/* Date row */}
+          
+          <View style={styles.filterRow}>
+            <Text style={styles.filterLabel}>Date</Text>
+            <TouchableOpacity
+              onPress={() => setDateModalVisible(true)}
+              activeOpacity={0.8}
+              style={styles.filterCard}
+            >
+              <Text style={styles.filterValue} numberOfLines={1}>
+                {dateLabel}
+              </Text>
+              <Text style={styles.filterEdit}>Reset</Text>
+            </TouchableOpacity>
+          </View>
+
+          <View style={styles.filterRow}>
+            <Text style={styles.filterLabel}>Time</Text>
+            <TouchableOpacity
+              onPress={() => setTimeModalVisible(true)}
+              activeOpacity={0.8}
+              style={styles.filterCard}
+            >
+              <Text style={styles.filterValue} numberOfLines={1}>
+                {timeLabel}
+              </Text>
+              <Text style={styles.filterEdit}>Reset</Text>
+            </TouchableOpacity>
+          </View>
+
+          {/* Location row – 기존 Location 필터 로직에 맞게 onPress 연결 */}
+          <View style={styles.filterRow}>
+            <Text style={styles.filterLabel}>Location</Text>
+            <TouchableOpacity
+              onPress={() => setTimeModalVisible(true)}
+              activeOpacity={0.8}
+              style={styles.filterCard}
+            >
+              <View style={styles.filterValueArea}>
+                {/* <Text style={styles.filterValue} numberOfLines={1}>
+                  {locationLabel}
+                </Text> */}
+                <Text style={styles.filterEdit}>Reset</Text>
+              </View>
+            </TouchableOpacity>
+          </View>
         </View>
   
         {/* 날짜 범위 모달: Start/End 한 팝업, 즐겨찾기 포함 (좁은 화면은 세로 스택) */}
-        {isIOS && (
+        {true && (
           <Modal
             visible={dateModalVisible}
             transparent
@@ -245,7 +237,7 @@ export default function DateTimeFilter({ onChange }: DateTimeFilterProps) {
             <View style={styles.modalBackdrop}>
               <View style={styles.sheet}>
                 <View style={styles.sheetHeader}>
-                  <Text style={styles.sheetTitle}></Text>
+                  <Text style={styles.sheetTitle}>Select Date</Text>
                   <View style={{ flexDirection: 'row' }}>
                     <TouchableOpacity onPress={() => { setDateStart(oneYearAgo); setDateEnd(today); setDateModalVisible(false); }}>
                       <Text style={styles.link}>Reset</Text>
@@ -255,6 +247,14 @@ export default function DateTimeFilter({ onChange }: DateTimeFilterProps) {
                     </TouchableOpacity>
                   </View>
                 </View>
+                
+                {/* 즐겨찾기 */}
+                <View style={styles.favs}>
+                  <Fav label="One Year Ago" onPress={favOneYearAgo} />
+                  <Fav label="One Month Ago" onPress={favOneMonthAgo} />
+                  <Fav label="Past Month" onPress={favPastMonth} />
+                  <Fav label="Past Week" onPress={favPastWeek} />
+                </View>
     
                 <DatePickersResponsive
                   dateStart={dateStart}
@@ -263,20 +263,14 @@ export default function DateTimeFilter({ onChange }: DateTimeFilterProps) {
                   onChangeEnd={setDateEnd}
                 />
     
-                {/* 즐겨찾기 */}
-                <View style={styles.favs}>
-                  <Fav label="One Year Ago" onPress={favOneYearAgo} />
-                  <Fav label="One Month Ago" onPress={favOneMonthAgo} />
-                  <Fav label="Past Month" onPress={favPastMonth} />
-                  <Fav label="Past Week" onPress={favPastWeek} />
-                </View>
+
               </View>
             </View>
           </Modal>
         )}
 
         {/* 시간 범위 모달: Start/End 한 팝업 */}
-        {isIOS && (
+        {true && (
           <Modal
             visible={timeModalVisible}
             transparent
@@ -286,7 +280,7 @@ export default function DateTimeFilter({ onChange }: DateTimeFilterProps) {
             <View style={styles.modalBackdrop}>
               <View style={styles.sheet}>
                 <View style={styles.sheetHeader}>
-                  <Text style={styles.sheetTitle}></Text>
+                  <Text style={styles.sheetTitle}>Select Time</Text>
                   <View style={{ flexDirection: 'row' }}>
                     <TouchableOpacity onPress={() => { setTimeStart(0); setTimeEnd(1439); setTimeModalVisible(false); }}>
                       <Text style={styles.link}>Reset</Text>
@@ -296,66 +290,25 @@ export default function DateTimeFilter({ onChange }: DateTimeFilterProps) {
                     </TouchableOpacity>
                   </View>
                 </View>
-    
-                {/* Start / End 두 섹션 */}
+
                 <View style={styles.row}>
-                  <Text style={styles.section}>Select time</Text>
-                  {/* <Text style={styles.section}>End</Text> */}
+                    <View style={styles.pickerBox}>
+                      <DateTimePicker
+                        mode="time"
+                        value={new Date(2000, 0, 1, Math.floor(timeStart / 60), timeStart % 60)}
+                        onChange={(d) => setTimeHM('start', d.getHours(), d.getMinutes())}
+                      />
+                    </View>
+
+                    <View style={styles.pickerBox}>
+                      <DateTimePicker
+                        mode="time"
+                        value={new Date(2000, 0, 1, Math.floor(timeEnd / 60), timeEnd % 60)}
+                        onChange={(d) => setTimeHM('end', d.getHours(), d.getMinutes())}
+                      />
+                    </View>
                 </View>
-    
-                <View style={styles.row}>
-                  {/* START: Time Picker 1 */}
-                  <View style={styles.pickerBox}>
-                    <DateTimePicker
-                      value={new Date(2000, 0, 1, Math.floor(timeStart/60), timeStart%60)}
-                      mode="time"
-                      display="spinner"
-                      onChange={(_, d) => {
-                        if (!d) return;
-                        setTimeHM('start', d.getHours(), d.getMinutes());
-                      }}
-                      style={{
-                        height: IOS_WHEEL_NATIVE_HEIGHT,
-                        transform: [
-                          { scale: WHEEL_SCALE },
-                          // scale로 줄이면 중앙선이 약간 내려가 보일 수 있어 약간 올림(기기별 미세 조정: -6~-10)
-                          { translateY: 0 },
-                        ],
-                      }}
-                      themeVariant="light"      // 👈 다크모드여도 라이트 테마 강제
-                      textColor="#000000"       // 👈 글자색 직접 지정
-                    />
-                    {/* <View style={[styles.cover, { top: 0, height: COVER_HEIGHT + 0 }]} />
-                    <View style={[styles.cover, { bottom: 0, height: COVER_HEIGHT + 6 }]} /> */}
-                  </View>
-    
-                  {/* END: Time Picker 2 */}
-                  <View style={styles.pickerBox}>
-                    <DateTimePicker
-                      value={new Date(2000, 0, 1, Math.floor(timeEnd/60), timeEnd%60)}
-                      mode="time"
-                      display="spinner"
-                      onChange={(_, d) => {
-                        if (!d) return;
-                        // 24:00 허용: 사용자가 00:00을 선택했는데 End를 다음날 00:00으로 간주하고 싶다면 아래 로직 확장
-                        setTimeHM('end', d.getHours(), d.getMinutes());
-                      }}
-                      style={{
-                        height: IOS_WHEEL_NATIVE_HEIGHT,
-                        transform: [
-                          { scale: WHEEL_SCALE },
-                          // scale로 줄이면 중앙선이 약간 내려가 보일 수 있어 약간 올림(기기별 미세 조정: -6~-10)
-                          { translateY: 0 },
-                        ],
-                      }}
-                      themeVariant="light"      // 👈 다크모드여도 라이트 테마 강제
-                      textColor="#000000"       // 👈 글자색 직접 지정
-                    />
-                    {/* <View style={[styles.cover, { top: 0, height: COVER_HEIGHT + 6 }]} />
-                    <View style={[styles.cover, { bottom: 0, height: COVER_HEIGHT + 6 }]} /> */}
-                  </View>
-                </View>
-    
+
                 {/* 프리셋 4개 (2x2 그리드) */}
                 <View style={styles.timePresetGrid}>
                   {PRESETS.map(p => (
@@ -365,66 +318,37 @@ export default function DateTimeFilter({ onChange }: DateTimeFilterProps) {
                       activeOpacity={0.8}
                       onPress={() => applyTimePreset(p.s, p.e)}
                     >
-                      <Text style={styles.timePresetTxt}>{p.label}</Text>
+                      <LinearGradient
+                        colors={['#2B7FFF', '#AD46FF']}
+                        start={{ x: 0, y: 0 }}
+                        end={{ x: 1, y: 0 }}
+                        style={styles.rangeBtnGradient}
+                      >
+                        <Text style={styles.timePresetTxt}>{p.label}</Text>
+                      </LinearGradient>
                     </TouchableOpacity>
                   ))}
                 </View>
-    
+
                 {/* Anytime 한 줄 */}
                 <TouchableOpacity
                   style={[styles.timePresetBtn, styles.timePresetAny]}
                   activeOpacity={0.8}
-                  onPress={() => applyTimePreset(0, 1439)}  // 00:00~24:00
+                  onPress={() => applyTimePreset(0, 1439)}
                 >
-                  <Text style={styles.timePresetTxt}>All day</Text>
+                  <LinearGradient
+                          colors={['#2B7FFF', '#AD46FF']}
+                          start={{ x: 0, y: 0 }}
+                          end={{ x: 1, y: 0 }}
+                          style={styles.rangeBtnGradient}
+                  >
+                    <Text style={styles.timePresetTxt}>All day</Text>
+                  </LinearGradient>
                 </TouchableOpacity>
-    
               </View>
             </View>
           </Modal>
         )}
-
-        {/* ---- Android 전용 DatePicker (start/end 한 번씩) ---- */}
-        {!isIOS && androidDateField && (
-          <DateTimePicker
-            value={androidDateField === 'start' ? dateStart : dateEnd}
-            mode="date"
-            display="default"            // 안드로이드 시스템 모달
-            onChange={(_, d) => {
-              if (d) {
-                if (androidDateField === 'start') setDateStart(d);
-                else setDateEnd(d);
-              }
-              setAndroidDateField(null); // 시스템 모달 닫힌 뒤 상태 초기화
-            }}
-          />
-        )}
-
-        {/* ---- Android 전용 TimePicker ---- */}
-        {!isIOS && androidTimeField && (
-          <DateTimePicker
-            value={
-              androidTimeField === 'start'
-                ? new Date(2000, 0, 1, Math.floor(timeStart / 60), timeStart % 60)
-                : new Date(2000, 0, 1, Math.floor(timeEnd / 60), timeEnd % 60)
-            }
-            mode="time"
-            display="default"
-            onChange={(_, d) => {
-              if (!d) {
-                setAndroidTimeField(null);
-                return;
-              }
-              if (androidTimeField === 'start') {
-                setTimeHM('start', d.getHours(), d.getMinutes());
-              } else {
-                setTimeHM('end', d.getHours(), d.getMinutes());
-              }
-              setAndroidTimeField(null);
-            }}
-          />
-        )}
-
       </View>
     );
 }
@@ -451,20 +375,78 @@ type FavProps = {
 };
 
 const Fav = ({ label, onPress }: FavProps) => (
-    <TouchableOpacity onPress={onPress} style={styles.favBtn}>
-      <Text style={styles.favTxt}>{label}</Text>
+    <TouchableOpacity onPress={onPress}>
+      <LinearGradient
+        colors={['#2B7FFF', '#AD46FF']}
+        start={{ x: 0, y: 0 }}
+        end={{ x: 1, y: 0 }}
+        style={styles.quickBtnGradient}
+      >
+        <Text style={styles.favTxt}>{label}</Text>
+      </LinearGradient>
     </TouchableOpacity>
 );
 
 /* ---------------- 스타일 ---------------- */
 const styles = StyleSheet.create({
-    bar: {
+
+    filterCard: {
+      flexDirection: "row",
+      alignItems: "center",
+      justifyContent: "space-between",
+      backgroundColor: "#fff",
+      paddingHorizontal: 14,
+      paddingVertical: 10,
+      borderRadius: 12,
+      // 그림자
+      elevation: 3,
+      shadowColor: "#000",
+      shadowOpacity: 0.12,
+      shadowOffset: { width: 0, height: 2 },
+      shadowRadius: 4,
+      flex: 1,   // ← 레이블 옆에서 가능한 공간을 전부 차지함
+      marginLeft: 12,
+    },
+    filterLabel: {
+      fontSize: 14,
+      fontWeight: "bold",
+      color: "#777",
+      width: 65,   // ← 레이블 길이를 고정해야 줄바꿈 안 생김
+    },
+    filterValue: {
+      fontSize: 12,
+      color: "#000",
+      flex: 1,
+    },
+    filterEdit: {
+      fontSize: 10,
+      color: "#3478f6",
+      marginLeft: 12,
+    },
+    filterPanel: {
+      //borderTopWidth: 1,
+      //borderColor: '#eee',
+      //backgroundColor: '#fff',
+      paddingHorizontal: 0,
+      paddingTop: 0,
+      paddingBottom: 0,
+    },
+    filterRow: {
+      flexDirection: "row",
+      alignItems: "center",
+      justifyContent: "space-between",
+      marginBottom: 12,
+    },
+    filterTitle: {
+      fontSize: 12,
+      color: '#888',
+      width: 90,              // 왼쪽 제목 폭 고정해서 정렬
+    },
+    filterValueArea: {
+      flex: 1,
       flexDirection: 'row',
       alignItems: 'center',
-      paddingHorizontal: 12,
-      paddingVertical: 8,
-      backgroundColor: '#fff',
-      elevation: 2,
+      justifyContent: 'space-between',
     },
     chip: {
       flexDirection: 'row',
@@ -472,30 +454,34 @@ const styles = StyleSheet.create({
       borderWidth: 1, borderColor: '#ccc', borderRadius: 20,
       paddingHorizontal: 10, paddingVertical: 6, marginRight: 8,
     },
+
     chipTxt: { fontSize: 12, color: '#000', },
     resetBtn: { marginLeft: 'auto' },
     resetTxt: { color: '#3478f6', fontWeight: '600' },
-  
     thumb: { width: '24%', aspectRatio: 1, backgroundColor: '#ddd', margin: '0.5%', borderRadius: 6 },
-  
     modalBackdrop: { flex: 1, justifyContent: 'flex-end', backgroundColor: 'rgba(0,0,0,0.35)' },
     sheet: { backgroundColor: '#fff', borderTopLeftRadius: 16, borderTopRightRadius: 16, padding: 12, maxHeight: '80%' },
-    sheetHeader: { flexDirection: 'row', justifyContent: 'flex-end', alignItems: 'center' },
-    sheetTitle: { fontWeight: '600', fontSize: 16, color: '#000', },
+    sheetHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
+    sheetTitle: { fontWeight: '600', fontSize: 15, color: '#000', },
     link: { color: '#3478f6', fontWeight: '600' },
-  
     row: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginTop: 8, color: '#000', },
     section: { fontWeight: '600', color: '#000', },
     pickerBox: {
-      width: '48%',
+      width: '49%',
       borderWidth: 1, borderColor: '#eee', borderRadius: 12,
-      height: VISIBLE_HEIGHT,     // ← 3줄만 보이게
+      ...Platform.select({
+        ios: { height: VISIBLE_HEIGHT }, // 3줄
+        android: { // 안드로이드는 휠 자체가 더 커서 높이를 충분히 주고 잘라내지 않음
+          height: 130,
+        },
+      }),
       overflow: 'hidden',
       position: 'relative',
       alignItems: 'center',
       justifyContent: 'center',
       backgroundColor: '#fff',    // 모달 배경과 동일해야 덮개가 티 안남
       color: '#000',
+      marginBottom: 0,
     },
     cover: {
       position: 'absolute',
@@ -503,12 +489,10 @@ const styles = StyleSheet.create({
       backgroundColor: '#fff',    // 모달 바탕색과 동일
       zIndex: 10,
     },
-    pickerBoxStack: { width: '100%', marginTop: 8, },
-  
-  
-    favs: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginTop: 12 },
-    favBtn: { borderWidth: 1, borderColor: '#ccc', borderRadius: 20, paddingHorizontal: 10, paddingVertical: 6, marginRight: 8, marginBottom: 8 },
-    favTxt: { fontSize: 12, fontWeight: '600', color: '#000', },
+    pickerBoxStack: { width: '100%', marginTop: 5, },
+    favs: { flexDirection: 'row', flexWrap: 'wrap', gap: 4, marginTop: 12, },
+    favBtn: { backgroundColor: '#F3F4F6', borderWidth: 1, borderColor: '#F3F4F6', borderRadius: 20, paddingHorizontal: 10, paddingVertical: 5, marginRight: 0, marginBottom: 0 },
+    favTxt: { fontSize: 9, fontWeight: '800', color: '#FFF', },
   
     timePresetGrid: {
       marginTop: 12,
@@ -517,23 +501,38 @@ const styles = StyleSheet.create({
       justifyContent: 'space-between',
     },
     timePresetBtn: {
-      width: '48%',
-      borderWidth: 1,
-      borderColor: '#999',        
+      width: '49%',
+      //borderWidth: 1,
+      //borderColor: '#999',        
       borderRadius: 10,
-      paddingVertical: 10,
-      marginBottom: 10,
+      paddingVertical: 0,
+      marginBottom: 5,
       alignItems: 'center',
       justifyContent: 'center',
     },
     timePresetAny: {
       width: '100%',
       borderColor: '#999',
-      paddingVertical: 12,
+      //paddingVertical: 12,
     },
     timePresetTxt: {
       fontWeight: '600',
-      color: '#000',
+      color: '#FFF',
+    },
+
+    quickBtnGradient: {
+      paddingHorizontal: 14,
+      paddingVertical: 8,
+      borderRadius: 14,
+    },
+    
+    rangeBtnGradient: {
+      paddingVertical: 10,
+      paddingHorizontal: 12,
+      borderRadius: 12,
+      width: '100%',
+      justifyContent: 'center',
+      alignItems: 'center',
     },
 
 });
