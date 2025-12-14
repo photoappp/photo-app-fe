@@ -46,7 +46,6 @@ type DateTimeFilterState = {
 };
 
 type LocationFilterState = {
-  continents: string[];
   countries: string[];
   cities: string[];
 };
@@ -112,7 +111,6 @@ export default function HomeScreen() {
     dateEnd: new Date(),
     timeStart: 0,
     timeEnd: 1440,
-    continents: [],
     countries: [],
     cities: [],
   });
@@ -291,7 +289,7 @@ export default function HomeScreen() {
 
   // 썸네일 그리드에 사진 데이터 렌더링
   const renderItem: ListRenderItem<Photo> = ({ item, index }) => {
-    console.log("PHOTO URI >>>", item.uri);
+    // console.log("PHOTO URI >>>", item.uri);
     return (
       <TouchableOpacity
         style={styles.imageContainer}
