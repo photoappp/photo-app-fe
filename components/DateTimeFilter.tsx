@@ -11,6 +11,7 @@ import {
     //Button, Image, FlatList, PermissionsAndroid, Platform,
     TouchableOpacity, useWindowDimensions, View
 } from 'react-native';
+import { logEvent } from '@amplitude/analytics-react-native';
 
 type DatePickersResponsiveProps = {
     dateStart: Date;
@@ -39,7 +40,15 @@ const DatePickersResponsive = ({ dateStart, dateEnd, onChangeStart, onChangeEnd 
             value={dateStart}
             mode="date"
             display="spinner"
-            onChange={(_, d) => { if (d) onChangeStart(d); }}
+						onChange={(_, d) => {
+							if (d) {
+								onChangeStart(d);
+								// Amplitude 이벤트
+								logEvent('DateStart_Changed', {
+									dateStart: d.toISOString(),
+								});
+							}
+						}}
             style={{
               height: 220,               // 네이티브 기본 높이 유지
               transform: [
@@ -78,7 +87,15 @@ const DatePickersResponsive = ({ dateStart, dateEnd, onChangeStart, onChangeEnd 
             value={dateEnd}
             mode="date"
             display="spinner"
-            onChange={(_, d) => { if (d) onChangeEnd(d); }}
+						onChange={(_, d) => {
+							if (d) {
+								onChangeEnd(d);
+								// Amplitude 이벤트
+								logEvent('DateEnd_Changed', {
+									dateEnd: d.toISOString(),
+								});
+							}
+						}}
             style={{
               height: 220,               // 네이티브 기본 높이 유지
               transform: [
@@ -462,6 +479,11 @@ export default function DateTimeFilter({ onChange }: DateTimeFilterProps) {
                     onChange={(_, d) => {
                       if (!d) return;
                       setTimeHM('start', d.getHours(), d.getMinutes());
+											// Amplitude 이벤트
+											logEvent('TimeStart_Changed', {
+												hours: d.getHours(),
+												minutes: d.getMinutes(),
+											});
                     }}
                     style={{
                       height: IOS_WHEEL_NATIVE_HEIGHT,
@@ -486,6 +508,11 @@ export default function DateTimeFilter({ onChange }: DateTimeFilterProps) {
                       if (!d) return;
                       // 24:00 허용: 사용자가 00:00을 선택했는데 End를 다음날 00:00으로 간주하고 싶다면 아래 로직 확장
                       setTimeHM('end', d.getHours(), d.getMinutes());
+											// Amplitude 이벤트
+											logEvent('TimeEnd_Changed', {
+												hours: d.getHours(),
+												minutes: d.getMinutes(),
+											});
                     }}
                     style={{
                       height: IOS_WHEEL_NATIVE_HEIGHT,

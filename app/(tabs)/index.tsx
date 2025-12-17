@@ -2,7 +2,7 @@ import DateTimeFilter from "@/components/DateTimeFilter";
 import ShowOnMap from "@/components/ShowOnMap";
 import * as Location from "expo-location";
 import * as MediaLibrary from "expo-media-library";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, useLayoutEffect } from "react";
 import {
   ActivityIndicator,
   Alert,
@@ -21,6 +21,15 @@ import {
 } from "react-native";
 import ImageViewing from 'react-native-image-viewing';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import { Ionicons } from "@expo/vector-icons";
+import { Link, Stack, useRouter, useNavigation } from 'expo-router';
+
+import * as amplitude from '@amplitude/analytics-react-native';
+import AsyncStorage from '@react-native-async-storage/async-storage';
+import uuid from 'react-native-uuid';
+
+// 설치 단위 가상 디바이스 ID 생성
+const deviceId = uuid.v4() as string;
 
 // Responsive image grid calculations
 const screenWidth = Dimensions.get("window").width;
@@ -67,6 +76,52 @@ type DateTimeFilterState = {
 
 /** ---------- HomeScreen ---------- */
 export default function HomeScreen() {
+	const router = useRouter();
+	const navigation = useNavigation();
+	
+	useEffect(() => {
+			navigation.setOptions({ headerShown: false });
+		}, [navigation]);
+	
+	useEffect(() => {
+		async function setupAmplitude() {
+			// 앱 설치 단위 랜덤 고유 ID 생성
+			let userId = await AsyncStorage.getItem('userId');
+			if (!userId) {
+				userId = uuid.v4() as string; // 랜덤 UUID 생성
+				await AsyncStorage.setItem('userId', userId);
+			}
+
+			// SDK 초기화
+			amplitude.init('3b48b6b041a40b99d4aa3c6b37bbcaad', undefined, {
+				disableCookies: true,
+				logLevel: amplitude.Types.LogLevel.Debug,
+			});
+
+			// Amplitude에 userId 설정
+			amplitude.setUserId(userId);
+
+			// 디바이스/앱 정보 user properties로 기록
+			const identifyObj = new amplitude.Identify();
+			identifyObj.set('deviceOS', Platform.OS);
+			identifyObj.set('appVersion', '0.0.1'); // 업데이트 하기
+			identifyObj.set('platform', Platform.OS);
+			amplitude.identify(identifyObj);
+			
+			// 테스트 이벤트
+//			amplitude.track('Home Screen Viewed');
+		}
+
+		setupAmplitude();
+	}, []);
+	
+	// Amplitude 클릭 이벤트
+ const handleDateClick = () => amplitude.track("Date_Clicked");
+ const handleTimeClick = () => amplitude.track("Time_Clicked");
+ const handleLocationClick = () => amplitude.track("Location_Clicked");
+ const handleSlideClick = () => amplitude.track("Slide_Clicked");
+ const handleShowOnMapClick = () => amplitude.track("Show_on_the_map");
+ const handleSettingsClick = () => amplitude.track("Settings_Clicked");
 
   const [images, setImages] = useState<any[]>([]);
   const [error, setError] = useState<string | null>(null);
@@ -78,7 +133,8 @@ export default function HomeScreen() {
   const sleep = (ms: number) => new Promise(res => setTimeout(res, ms));
 
   // ---- 사진 목록/페이지네이션 ----
-  const [photos, setPhotos] = useState<Photo[]>([]); // 화면에 뿌릴 가공된 데이터
+  const [photos, setPhotos] = useState<Photo[]>([]); // 화면에 뿌릴 가공된 데이터 (필터 적용 후)
+	const [photosAll, setPhotosAll] = useState<Photo[]>([]); // 필터 적용 전 전체 사진
   const [endCursor, setEndCursor] = useState<string | null>(null); // MediaLibrary가 돌려주는 다음 페이지 커서 문자열
   const [hasNextPage, setHasNextPage] = useState<boolean>(true); // 다음 페이지 있는지 여부
   const [loading, setLoading] = useState<boolean>(false);
@@ -208,6 +264,9 @@ export default function HomeScreen() {
         });
   
         const assets = result.assets ?? [];
+				
+				// 전체 사진 상태 업데이트 (필터링 전)
+				setPhotosAll(prev => reset ? assets : [...prev, ...assets]);
   
         // 4) 날짜/시간 필터
         const filtered = assets.filter((a) => {
@@ -380,10 +439,50 @@ export default function HomeScreen() {
     );
   }, [photos, viewerIndex]);  
 
+	// 사용자 데이터 AsyncStorage 저장
+	useEffect(() => {
+		async function saveUserData() {
+			// 1) 앱 시작일 가져오기
+			const startDateIso = await AsyncStorage.getItem('appStartDate') ?? new Date().toISOString();
+			const startDate = startDateIso.split('T')[0];
+			await AsyncStorage.setItem('appStartDate', startDate);
+			
+			// 2) 위치 검색 횟수 가져오기
+			const locationSearchCount = parseInt((await AsyncStorage.getItem('locationSearchCount')) || '0', 10);
+
+			// 3) 필터 적용된 시간 검색 횟수 계산 (photosAll 기반)
+			const filteredTimeCount = photosAll.filter(p => {
+				if (!p.takenAt) return false;
+
+				// 날짜 필터 적용
+				if (p.takenAt < dayStartMs(filter.dateStart) || p.takenAt >= dayEndNextMs(filter.dateEnd)) return false;
+
+				// 시간 필터 적용
+				return inTimeWindow(p.takenAt, filter.timeStart, filter.timeEnd);
+			}).length;
+
+			// 4) 전체 사진 개수 (필터링 전)
+			const totalPhotos = photosAll.length;
+
+			// 5) AsyncStorage에 저장
+			const userData = { startDate, timeSearchCount: filteredTimeCount, locationSearchCount, totalPhotos };
+			await AsyncStorage.setItem('userData', JSON.stringify(userData));
+			
+			setUserData(userData);
+		}
+
+		saveUserData();
+	}, [photosAll, filter]);
+	
   return (
 
     <SafeAreaView style={{ flex: 1, paddingTop: 48 }}>
-
+			{/* 상단 Settings 버튼 */}
+			<View style={styles.header}>
+					<TouchableOpacity onPress={() => router.push('/settings')} style={{ marginRight: 15 }}>
+						<Ionicons name="settings-outline" size={28} color="black" />
+					</TouchableOpacity>
+			</View>
       {/* 지도에서 보기 */}
       <View style={styles.mapContainer}>
         {/* <ShowOnMap images={images} /> */}
@@ -393,7 +492,12 @@ export default function HomeScreen() {
       {/* 날짜/시간으로 필터링 모듈 Start 
           - 유저가 조작한 값을 모듈에서 받은 후 Prop으로 메인 소스에 넘겨 갱신한다.
       */}
-        <DateTimeFilter onChange={setFilter} />
+        <DateTimeFilter
+						onChange={setFilter}
+						onDateClick={handleDateClick}   // DatePicker 클릭 시
+						onTimeClick={handleTimeClick}   // TimePicker 클릭 시
+						onLocationClick={handleLocationClick}
+				/>
       {/* 날짜/시간으로 필터링 모듈 End */}
 
       {/* 썸네일 그리드 */}
@@ -543,4 +647,11 @@ const styles = StyleSheet.create({
     alignItems: "center",
     gap: 20,
   },
+	header: {
+			flexDirection: "row",
+			justifyContent: "flex-end",
+			alignItems: "center",
+			paddingHorizontal: 15,
+			height: 48,
+		},
 });
