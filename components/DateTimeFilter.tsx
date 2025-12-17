@@ -1,15 +1,15 @@
 // App.js
 import DateTimePicker from '@react-native-community/datetimepicker';
 import {
-    SetStateAction,
-    useEffect,
-    //useCallback, useMemo, useRef, 
-    useState
+  SetStateAction,
+  useEffect,
+  //useCallback, useMemo, useRef, 
+  useState
 } from 'react';
 import {
-    Modal, StyleSheet, Text,
-    //Button, Image, FlatList, PermissionsAndroid, Platform,
-    TouchableOpacity, useWindowDimensions, View
+  Modal, StyleSheet, Text,
+  //Button, Image, FlatList, PermissionsAndroid, Platform,
+  TouchableOpacity, useWindowDimensions, View
 } from 'react-native';
 import { logEvent } from '@amplitude/analytics-react-native';
 
@@ -29,8 +29,7 @@ const DatePickersResponsive = ({ dateStart, dateEnd, onChangeStart, onChangeEnd 
   return (
     <>
       <View style={[styles.row, stack && { flexDirection: 'column', alignItems: 'stretch' }]}>
-        <Text style={styles.section}>Start</Text>
-        {!stack && <Text style={styles.section}>End</Text>}
+        <Text style={styles.section}>Select date</Text>
       </View>
 
       <View style={[styles.row, stack && { flexDirection: 'column', alignItems: 'stretch' }]}>
@@ -52,29 +51,9 @@ const DatePickersResponsive = ({ dateStart, dateEnd, onChangeStart, onChangeEnd 
             style={{
               height: 220,               // 네이티브 기본 높이 유지
               transform: [
-                { scale: 0.92 },         // 글자/휠 축소(원하면 0.85~0.95에서 조절)
-                { translateY: -6 },      // 중앙선 보정(기기별로 -4 ~ -12 사이에서 미세 튜닝)
+                { scale: 0.95 },         // 글자/휠 축소(원하면 0.85~0.95에서 조절)
+                { translateY: 0 },      // 중앙선 보정(기기별로 -4 ~ -12 사이에서 미세 튜닝)
               ],
-            }}
-          />
-          <View
-            style={{
-              position: 'absolute',
-              left: 12,
-              right: 12,
-              height: 1,
-              backgroundColor: '#e5e5ea',
-              top: '33%', // 중앙선보다 살짝 위
-            }}
-          />
-          <View
-            style={{
-              position: 'absolute',
-              left: 12,
-              right: 12,
-              height: 1,
-              backgroundColor: '#e5e5ea',
-              top: '66%', // 중앙선보다 살짝 아래
             }}
           />
         </View>
@@ -82,7 +61,6 @@ const DatePickersResponsive = ({ dateStart, dateEnd, onChangeStart, onChangeEnd 
         {/* END */}
         <View style={[styles.pickerBox, stack && styles.pickerBoxStack]}>
           {/* stack 모드에서는 상단 라벨이 Start만 보이므로 End 라벨 추가 */}
-          {stack && <Text style={[styles.section, { marginBottom: 6 }]}>End</Text>}
           <DateTimePicker
             value={dateEnd}
             mode="date"
@@ -99,30 +77,10 @@ const DatePickersResponsive = ({ dateStart, dateEnd, onChangeStart, onChangeEnd 
             style={{
               height: 220,               // 네이티브 기본 높이 유지
               transform: [
-                { scale: 0.92 },         // 글자/휠 축소(원하면 0.85~0.95에서 조절)
-                { translateY: -6 },      // 중앙선 보정(기기별로 -4 ~ -12 사이에서 미세 튜닝)
+                { scale: 0.95 },         // 글자/휠 축소(원하면 0.85~0.95에서 조절)
+                { translateY: 0 },      // 중앙선 보정(기기별로 -4 ~ -12 사이에서 미세 튜닝)
               ],
             }}          
-          />
-          <View
-            style={{
-              position: 'absolute',
-              left: 12,
-              right: 12,
-              height: 1,
-              backgroundColor: '#e5e5ea',
-              top: '33%', // 중앙선보다 살짝 위
-            }}
-          />
-          <View
-            style={{
-              position: 'absolute',
-              left: 12,
-              right: 12,
-              height: 1,
-              backgroundColor: '#e5e5ea',
-              top: '66%', // 중앙선보다 살짝 아래
-            }}
           />
         </View>
       </View>
@@ -156,10 +114,10 @@ const viewerStyles = StyleSheet.create({
 // iOS UIDatePicker 스피너 기본 높이(기기별 216~220)
 const IOS_WHEEL_NATIVE_HEIGHT = 220;
 // 한 줄 높이(UIDatePicker 폰트 기준 대략 44pt)
-const ROW_HEIGHT = 44;
+const ROW_HEIGHT = 30;
 const VISIBLE_ROWS = 3;
-const VISIBLE_HEIGHT = ROW_HEIGHT * VISIBLE_ROWS; // 132
-const WHEEL_SCALE = 0.92; // 0.88~0.95 사이 조절 가능
+const VISIBLE_HEIGHT = ROW_HEIGHT * VISIBLE_ROWS;
+const WHEEL_SCALE = 0.95; // 0.88~0.95 사이 조절 가능
 
 // scale 후 실제 렌더 높이
 const RENDERED_HEIGHT = IOS_WHEEL_NATIVE_HEIGHT * WHEEL_SCALE;
@@ -392,15 +350,14 @@ export default function DateTimeFilter({ onChange }: DateTimeFilterProps) {
   
   
     return (
-      // <View style={{ flex: 1, paddingTop: 48 }}>
       <View>
         {/* 상단 검색 바 */}
         <View style={styles.bar}>
           <Chip label={dateLabel} onPress={() => setDateModalVisible(true)} onReset={() => { setDateStart(oneYearAgo); setDateEnd(today); }} />
           <Chip label={timeLabel} onPress={() => setTimeModalVisible(true)} onReset={() => { setTimeStart(0); setTimeEnd(1440); }} />
-          <TouchableOpacity onPress={resetAll} style={styles.resetBtn}>
+          {/* <TouchableOpacity onPress={resetAll} style={styles.resetBtn}>
             <Text style={styles.resetTxt}>Reset</Text>
-          </TouchableOpacity>
+          </TouchableOpacity> */}
         </View>
   
         {/* 날짜 범위 모달: Start/End 한 팝업, 즐겨찾기 포함 (좁은 화면은 세로 스택) */}
@@ -454,7 +411,7 @@ export default function DateTimeFilter({ onChange }: DateTimeFilterProps) {
               <View style={styles.sheetHeader}>
                 <Text style={styles.sheetTitle}></Text>
                 <View style={{ flexDirection: 'row' }}>
-                  <TouchableOpacity onPress={() => { setTimeStart(0); setTimeEnd(1440); setTimeModalVisible(false); }}>
+                  <TouchableOpacity onPress={() => { setTimeStart(0); setTimeEnd(1439); setTimeModalVisible(false); }}>
                     <Text style={styles.link}>Reset</Text>
                   </TouchableOpacity>
                   <TouchableOpacity onPress={() => setTimeModalVisible(false)} style={{ marginLeft: 16 }}>
@@ -465,8 +422,8 @@ export default function DateTimeFilter({ onChange }: DateTimeFilterProps) {
   
               {/* Start / End 두 섹션 */}
               <View style={styles.row}>
-                <Text style={styles.section}>Start</Text>
-                <Text style={styles.section}>End</Text>
+                <Text style={styles.section}>Select time</Text>
+                {/* <Text style={styles.section}>End</Text> */}
               </View>
   
               <View style={styles.row}>
@@ -490,12 +447,12 @@ export default function DateTimeFilter({ onChange }: DateTimeFilterProps) {
                       transform: [
                         { scale: WHEEL_SCALE },
                         // scale로 줄이면 중앙선이 약간 내려가 보일 수 있어 약간 올림(기기별 미세 조정: -6~-10)
-                        { translateY: -6 },
+                        { translateY: 0 },
                       ],
                     }}
                   />
-                  <View style={[styles.cover, { top: 0, height: COVER_HEIGHT + 6 }]} />
-                  <View style={[styles.cover, { bottom: 0, height: COVER_HEIGHT + 6 }]} />
+                  {/* <View style={[styles.cover, { top: 0, height: COVER_HEIGHT + 0 }]} />
+                  <View style={[styles.cover, { bottom: 0, height: COVER_HEIGHT + 6 }]} /> */}
                 </View>
   
                 {/* END: Time Picker 2 */}
@@ -519,12 +476,12 @@ export default function DateTimeFilter({ onChange }: DateTimeFilterProps) {
                       transform: [
                         { scale: WHEEL_SCALE },
                         // scale로 줄이면 중앙선이 약간 내려가 보일 수 있어 약간 올림(기기별 미세 조정: -6~-10)
-                        { translateY: -6 },
+                        { translateY: 0 },
                       ],
                     }}
                   />
-                  <View style={[styles.cover, { top: 0, height: COVER_HEIGHT + 6 }]} />
-                  <View style={[styles.cover, { bottom: 0, height: COVER_HEIGHT + 6 }]} />
+                  {/* <View style={[styles.cover, { top: 0, height: COVER_HEIGHT + 6 }]} />
+                  <View style={[styles.cover, { bottom: 0, height: COVER_HEIGHT + 6 }]} /> */}
                 </View>
               </View>
   
@@ -546,9 +503,9 @@ export default function DateTimeFilter({ onChange }: DateTimeFilterProps) {
               <TouchableOpacity
                 style={[styles.timePresetBtn, styles.timePresetAny]}
                 activeOpacity={0.8}
-                onPress={() => applyTimePreset(0, 1440)}  // 00:00~24:00
+                onPress={() => applyTimePreset(0, 1439)}  // 00:00~24:00
               >
-                <Text style={styles.timePresetTxt}>Any Time</Text>
+                <Text style={styles.timePresetTxt}>All day</Text>
               </TouchableOpacity>
   
             </View>
@@ -568,9 +525,9 @@ type ChipProps = {
 const Chip = ({ label, onPress, onReset }: ChipProps) => (
     <TouchableOpacity onPress={onPress} style={styles.chip}>
       <Text style={styles.chipTxt}>{label}</Text>
-      <TouchableOpacity onPress={onReset} style={{ marginLeft: 6 }}>
-        <Text style={{ fontWeight: '700' }}>Close</Text>
-      </TouchableOpacity>
+      {/* <TouchableOpacity onPress={onReset} style={{ marginLeft: 6 }}>
+        <Text style={{ fontWeight: '700' }}>Reset</Text>
+      </TouchableOpacity> */}
     </TouchableOpacity>
 );
 
