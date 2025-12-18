@@ -5,8 +5,10 @@
   "scripts": {
     "start": "expo start",
     "reset-project": "node ./scripts/reset-project.js",
-    "android": "expo run:android",
-    "ios": "expo run:ios",
+    "android:clean": "rm -rf android && npx expo prebuild --platform android --clean",
+    "android:run": "npx expo run:android",
+    "ios:clean": "rm -rf ios && npx expo prebuild --platform ios --clean",
+    "ios:run": "npx expo run:ios",
     "web": "expo start --web",
     "lint": "expo lint"
   },
