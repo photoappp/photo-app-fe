@@ -1,7 +1,9 @@
 import DateTimeFilter from "@/components/DateTimeFilter";
-import LocationSelector from "@/components/LocationSelector";
 import ShowOnMap from "@/components/ShowOnMap";
 import { Photo } from "@/types/Photo";
+import { Ionicons } from '@expo/vector-icons';
+import { useNavigation } from '@react-navigation/native';
+import { LinearGradient } from 'expo-linear-gradient';
 import * as Location from "expo-location";
 import * as MediaLibrary from "expo-media-library";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -19,14 +21,14 @@ import {
   Text,
   TouchableOpacity,
   useColorScheme,
-  View,
-  PermissionsAndroid
+  View
 } from "react-native";
 import ImageViewing from "react-native-image-viewing";
 import { SafeAreaView } from "react-native-safe-area-context";
-import { LinearGradient } from 'expo-linear-gradient';
-import { Ionicons } from '@expo/vector-icons';
-import { useNavigation } from '@react-navigation/native';
+
+import ShowonmapIcon from '@/assets/icons/showonmap.svg';
+import SlideshowIcon from '@/assets/icons/slideshow.svg';
+
 
 
 // Responsive image grid calculations
@@ -132,6 +134,103 @@ export default function HomeScreen() {
     cities: [],
   });
 
+  // 슬라이드쇼 관련
+  const SLIDESHOW_MS = 2000;
+  const [slideshowOn, setSlideshowOn] = useState(false);
+  const slideshowTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const closingRef = useRef(false);
+  const [slideshowVisible, setSlideshowVisible] = useState(false);
+  const slideshowListRef = useRef<FlatList<{ uri: string }> | null>(null);
+
+
+  const stopSlideshow = useCallback(() => {
+    closingRef.current = true;
+    setSlideshowOn(false);
+    if (slideshowTimerRef.current !== null) {
+      clearInterval(slideshowTimerRef.current);
+      slideshowTimerRef.current = null;
+    }
+  }, []);
+  
+  const startSlideshow = useCallback(
+    (startIndex: number = 0) => {
+      // 사진 없으면 아무것도 하지 않음
+      if (!photosRef.current?.length) return;
+  
+      // 기존 타이머 있으면 정리
+      if (slideshowTimerRef.current !== null) {
+        clearInterval(slideshowTimerRef.current);
+        slideshowTimerRef.current = null;
+      }      
+
+      closingRef.current = false; // ✅ 시작할 때 닫기 플래그 해제
+      setSlideshowOn(true);
+      setViewerIndex(startIndex);
+      setSlideshowVisible(true);
+  
+      slideshowTimerRef.current = setInterval(() => {
+
+        if (closingRef.current) return; // ✅ 닫는 중이면 업데이트 금지
+
+        const len = photosRef.current.length;
+        if (!len) return;
+      
+        setViewerIndex((prev) => {
+          const next = prev + 1;
+      
+          if (next >= len) {
+            closeSlideshow();
+            return prev;
+          }
+      
+          slideshowListRef.current?.scrollToIndex({
+            index: next,
+            animated: true,
+          });
+      
+          return next;
+        });
+      }, SLIDESHOW_MS);      
+      
+    },
+    [stopSlideshow]
+  );
+
+  useEffect(() => {
+    photosRef.current = photos;
+  }, [photos]);
+  
+  useEffect(() => {
+    return () => {
+      // 화면 떠날 때 타이머 정리
+      if (slideshowTimerRef.current) clearInterval(slideshowTimerRef.current);
+    };
+  }, []);
+
+  const closeViewer = useCallback(() => {
+    stopSlideshow();
+    setViewerVisible(false);
+  }, [stopSlideshow]);  
+
+  const closeSlideshow = useCallback(() => {
+    closingRef.current = true;
+    setSlideshowOn(false);
+  
+    if (slideshowTimerRef.current !== null) {
+      clearInterval(slideshowTimerRef.current);
+      slideshowTimerRef.current = null;
+    }
+  
+    setSlideshowVisible(false); // ✅ 모달 닫기까지 여기서 끝냄
+  }, []);
+
+  const handleSlideshow = () => {
+    // 예: 현재 선택된 index에서 시작하고 싶으면 viewerIndexRef.current 사용
+    startSlideshow(viewerIndexRef.current ?? 0);
+    console.log("Slideshow start");
+  };
+  
+  
   async function imagesWithLocation(
     images: any[],
     opts?: { maxLookups?: number; precision?: number; delayMs?: number }
@@ -390,10 +489,7 @@ export default function HomeScreen() {
         <Text style={styles.metaTxt}>
           {current ? fmtDateTime(current.takenAt) : ""}
         </Text>
-        <TouchableOpacity
-          onPress={() => setViewerVisible(false)}
-          style={styles.closeBtn}
-        >
+        <TouchableOpacity onPress={closeViewer} style={styles.closeBtn}>
           <Text style={styles.closeTxt}>X</Text>
         </TouchableOpacity>
       </View>
@@ -413,10 +509,6 @@ export default function HomeScreen() {
     },
     []
   );
-
-  const handleSlideshow = () => {
-    console.log("Slideshow start");
-  };
 
   const handleShowOnMap = () => {
     <View style={styles.mapContainer}>
@@ -438,37 +530,36 @@ export default function HomeScreen() {
           {/* 상단버튼영역 */}
           <View style={styles.topButtonsRow}>
 
-              {/* 설정 아이콘 버튼 */}
-              <TouchableOpacity
-                onPress={handleOpenSettings}
-                activeOpacity={0.7}
-                style={styles.iconButton}
-              >
-                <Ionicons name="settings-outline" size={30} color="#374151" />
-              </TouchableOpacity>
-
               {/* 슬라이드쇼 버튼 (파란 그라디언트) */}
-              <TouchableOpacity onPress={handleSlideshow} activeOpacity={0.9}>
+              <TouchableOpacity
+                onPress={() => (slideshowOn ? closeSlideshow() : handleSlideshow())}
+                activeOpacity={0.9}
+              >
                 <LinearGradient
                   colors={['#2B7FFF', '#AD46FF']}
                   start={{ x: 0, y: 0 }}
                   end={{ x: 1, y: 0 }}
                   style={styles.primaryButton}
                 >
-                  <Ionicons
-                    name="play-circle-outline"
-                    size={18}
-                    color="#FFFFFF"
-                    style={{ marginRight: 6 }}
-                  />
+                  <SlideshowIcon width={16} height={16} style={{ marginRight: 8 }}/>
                   <Text style={styles.primaryButtonText}>Slideshow</Text>
                 </LinearGradient>
               </TouchableOpacity>
       
               {/* Show on map 버튼 (화이트 카드) */}
               <View style={styles.secondaryButton}>
+                <ShowonmapIcon width={16} height={16} style={{ marginRight: 8 }}/>
                 <ShowOnMap images={photos} />
               </View>
+
+              {/* 설정 아이콘 버튼 */}
+              <TouchableOpacity
+                onPress={handleOpenSettings}
+                activeOpacity={0.7}
+                style={styles.iconButton}
+              >
+                <Ionicons name="settings-outline" size={20} color="#374151" />
+              </TouchableOpacity>
             </View>
             
           {/* 썸네일 그리드 */}
@@ -548,7 +639,7 @@ export default function HomeScreen() {
         images={viewerImages}
         imageIndex={viewerIndex}
         visible={viewerVisible}
-        onRequestClose={() => setViewerVisible(false)}
+        onRequestClose={closeViewer}
         //onImageIndexChange={(i: number) => setViewerIndex(i)} // ← 추가
         // 선택: 상단 닫기버튼(간단한 헤더)
         HeaderComponent={Header}
@@ -557,6 +648,40 @@ export default function HomeScreen() {
         swipeToCloseEnabled={false} // ← 스와이프 제스처가 터치 선점하는 것 방지
         doubleTapToZoomEnabled
       />
+
+      <Modal visible={slideshowVisible} animationType="fade">
+        <SafeAreaView style={{ flex: 1, backgroundColor: "black" }}>
+          <FlatList
+            ref={(r) => {slideshowListRef.current = r;}}
+            data={viewerImages} // { uri } 배열 이미 있음
+            horizontal
+            pagingEnabled
+            showsHorizontalScrollIndicator={false}
+            keyExtractor={(_, i) => i.toString()}
+            initialScrollIndex={viewerIndex}
+            getItemLayout={(_, index) => ({
+              length: screenWidth,
+              offset: screenWidth * index,
+              index,
+            })}
+            renderItem={({ item }) => (
+              <Image
+                source={{ uri: item.uri }}
+                style={{ width: screenWidth, height: "100%" }}
+                resizeMode="contain"
+              />
+            )}
+          />
+
+          {/* 닫기 버튼 */}
+          <TouchableOpacity
+            onPress={closeSlideshow}
+            style={{ position: "absolute", top: 20, right: 16, padding: 10 }}
+          >
+            <Ionicons name="close" size={28} color="#fff" />
+          </TouchableOpacity>
+        </SafeAreaView>
+      </Modal>
 
       {loading || isScanning ? (
         <View style={styles.centerContainer}>
@@ -642,13 +767,25 @@ const styles = StyleSheet.create({
   },
   topButtonsRow: {
     flexDirection: 'row',
-    justifyContent: 'space-between',
+    alignItems: 'center',
+    justifyContent: 'flex-start',
+    columnGap: 8, // ✅ 간격 보장
     marginBottom: 16,
   },
   iconButton: {
-    marginLeft: 12,
-    padding: 6,
+    width: 44,
+    height: 44,
+    borderRadius: 14,
+    backgroundColor: '#FFFFFF',
+    alignItems: 'center',
+    justifyContent: 'center',
+    shadowColor: '#000',
+    shadowOpacity: 0.12,
+    shadowRadius: 16,
+    shadowOffset: { width: 0, height: 8 },
+    elevation: 6,
   },
+  
   // 메인 파란 버튼
   primaryButton: {
     flexDirection: 'row',
@@ -656,7 +793,7 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     paddingHorizontal: 20,
     height: 40,
-    borderRadius: 999,
+    borderRadius: 14,
     shadowColor: '#2563EB',
     shadowOpacity: 0.25,
     shadowRadius: 10,
@@ -670,21 +807,21 @@ const styles = StyleSheet.create({
   },
   // 흰색 보조 버튼
   secondaryButton: {
+    flex: 1, // ✅ 남는 공간을 먹고
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
-    paddingHorizontal: 20,
-    height: 40,
-    borderRadius: 999,
+    paddingHorizontal: 24,
+    height: 44,
+    borderRadius: 14,
     backgroundColor: '#FFFFFF',
-    borderWidth: 1,
-    borderColor: 'rgba(148,163,184,0.5)',
     shadowColor: '#000',
-    shadowOpacity: 0.08,
-    shadowRadius: 10,
-    shadowOffset: { width: 0, height: 4 },
-    elevation: 2,
+    shadowOpacity: 0.1,
+    shadowRadius: 16,
+    shadowOffset: { width: 0, height: 8 },
+    elevation: 6,
   },
+  
   secondaryButtonText: {
     color: '#111827',
     fontSize: 14,
