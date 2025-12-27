@@ -7,7 +7,7 @@
     "icon": "./assets/images/icon.png",
     "scheme": "photoappfe",
     "userInterfaceStyle": "automatic",
-    "newArchEnabled": true,
+    "newArchEnabled": false,
     "plugins": [
       "expo-router",
       "expo-dev-client",
@@ -49,6 +49,7 @@
       "package": "com.photoapp.fe",
       "permissions": [
         "READ_MEDIA_IMAGES",
+        "READ_MEDIA_VIDEO",
         "READ_EXTERNAL_STORAGE",
         "ACCESS_FINE_LOCATION"
       ]
