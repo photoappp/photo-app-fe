@@ -19,7 +19,8 @@ import {
   Text,
   TouchableOpacity,
   useColorScheme,
-  View
+  View,
+	Share
 } from "react-native";
 import ImageViewing from 'react-native-image-viewing';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -29,6 +30,9 @@ import { Link, Stack, useRouter, useNavigation } from 'expo-router';
 import * as amplitude from '@amplitude/analytics-react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import uuid from 'react-native-uuid';
+import { useTheme } from '@/components/context/ThemeContext';
+import { useUserData } from '@/components/context/UserDataContext';
+import ScreenWrapper from '@/components/screens/ScreenWrapper';
 
 // 설치 단위 가상 디바이스 ID 생성
 const deviceId = uuid.v4() as string;
@@ -65,11 +69,13 @@ type FilterState = DateTimeFilterState & LocationFilterState;
 export default function HomeScreen() {
 	const router = useRouter();
 	const navigation = useNavigation();
+	const { isDarkTheme, colors } = useTheme();
+	const { userData, updateUserData } = useUserData();
 	
 	useEffect(() => {
 			navigation.setOptions({ headerShown: false });
 		}, [navigation]);
-	
+
 	useEffect(() => {
 		async function setupAmplitude() {
 			// 앱 설치 단위 랜덤 고유 ID 생성
@@ -399,19 +405,78 @@ export default function HomeScreen() {
     return `${yyyy}/${MM}/${DD} ${hh}:${mm}`;
   };
 
-  const Header = useCallback(() => {
+	const Header = useCallback(() => {
+		return (
+			<View style={styles.header}>
+				<TouchableOpacity
+					onPress={() => setViewerVisible(false)}
+					style={styles.closeBtn}
+				>
+					<Text style={styles.closeTxt}>✕</Text>
+				</TouchableOpacity>
+			</View>
+		);
+	}, []);
+
+  const Footer = useCallback(() => {
     const current = photos[viewerIndex];
+		const locationText = current?.city && current?.country
+				? `${current.city}, ${current.country}`
+				: current?.country
+				? current.country
+				: "";
+		const handleShare = async () => {
+				if (!current?.uri) return;
+				try {
+					await Share.share({
+						message: `Check out this photo! ${dateTime} ${locationText}`,
+						url: current.uri,
+					});
+				} catch (error) {
+					Alert.alert("Error", "Failed to share the photo.");
+				}
+			};
+		
+		const handleDelete = () => {
+				Alert.alert(
+					"Delete Photo",
+					"Are you sure you want to delete this photo?",
+					[
+						{ text: "Cancel", style: "cancel" },
+						{
+							text: "Delete",
+							style: "destructive",
+							onPress: () => {
+								// photos 배열에서 제거
+								setPhotos((prev) =>
+									prev.filter((_, idx) => idx !== viewerIndex)
+								);
+								setViewerVisible(false);
+							},
+						},
+					]
+				);
+			};
+		
     return (
-      <View style={styles.header}>
-        <Text style={styles.metaTxt}>
-          {current ? fmtDateTime(current.takenAt) : ""}
-        </Text>
-        <TouchableOpacity
-          onPress={() => setViewerVisible(false)}
-          style={styles.closeBtn}
-        >
-          <Text style={styles.closeTxt}>✕</Text>
-        </TouchableOpacity>
+      <View style={styles.footer}>
+				{/* 왼쪽: Share 버튼 */}
+				<TouchableOpacity onPress={handleShare} style={styles.leftBtn}>
+					<Ionicons name="share-outline" size={24} color="white" />
+				</TouchableOpacity>
+				{/* 중앙: 날짜/시간 + 장소 */}
+				<View style={styles.headerTextContainer}>
+						<Text style={styles.metaTxt}>
+							{current ? fmtDateTime(current.takenAt) : ""}
+						</Text>
+						{locationText ? (
+							 <Text style={styles.locationTxt}>{locationText}</Text>
+						) : null}
+				</View>
+				{/* 오른쪽: Delete 버튼 */}
+				<TouchableOpacity onPress={handleDelete} style={styles.rightBtn}>
+					<Ionicons name="trash-outline" size={24} color="white" />
+				</TouchableOpacity>
       </View>
     );
   }, [photos, viewerIndex]);
@@ -430,48 +495,18 @@ export default function HomeScreen() {
     []
   );
 
-	// 사용자 데이터 AsyncStorage 저장
-	useEffect(() => {
-		async function saveUserData() {
-			// 1) 앱 시작일 가져오기
-			const startDateIso = await AsyncStorage.getItem('appStartDate') ?? new Date().toISOString();
-			const startDate = startDateIso.split('T')[0];
-			await AsyncStorage.setItem('appStartDate', startDate);
-			
-			// 2) 위치 검색 횟수 가져오기
-			const locationSearchCount = parseInt((await AsyncStorage.getItem('locationSearchCount')) || '0', 10);
-
-			// 3) 필터 적용된 시간 검색 횟수 계산 (photosAll 기반)
-			const filteredTimeCount = photosAll.filter(p => {
-				if (!p.takenAt) return false;
-
-				// 날짜 필터 적용
-				if (p.takenAt < dayStartMs(filter.dateStart) || p.takenAt >= dayEndNextMs(filter.dateEnd)) return false;
-
-				// 시간 필터 적용
-				return inTimeWindow(p.takenAt, filter.timeStart, filter.timeEnd);
-			}).length;
-
-			// 4) 전체 사진 개수 (필터링 전)
-			const totalPhotos = photosAll.length;
-
-			// 5) AsyncStorage에 저장
-			const userData = { startDate, timeSearchCount: filteredTimeCount, locationSearchCount, totalPhotos };
-			await AsyncStorage.setItem('userData', JSON.stringify(userData));
-			
-			setUserData(userData);
-		}
-
-		saveUserData();
-	}, [photosAll, filter]);
+	const saveUserData = async (newData) => {
+		await AsyncStorage.setItem('userData', JSON.stringify(newData));
+		setUserData(newData);
+	};
 	
   return (
-	<>
+	<ScreenWrapper>
     <SafeAreaView style={{ flex: 1, paddingTop: 48 }}>
 			{/* 상단 Settings 버튼 */}
 			<View style={styles.header}>
 					<TouchableOpacity onPress={() => router.push('/settings')} style={{ marginRight: 15 }}>
-						<Ionicons name="settings-outline" size={28} color="black" />
+						<Ionicons name="settings-outline" size={28} color={ colors.text } />
 					</TouchableOpacity>
 			</View>
 		</SafeAreaView>
@@ -570,6 +605,7 @@ export default function HomeScreen() {
         onImageIndexChange={(i: number) => setViewerIndex(i)} // ← 추가
         // 선택: 상단 닫기버튼(간단한 헤더)
         HeaderComponent={Header}
+				FooterComponent={Footer}
         // 선택: 바닥 여백(제스처 충돌 완화)
         backgroundColor="rgba(0,0,0,0.98)"
         swipeToCloseEnabled={false} // ← 스와이프 제스처가 터치 선점하는 것 방지
@@ -627,7 +663,7 @@ export default function HomeScreen() {
         </>
       )}
     </SafeAreaView>
-	</>
+	</ScreenWrapper>
   );
 }
 
@@ -681,6 +717,7 @@ const styles = StyleSheet.create({
   },
   counter: { color: "#fff", fontSize: 16, fontWeight: "600" },
   metaTxt: { color: "#fff", fontSize: 14, fontWeight: "600" },
+	locationTxt: { color: "#fff", fontSize: 14, fontWeight: "600", marginTop: 2 },
   closeBtn: {
     zIndex: 999,
     width: 32,
@@ -691,5 +728,23 @@ const styles = StyleSheet.create({
     justifyContent: "center",
   },
   closeTxt: { color: "#fff", fontSize: 18, fontWeight: "700" },
-
+	headerTextContainer: {
+		flexDirection: "column",
+		alignItems: "center",
+		flexShrink: 1, // 긴 텍스트도 잘림
+		marginHorizontal: 8,
+	},
+	footer: {
+		flexDirection: "row",
+		justifyContent: "space-between",
+		alignItems: "center",
+		paddingHorizontal: 16,
+		paddingVertical: 10,
+		backgroundColor: "rgba(0,0,0,0.6)",
+		position: "absolute",
+		bottom: 0,
+		width: "100%",
+		zIndex: 20, // zIndex 높여서 이미지 위로
+		minHeight: 60, // 충분한 높이 지정
+	},
 });

@@ -2,18 +2,11 @@
 import React from 'react';
 import { View, Text, FlatList, StyleSheet } from 'react-native';
 import ScreenWrapper from '@/components/screens/ScreenWrapper';
+import { useTheme } from '@/components/context/ThemeContext';
 
-interface CreditsScreenProps {
-	account?: {
-		startDate?: string;
-		timeSearchCount?: number;
-		locationSearchCount?: number;
-		totalPhotos?: number;
-	};
-	isDarkTheme: boolean;
-}
-
-const CreditsScreen: React.FC<CreditsScreenProps> = ({ account = {}, isDarkTheme }) => {
+const CreditsScreen: React.FC = () => {
+	const { colors } = useTheme();
+	
 	const STAT_OPTIONS = [
 		{ id: '1', title: 'Producer', value: 'R.S.' },
 		{ id: '2', title: 'Programmer', value: '' },
@@ -25,18 +18,18 @@ const CreditsScreen: React.FC<CreditsScreenProps> = ({ account = {}, isDarkTheme
 
 	const renderItem = ({ item }: { item: any }) => (
 		<View style={styles.optionRow}>
-			<Text style={[styles.optionText, { color: isDarkTheme ? '#fff' : '#000' }]}>{item.title}</Text>
-			<Text style={[styles.valueText, { color: isDarkTheme ? '#aaa' : '#555' }]}>{item.value}</Text>
+			<Text style={[styles.optionText, { color: colors.text }]}>{item.title}</Text>
+			<Text style={[styles.valueText, { color: colors.secondary }]}>{item.value}</Text>
 		</View>
 	);
 
 	return (
-		<ScreenWrapper isDarkTheme={isDarkTheme}>
+		<ScreenWrapper>
 			<FlatList
 				data={STAT_OPTIONS}
 				keyExtractor={(item) => item.id}
 				renderItem={renderItem}
-				ItemSeparatorComponent={() => <View style={[styles.separator, { backgroundColor: isDarkTheme ? '#333' : '#ddd' }]} />}
+					ItemSeparatorComponent={() => <View style={[styles.separator, { backgroundColor: colors.secondary }]} />}
 			/>
 		</ScreenWrapper>
 	);

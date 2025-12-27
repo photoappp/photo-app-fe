@@ -3,28 +3,20 @@ import React, { useState, useEffect } from 'react';
 import { View, Text, FlatList, StyleSheet } from 'react-native';
 import ScreenWrapper from '@/components/screens/ScreenWrapper';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import { useTheme } from '@/components/context/ThemeContext';
+import { useLanguage } from '@/components/context/LanguageContext';
+import { TRANSLATIONS } from '@/constants/Translations';
+import { useUserData } from '@/components/context/UserDataContext';
 
-interface UserDataScreenProps {
-	isDarkTheme: boolean;
-}
-
-const UserDataScreen: React.FC<UserDataScreenProps> = ({ isDarkTheme }) => {
-	const [userData, setUserData] = useState({
-			startDate: '-',
-			timeSearchCount: 0,
-			locationSearchCount: 0,
-			totalPhotos: 0,
-		});
-
+const UserDataScreen: React.FC = () => {
+	const { userData, updateUserData, loadUserData } = useUserData();
+	
+	const { colors } = useTheme();
+	const { language } = useLanguage();
+	
 	useEffect(() => {
-		async function loadUserData() {
-			const stored = await AsyncStorage.getItem('userData');
-			if (stored) {
-				setUserData(JSON.parse(stored));
-			}
-		}
 		loadUserData();
-	}, []);
+	}, [loadUserData]);
 	
 	const formatDateOnly = (isoString?: string) => {
 		if (!isoString) return '-';
@@ -32,27 +24,27 @@ const UserDataScreen: React.FC<UserDataScreenProps> = ({ isDarkTheme }) => {
 		return `${d.getFullYear()}/${(d.getMonth() + 1).toString().padStart(2, '0')}/${d.getDate().toString().padStart(2, '0')}`;
 	};
 	
-	const STAT_OPTIONS = [
-		{ id: '1', title: '사용 시작일', value: formatDateOnly(userData.startDate) },
-		{ id: '2', title: '시간 검색 횟수', value: userData.timeSearchCount ?? 0 },
-		{ id: '3', title: '위치 검색 횟수', value: userData.locationSearchCount ?? 0 },
-		{ id: '4', title: '총 사진 개수', value: userData.totalPhotos ?? 0 },
-	];
+	const STAT_OPTIONS = React.useMemo(() => [
+		{ id: '1', title: TRANSLATIONS[language].startDate, value: formatDateOnly(userData.startDate) },
+		{ id: '2', title: TRANSLATIONS[language].timeSearchCount, value: userData.timeSearchCount ?? 0 },
+		{ id: '3', title: TRANSLATIONS[language].locationSearchCount, value: userData.locationSearchCount ?? 0 },
+		{ id: '4', title: TRANSLATIONS[language].totalPhotos, value: userData.totalPhotos ?? 0 },
+	], [userData, language]);
 
 	const renderItem = ({ item }: { item: any }) => (
 		<View style={styles.optionRow}>
-			<Text style={[styles.optionText, { color: isDarkTheme ? '#fff' : '#000' }]}>{item.title}</Text>
-			<Text style={[styles.valueText, { color: isDarkTheme ? '#aaa' : '#555' }]}>{item.value}</Text>
+			 <Text style={[styles.optionText, { color: colors.text }]}>{item.title}</Text>
+			 <Text style={[styles.valueText, { color: colors.secondary }]}>{item.value}</Text>
 		</View>
 	);
 
 	return (
-		<ScreenWrapper isDarkTheme={isDarkTheme}>
+		<ScreenWrapper>
 			<FlatList
 				data={STAT_OPTIONS}
 				keyExtractor={(item) => item.id}
 				renderItem={renderItem}
-				ItemSeparatorComponent={() => <View style={[styles.separator, { backgroundColor: isDarkTheme ? '#333' : '#ddd' }]} />}
+				ItemSeparatorComponent={() => <View style={[styles.separator, { backgroundColor: colors.secondary }]} />}
 			/>
 		</ScreenWrapper>
 	);

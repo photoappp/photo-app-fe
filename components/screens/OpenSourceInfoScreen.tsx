@@ -2,12 +2,11 @@
 import React from 'react';
 import { View, Text, FlatList, StyleSheet } from 'react-native';
 import ScreenWrapper from '@/components/screens/ScreenWrapper';
+import { useTheme } from '@/components/context/ThemeContext';
 
-interface OpenSourceInfoScreenProps {
-	isDarkTheme: boolean;
-}
-
-const OpenSourceInfoScreen: React.FC<OpenSourceInfoScreenProps> = ({ isDarkTheme }) => {
+const OpenSourceInfoScreen: React.FC = () => {
+	const { colors } = useTheme();
+	
 	const STAT_OPTIONS = [
 		{ id: '1', title: '@amplitude/analytics-react-native', value: '1.5.16' },
 		{ id: '2', title: '@expo/vector-icons', value: '15.0.2' },
@@ -48,18 +47,18 @@ const OpenSourceInfoScreen: React.FC<OpenSourceInfoScreenProps> = ({ isDarkTheme
 
 	const renderItem = ({ item }: { item: any }) => (
 		<View style={styles.optionRow}>
-			<Text style={[styles.optionText, { color: isDarkTheme ? '#fff' : '#000' }]}>{item.title}</Text>
-			<Text style={[styles.valueText, { color: isDarkTheme ? '#aaa' : '#555' }]}>{item.value}</Text>
+			<Text style={[styles.optionText, { color: colors.text }]}>{item.title}</Text>
+			<Text style={[styles.valueText, { color: colors.secondary }]}>{item.value}</Text>
 		</View>
 	);
 
 	return (
-		<ScreenWrapper isDarkTheme={isDarkTheme}>
+		<ScreenWrapper>
 			<FlatList
 				data={STAT_OPTIONS}
 				keyExtractor={(item) => item.id}
 				renderItem={renderItem}
-				ItemSeparatorComponent={() => <View style={[styles.separator, { backgroundColor: isDarkTheme ? '#333' : '#ddd' }]} />}
+					ItemSeparatorComponent={() => <View style={[styles.separator, { backgroundColor: colors.secondary }]} />}
 			/>
 		</ScreenWrapper>
 	);

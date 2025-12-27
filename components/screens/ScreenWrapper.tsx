@@ -1,7 +1,7 @@
 //  ScreenWrapper.tsx
 import React, { ReactNode } from 'react';
 import { View, StyleSheet, Image, Text, TouchableOpacity, Linking } from 'react-native';
-import { useTheme } from '@/components/theme/ThemeContext';
+import { useTheme } from '@/components/context/ThemeContext';
 
 const ScreenWrapper: React.FC<{ children: ReactNode }> = ({ children }) => {
 	const { isDarkTheme } = useTheme();
