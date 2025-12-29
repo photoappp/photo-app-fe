@@ -21,9 +21,9 @@ import {
   Text,
   TouchableOpacity,
   useColorScheme,
-  View,
-	Share
+  View
 } from "react-native";
+import Share from 'react-native-share';
 import ImageViewing from 'react-native-image-viewing';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Link, Stack, useRouter, useNavigation } from 'expo-router';
@@ -33,6 +33,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import uuid from 'react-native-uuid';
 import { useTheme } from '@/components/context/ThemeContext';
 import { useUserData } from '@/components/context/UserDataContext';
+import { useSlideshowTime } from '@/components/context/SlideshowTimeContext';
 import ScreenWrapper from '@/components/screens/ScreenWrapper';
 
 // 설치 단위 가상 디바이스 ID 생성
@@ -75,7 +76,8 @@ export default function HomeScreen() {
 	const router = useRouter();
 	const navigation = useNavigation();
 	const { isDarkTheme, colors } = useTheme();
-	const { userData, updateUserData } = useUserData();
+//	const { userData, updateUserData } = useUserData();
+	const { incrementTimeFilter, incrementLocationFilter, incrementTotalPhotos } = useUserData();
 	
 	useEffect(() => {
 			navigation.setOptions({ headerShown: false });
@@ -191,6 +193,7 @@ export default function HomeScreen() {
 
   // 슬라이드쇼 관련
   const SLIDESHOW_MS = 2000;
+	const { slideshowTime } = useSlideshowTime();
   const [slideshowOn, setSlideshowOn] = useState(false);
   const slideshowTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const closingRef = useRef(false);
@@ -223,32 +226,33 @@ export default function HomeScreen() {
       setViewerIndex(startIndex);
       setSlideshowVisible(true);
   
-      slideshowTimerRef.current = setInterval(() => {
-
-        if (closingRef.current) return; // ✅ 닫는 중이면 업데이트 금지
-
-        const len = photosRef.current.length;
-        if (!len) return;
-      
-        setViewerIndex((prev) => {
-          const next = prev + 1;
-      
-          if (next >= len) {
-            closeSlideshow();
-            return prev;
-          }
-      
-          slideshowListRef.current?.scrollToIndex({
-            index: next,
-            animated: true,
-          });
-      
-          return next;
-        });
-      }, SLIDESHOW_MS);      
+			slideshowTimerRef.current = setInterval(() => {
+				
+				if (closingRef.current) return; // ✅ 닫는 중이면 업데이트 금지
+				
+				const len = photosRef.current.length;
+				if (!len) return;
+				
+				setViewerIndex((prev) => {
+					const next = prev + 1;
+					
+					if (next >= len) {
+						closeSlideshow();
+						return prev;
+					}
+					
+					slideshowListRef.current?.scrollToIndex({
+						index: next,
+						animated: true,
+					});
+					
+					return next;
+				});
+				}, slideshowTime); // SettingsScreen과 연결
+//      }, SLIDESHOW_MS);
       
     },
-    [stopSlideshow]
+    [stopSlideshow, slideshowTime]
   );
 
   useEffect(() => {
@@ -482,7 +486,26 @@ export default function HomeScreen() {
     [loading, hasNextPage, endCursor, filter]
   );
 
+	// 전체 사진 수 Context 저장
+	useEffect(() => {
+		if (!loading && photosAll.length > 0) {
+			updateUserData({ totalPhotos: photosAll.length });
+		}
+	}, [photosAll.length, loading]);
+	
   useEffect(() => {
+		// 필터 변경 시 사용 횟수 증가
+		const usedDateTime =
+			!!filter.dateStart ||
+			!!filter.dateEnd ||
+			filter.timeStart !== 0 ||
+			filter.timeEnd !== 1440;
+
+		const usedLocation = filter.countries.length > 0 || filter.cities.length > 0;
+
+		if (usedDateTime) incrementTimeFilter();
+		if (usedLocation) incrementLocationFilter();
+
     // 필터 바뀌면 페이지네이션 리셋 후 처음부터 다시 로드
     setEndCursor(null);
     setHasNextPage(true);
@@ -557,17 +580,31 @@ export default function HomeScreen() {
 				: current?.country
 				? current.country
 				: "";
-		const handleShare = async () => {
-				if (!current?.uri) return;
-				try {
-					await Share.share({
-						message: `Check out this photo! ${dateTime} ${locationText}`,
-						url: current.uri,
-					});
-				} catch (error) {
-					Alert.alert("Error", "Failed to share the photo.");
+		
+		const handleShare = async (photoUri: string, message: string) => {
+			try {
+				const shareOptions: Share.ShareOptions = {
+					message,
+					url: Platform.OS === 'android' ? `file://${photoUri}` : photoUri,
+					type: 'image/jpeg',
+				};
+				await Share.open(shareOptions);
+			} catch (err) {
+				// 사용자가 공유하기 취소한 경우
+				if (err?.message === 'User did not share') {
+					return; // 아무것도 하지 않음
 				}
-			};
+
+				console.log(err);
+				Alert.alert("Error", "Failed to share the photo.");
+			}
+		};
+		
+		const onPressShare = async () => {
+			if (!current?.uri) return;
+			const message = `Check out this photo! ${locationText}`;
+			await handleShare(current.uri, message);
+		};
 		
 		const handleDelete = () => {
 				Alert.alert(
@@ -593,7 +630,7 @@ export default function HomeScreen() {
     return (
       <View style={styles.footer}>
 				{/* 왼쪽: Share 버튼 */}
-				<TouchableOpacity onPress={handleShare} style={styles.leftBtn}>
+				<TouchableOpacity onPress={onPressShare} style={styles.leftBtn}>
 					<Ionicons name="share-outline" size={24} color="white" />
 				</TouchableOpacity>
 				{/* 중앙: 날짜/시간 + 장소 */}

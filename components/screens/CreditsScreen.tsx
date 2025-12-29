@@ -8,14 +8,14 @@ const CreditsScreen: React.FC = () => {
 	const { colors } = useTheme();
 	
 	const STAT_OPTIONS = [
-		{ id: '1', title: 'Producer', value: 'R.S.' },
-		{ id: '2', title: 'Programmer', value: '' },
-		{ id: '3', title: 'Artist', value: '' },
-		{ id: '4', title: 'QA Testers', value: '' },
-		{ id: '5', title: 'Localization Managers', value: '' },
-		{ id: '6', title: 'Special Thanks', value: '' },
+		{ id: 'producer', title: 'Producer', value: 'R.S.' },
+		{ id: 'programmers', title: 'Programmers', value: '' },
+		{ id: 'artist', id: 'artist', title: 'Artist', value: '' },
+		{ id: 'qaTesters', title: 'QA Testers', value: 'YC, SJ' },
+		{ id: 'localizationManagers', title: 'Localization Managers', value: 'Mary, Carol, Ann, Edward' },
+		{ id: 'specialThanks', title: 'Special Thanks', value: 'Toronto Korean Developers' },
 	];
-
+	
 	const renderItem = ({ item }: { item: any }) => (
 		<View style={styles.optionRow}>
 			<Text style={[styles.optionText, { color: colors.text }]}>{item.title}</Text>

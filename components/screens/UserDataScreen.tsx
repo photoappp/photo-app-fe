@@ -9,14 +9,10 @@ import { TRANSLATIONS } from '@/constants/Translations';
 import { useUserData } from '@/components/context/UserDataContext';
 
 const UserDataScreen: React.FC = () => {
-	const { userData, updateUserData, loadUserData } = useUserData();
+	const { userData } = useUserData();
 	
 	const { colors } = useTheme();
 	const { language } = useLanguage();
-	
-	useEffect(() => {
-		loadUserData();
-	}, [loadUserData]);
 	
 	const formatDateOnly = (isoString?: string) => {
 		if (!isoString) return '-';
@@ -25,10 +21,10 @@ const UserDataScreen: React.FC = () => {
 	};
 	
 	const STAT_OPTIONS = React.useMemo(() => [
-		{ id: '1', title: TRANSLATIONS[language].startDate, value: formatDateOnly(userData.startDate) },
-		{ id: '2', title: TRANSLATIONS[language].timeSearchCount, value: userData.timeSearchCount ?? 0 },
-		{ id: '3', title: TRANSLATIONS[language].locationSearchCount, value: userData.locationSearchCount ?? 0 },
-		{ id: '4', title: TRANSLATIONS[language].totalPhotos, value: userData.totalPhotos ?? 0 },
+		{ id: 'startDate', title: TRANSLATIONS[language].startDate, value: formatDateOnly(userData.startDate) },
+		{ id: 'timeSearchCount', title: TRANSLATIONS[language].timeSearchCount, value: userData.timeSearchCount ?? 0 },
+		{ id: 'locationSearchCount', title: TRANSLATIONS[language].locationSearchCount, value: userData.locationSearchCount ?? 0 },
+		{ id: 'totalPhotos', title: TRANSLATIONS[language].totalPhotos, value: userData.totalPhotos ?? 0 },
 	], [userData, language]);
 
 	const renderItem = ({ item }: { item: any }) => (
