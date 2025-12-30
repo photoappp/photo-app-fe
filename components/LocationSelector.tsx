@@ -50,7 +50,6 @@ export default function LocationSelector({
   const [selectedCities, setSelectedCities] = useState<string[]>([]);
   const [translations, setTranslations] = useState<string[][]>([]);
   const [locationMap, setLocationMap] = useState<LocationMap>({});
-
   const [tempCountries, setTempCountries] = useState<string[]>([]);
   const [tempCities, setTempCities] = useState<string[]>([]);
 
@@ -148,7 +147,6 @@ export default function LocationSelector({
       return Array.from(new Set([...allCountries]));
     }
     if (type === "city") {
-      if (tempCities.length == 0) return Array.from([]);
       const allCitiesSet = new Set<string>();
 
       tempCountries.forEach((country) => {
@@ -157,6 +155,7 @@ export default function LocationSelector({
           if (c.en) allCitiesSet.add(c.en);
         });
       });
+      if (allCitiesSet.size == 0) return [];
       return Array.from(new Set(["All", ...allCitiesSet]));
     }
 
@@ -176,11 +175,11 @@ export default function LocationSelector({
     };
 
     const countryLabel = tempCountries.length
-      ? formatLabel([...selectedCountries].sort())
+      ? formatLabel([...tempCountries].sort())
       : "";
 
     const cityLabel = tempCities.length
-      ? formatLabel([...selectedCities].sort())
+      ? formatLabel([...tempCities].sort())
       : "";
 
     return [countryLabel, cityLabel].filter(Boolean).join(", ");
@@ -313,33 +312,33 @@ export default function LocationSelector({
               </View>
             </View>
             <View style={styles.buttonContainer}>
-              <LinearGradient
-                colors={["#2B7FFF", "#AD46FF"]}
-                start={{ x: 0, y: 0 }}
-                end={{ x: 1, y: 0 }}
-                style={styles.primaryButton}
-              >
-                <TouchableOpacity
-                  onPress={() => {
-                    setSelectedCountries(tempCountries);
-                    setSelectedCities(tempCities);
-                    console.log("Applying selection:", {
-                      countries: tempCountries,
-                      cities: tempCities,
-                      locationLabel: getButtonTitle(),
-                    });
-                    onSelectionChange?.({
-                      countries: tempCountries,
-                      cities: tempCities,
-                      locationLabel: getButtonTitle(),
-                    });
+              <TouchableOpacity
+                onPress={() => {
+                  setSelectedCountries(tempCountries);
+                  setSelectedCities(tempCities);
+                  console.log("Applying selection:", {
+                    countries: tempCountries,
+                    cities: tempCities,
+                    locationLabel: getButtonTitle(),
+                  });
+                  onSelectionChange?.({
+                    countries: tempCountries,
+                    cities: tempCities,
+                    locationLabel: getButtonTitle(),
+                  });
 
-                    onClose();
-                  }}
+                  onClose();
+                }}
+              >
+                <LinearGradient
+                  colors={["#2B7FFF", "#AD46FF"]}
+                  start={{ x: 0, y: 0 }}
+                  end={{ x: 1, y: 0 }}
+                  style={styles.primaryButton}
                 >
                   <Text style={styles.primaryButtonText}>Apply Location</Text>
-                </TouchableOpacity>
-              </LinearGradient>
+                </LinearGradient>
+              </TouchableOpacity>
             </View>
           </View>
         </View>
