@@ -1,5 +1,13 @@
 import { useState } from "react";
-import { Button, Dimensions, Modal, StyleSheet, View } from "react-native";
+import {
+  Button,
+  Dimensions,
+  Modal,
+  StyleSheet,
+  Text,
+  TouchableOpacity,
+  View,
+} from "react-native";
 import { WebView } from "react-native-webview";
 /* 타입 일치를 위해 Photo로 병합
 type Image = {
@@ -13,7 +21,7 @@ type Image = {
 };*/
 type Photo = {
   uri: string;
-  takenAt?: number | null;  // 있으면 쓰고, 아니면 빼도 됨
+  takenAt?: number | null; // 있으면 쓰고, 아니면 빼도 됨
 
   //localUri: string;
   city?: string;
@@ -95,8 +103,9 @@ export default function MapView({ images }: Props) {
 
   return (
     <View>
-      <Button title="Show on Map" onPress={() => setVisible(true)} />
-
+      <TouchableOpacity onPress={() => setVisible(true)} activeOpacity={0.8}>
+        <Text style={styles.buttonText}>Show on Map</Text>
+      </TouchableOpacity>
       <Modal visible={visible} animationType="slide">
         <View style={styles.container}>
           <WebView
@@ -118,6 +127,10 @@ const styles = StyleSheet.create({
   webview: {
     width: Dimensions.get("window").width,
     height: Dimensions.get("window").height,
+  },
+  buttonText: {
+    color: "#314158",
+    fontSize: 14,
   },
   closeButton: {
     position: "absolute",

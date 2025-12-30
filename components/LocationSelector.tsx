@@ -1,8 +1,8 @@
 import { Colors } from "@/constants/Colors";
 import { Photo } from "@/types/Photo";
+import { LinearGradient } from "expo-linear-gradient";
 import { useEffect, useState } from "react";
 import {
-  Button,
   FlatList,
   Modal,
   Pressable,
@@ -11,7 +11,6 @@ import {
   TouchableOpacity,
   View,
 } from "react-native";
-
 type Translations = {
   en: string;
   ko?: string;
@@ -28,15 +27,23 @@ type LocationMap = {
 };
 
 type Props = {
+  visible: boolean;
+  onClose: () => void;
   photos: Photo[];
   onSelectionChange?: (selected: {
     countries: string[];
     cities: string[];
+    locationLabel: string;
   }) => void;
 };
 
-export default function LocationSelector({ photos, onSelectionChange }: Props) {
-  const [visible, setVisible] = useState(false);
+export default function LocationSelector({
+  photos,
+  visible,
+  onClose,
+  onSelectionChange,
+}: Props) {
+  // const [visible, setVisible] = useState(false);
   const [allCountries, setAllCountries] = useState<string[]>([]);
   const [allCities, setAllCities] = useState<string[]>([]);
   const [selectedCountries, setSelectedCountries] = useState<string[]>([]);
@@ -93,8 +100,12 @@ export default function LocationSelector({ photos, onSelectionChange }: Props) {
           }
         });
         setLocationMap(locationMap);
-        setAllCountries(["All", ...Array.from(allCountriesSet)]);
-        setAllCities(["All", ...Array.from(allCitiesSet)]);
+        if (allCountriesSet.size > 0) {
+          setAllCountries(["All", ...Array.from(allCountriesSet)]);
+          setAllCities(["All", ...Array.from(allCitiesSet)]);
+          setTempCountries(["All", ...Array.from(allCountriesSet)]);
+          setTempCities(["All", ...Array.from(allCitiesSet)]);
+        }
       })
       .catch(console.error);
   }, [photos]);
@@ -134,9 +145,10 @@ export default function LocationSelector({ photos, onSelectionChange }: Props) {
 
   const getCurrentItems = (type: "country" | "city") => {
     if (type === "country") {
-      return Array.from(new Set(["All", ...allCountries]));
+      return Array.from(new Set([...allCountries]));
     }
     if (type === "city") {
+      if (tempCities.length == 0) return Array.from([]);
       const allCitiesSet = new Set<string>();
 
       tempCountries.forEach((country) => {
@@ -145,7 +157,6 @@ export default function LocationSelector({ photos, onSelectionChange }: Props) {
           if (c.en) allCitiesSet.add(c.en);
         });
       });
-
       return Array.from(new Set(["All", ...allCitiesSet]));
     }
 
@@ -153,8 +164,7 @@ export default function LocationSelector({ photos, onSelectionChange }: Props) {
   };
 
   const getButtonTitle = () => {
-    if (selectedCountries.length == 0 && selectedCities.length == 0)
-      return "None";
+    if (tempCountries.length == 0 && tempCities.length == 0) return "None";
 
     const formatLabel = (items: string[]) => {
       if (!items.includes("All")) {
@@ -165,11 +175,11 @@ export default function LocationSelector({ photos, onSelectionChange }: Props) {
       return items[0];
     };
 
-    const countryLabel = selectedCountries.length
+    const countryLabel = tempCountries.length
       ? formatLabel([...selectedCountries].sort())
       : "";
 
-    const cityLabel = selectedCities.length
+    const cityLabel = tempCities.length
       ? formatLabel([...selectedCities].sort())
       : "";
 
@@ -185,114 +195,104 @@ export default function LocationSelector({ photos, onSelectionChange }: Props) {
     onSelectionChange?.({
       countries: [],
       cities: [],
+      locationLabel: "Anywhere",
     });
   };
 
   return (
-    <View style={{ alignItems: "center", marginBottom: 10 }}>
-      <View
-        style={{
-          flexDirection: "row",
-          alignItems: "center",
-          flexWrap: "wrap",
-        }}
-      >
-        <Text style={{ flexShrink: 1, fontSize: 16 }}>Location:</Text>
-        <Button
-          title={getButtonTitle()}
-          onPress={() => {
-            setVisible(true);
-            setTempCountries(allCountries);
-          }}
-        />
-      </View>
-
-      <Modal
-        transparent
-        visible={visible}
-        animationType="slide"
-        onRequestClose={() => setVisible(false)}
-      >
-        <Pressable style={styles.overlay} onPress={() => setVisible(false)}>
-          <View style={styles.modalContainer}>
-            <View style={styles.selectionContainer}>
+    <Modal
+      transparent
+      visible={visible}
+      animationType="slide"
+      onRequestClose={onClose}
+    >
+      <Pressable style={styles.overlay} onPress={onClose}>
+        <View style={styles.modalContainer}>
+          <View style={styles.selectionContainer}>
+            <View
+              style={{
+                flexDirection: "row",
+                justifyContent: "space-between",
+                paddingLeft: "3%",
+                paddingRight: "3%",
+                paddingBottom: "3%",
+                paddingTop: "1%",
+              }}
+            >
+              <Text>Select Location</Text>
               <View
                 style={{
                   flexDirection: "row",
-                  justifyContent: "space-between",
-                  paddingLeft: "3%",
-                  paddingRight: "3%",
-                  paddingBottom: "3%",
-                  paddingTop: "1%",
+                  justifyContent: "flex-end",
+                  gap: 10,
                 }}
               >
-                <Text>Select Location</Text>
-                <View
-                  style={{
-                    flexDirection: "row",
-                    justifyContent: "flex-end",
-                    gap: 10,
-                  }}
-                >
-                  <TouchableOpacity onPress={handleReset}>
-                    <Text style={styles.button}>Reset</Text>
-                  </TouchableOpacity>
-                  <TouchableOpacity
-                    onPress={() => {
-                      setVisible(false);
-                    }}
-                  >
-                    <Text style={styles.button}>Close</Text>
-                  </TouchableOpacity>
-                </View>
+                <TouchableOpacity onPress={handleReset}>
+                  <Text style={styles.button}>Reset</Text>
+                </TouchableOpacity>
+                <TouchableOpacity onPress={onClose}>
+                  <Text style={styles.button}>Close</Text>
+                </TouchableOpacity>
               </View>
+            </View>
+            <View
+              style={{
+                flexDirection: "row",
+              }}
+            >
               <View
                 style={{
-                  paddingLeft: "3%",
-                  paddingRight: "3%",
-                  paddingBottom: "2%",
-                  paddingTop: "2%",
-                  backgroundColor: "#EFF6FF",
+                  borderRightWidth: 1.18,
                   borderColor: "#DBEAFE",
-                  borderWidth: 1.18,
+                  flex: 1,
+                  justifyContent: "center",
                 }}
               >
-                <Text
-                  style={{
-                    fontSize: 14,
-                    color: "#4A5565",
+                <Text style={styles.tableTitle}>Country</Text>
+                <FlatList
+                  data={getCurrentItems("country")}
+                  renderItem={({ item }) => {
+                    const isSelected =
+                      getTempSelection("country").includes(item);
+
+                    return (
+                      <Pressable
+                        key={item}
+                        onPress={() => toggleItem("country", item)}
+                        style={({ pressed }) => [
+                          {
+                            backgroundColor: pressed
+                              ? "#EFF6FF"
+                              : isSelected
+                              ? "#EFF6FF"
+                              : Colors.light.background,
+                          },
+                        ]}
+                      >
+                        <Text style={styles.listItem}>{item}</Text>
+                      </Pressable>
+                    );
                   }}
-                >
-                  Selected:
-                </Text>
-                <Text style={{ fontSize: 16, fontWeight: "400" }}>
-                  {getButtonTitle()}
-                </Text>
+                  keyExtractor={(item) => item}
+                />
               </View>
               <View
                 style={{
-                  flexDirection: "row",
+                  flex: 1,
                 }}
               >
-                <View
-                  style={{
-                    borderRightWidth: 1.18,
-                    borderColor: "#DBEAFE",
-                    flex: 1,
-                    justifyContent: "center",
-                  }}
-                >
-                  <Text style={styles.tableTitle}>Country</Text>
+                <Text style={styles.tableTitle}>City</Text>
+                {tempCountries && (
                   <FlatList
-                    data={getCurrentItems("country")}
+                    data={getCurrentItems("city")}
                     renderItem={({ item }) => {
                       const isSelected =
-                        getTempSelection("country").includes(item);
+                        getTempSelection("city").includes(item);
 
                       return (
                         <Pressable
                           key={item}
-                          onPress={() => toggleItem("country", item)}
+                          onPress={() => toggleItem("city", item)}
                           style={({ pressed }) => [
                             {
                               backgroundColor: pressed
@@ -309,64 +309,42 @@ export default function LocationSelector({ photos, onSelectionChange }: Props) {
                     }}
                     keyExtractor={(item) => item}
                   />
-                </View>
-                <View
-                  style={{
-                    flex: 1,
-                  }}
-                >
-                  <Text style={styles.tableTitle}>City</Text>
-                  {tempCountries && (
-                    <FlatList
-                      data={getCurrentItems("city")}
-                      renderItem={({ item }) => {
-                        const isSelected =
-                          getTempSelection("city").includes(item);
-
-                        return (
-                          <Pressable
-                            key={item}
-                            onPress={() => toggleItem("city", item)}
-                            style={({ pressed }) => [
-                              {
-                                backgroundColor: pressed
-                                  ? "#EFF6FF"
-                                  : isSelected
-                                  ? "#EFF6FF"
-                                  : Colors.light.background,
-                              },
-                            ]}
-                          >
-                            <Text style={styles.listItem}>{item}</Text>
-                          </Pressable>
-                        );
-                      }}
-                      keyExtractor={(item) => item}
-                    />
-                  )}
-                </View>
+                )}
               </View>
-              <View style={styles.buttonContainer}>
+            </View>
+            <View style={styles.buttonContainer}>
+              <LinearGradient
+                colors={["#2B7FFF", "#AD46FF"]}
+                start={{ x: 0, y: 0 }}
+                end={{ x: 1, y: 0 }}
+                style={styles.primaryButton}
+              >
                 <TouchableOpacity
                   onPress={() => {
                     setSelectedCountries(tempCountries);
                     setSelectedCities(tempCities);
+                    console.log("Applying selection:", {
+                      countries: tempCountries,
+                      cities: tempCities,
+                      locationLabel: getButtonTitle(),
+                    });
                     onSelectionChange?.({
                       countries: tempCountries,
                       cities: tempCities,
+                      locationLabel: getButtonTitle(),
                     });
 
-                    setVisible(false);
+                    onClose();
                   }}
                 >
-                  <Text style={styles.applyButton}>Apply Location</Text>
+                  <Text style={styles.primaryButtonText}>Apply Location</Text>
                 </TouchableOpacity>
-              </View>
+              </LinearGradient>
             </View>
           </View>
-        </Pressable>
-      </Modal>
-    </View>
+        </View>
+      </Pressable>
+    </Modal>
   );
 }
 const styles = StyleSheet.create({
@@ -376,7 +354,7 @@ const styles = StyleSheet.create({
     borderTopRightRadius: 20,
     paddingTop: 20,
     paddingBottom: 40, // 아이폰 홈 바 영역 고려
-    minHeight: 300,
+    maxHeight: "40%",
     shadowColor: "#000",
     shadowOffset: {
       width: 0,
@@ -406,14 +384,6 @@ const styles = StyleSheet.create({
     fontSize: 16,
     color: "#2B7FFF",
   },
-  applyButton: {
-    backgroundColor: "#AD46FF",
-    fontSize: 16,
-    color: "white",
-    padding: 10,
-    borderRadius: 5,
-    textAlign: "center",
-  },
   buttonContainer: {
     paddingHorizontal: 15,
     paddingVertical: 10,
@@ -428,5 +398,23 @@ const styles = StyleSheet.create({
     backgroundColor: "#F9FAFB",
     borderColor: "#DBEAFE",
     borderBottomWidth: 1.18,
+  },
+  primaryButton: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    paddingHorizontal: 20,
+    height: 40,
+    borderRadius: 14,
+    shadowColor: "#2563EB",
+    shadowOpacity: 0.25,
+    shadowRadius: 10,
+    shadowOffset: { width: 0, height: 6 },
+    elevation: 4,
+  },
+  primaryButtonText: {
+    color: "#FFFFFF",
+    fontSize: 14,
+    fontWeight: "600",
   },
 });
