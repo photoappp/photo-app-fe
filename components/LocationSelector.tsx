@@ -397,6 +397,7 @@ const styles = StyleSheet.create({
     backgroundColor: "#F9FAFB",
     borderColor: "#DBEAFE",
     borderBottomWidth: 1.18,
+    borderTopWidth: 1.18,
   },
   primaryButton: {
     flexDirection: "row",
