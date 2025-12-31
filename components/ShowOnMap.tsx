@@ -1,6 +1,5 @@
 import { useState } from "react";
 import {
-  Button,
   Dimensions,
   Modal,
   StyleSheet,
@@ -114,7 +113,32 @@ export default function MapView({ images }: Props) {
             style={styles.webview}
           />
           <View style={styles.closeButton}>
-            <Button title="X" onPress={() => setVisible(false)} />
+            <TouchableOpacity
+              onPress={() => setVisible(false)}
+              style={{
+                width: 44,
+                height: 44,
+                borderRadius: 14,
+                backgroundColor: "#FFFFFF",
+                alignItems: "center",
+                justifyContent: "center",
+                shadowColor: "#000",
+                shadowOpacity: 0.12,
+                shadowRadius: 16,
+                shadowOffset: { width: 0, height: 8 },
+                elevation: 6,
+              }}
+            >
+              <Text
+                style={{
+                  color: "#374151",
+                  fontSize: 16,
+                  fontWeight: "bold",
+                }}
+              >
+                X
+              </Text>
+            </TouchableOpacity>
           </View>
         </View>
       </Modal>
@@ -133,6 +157,7 @@ const styles = StyleSheet.create({
     fontSize: 14,
   },
   closeButton: {
+    backgroundColor: "transparent",
     position: "absolute",
     top: "5%",
     right: "4%",
