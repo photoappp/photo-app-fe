@@ -34,7 +34,8 @@ import { useTheme } from '@/components/context/ThemeContext';
 import { useUserData } from '@/components/context/UserDataContext';
 import { useSlideshowTime } from '@/components/context/SlideshowTimeContext';
 import ScreenWrapper from '@/components/screens/ScreenWrapper';
-
+import { useLanguage } from '@/components/context/LanguageContext';
+import { TRANSLATIONS } from '@/constants/Translations';
 
 import ShowonmapIcon from "@/assets/icons/showonmap.svg";
 import SlideshowIcon from "@/assets/icons/slideshow.svg";
@@ -71,6 +72,7 @@ export default function HomeScreen() {
 	const router = useRouter();
 	const navigation = useNavigation();
 	const { isDarkTheme, colors } = useTheme();
+	const { language } = useLanguage();
 //	const { userData, updateUserData } = useUserData();
 	const { incrementDateFilter, incrementTimeFilter, incrementLocationFilter, incrementTotalPhotos } = useUserData();
 	
@@ -650,7 +652,7 @@ export default function HomeScreen() {
                     height={16}
                     style={{ marginRight: 8 }}
                   />
-                  <Text style={styles.primaryButtonText}>Slideshow</Text>
+                  <Text style={styles.primaryButtonText}>{TRANSLATIONS[language].play}</Text>
                 </LinearGradient>
               </TouchableOpacity>
 
@@ -798,52 +800,6 @@ export default function HomeScreen() {
           </TouchableOpacity>
         </SafeAreaView>
       </Modal>
-
-      {loading || isScanning ? (
-        <View style={styles.centerContainer}>
-          <ActivityIndicator />
-          <Text style={{ marginTop: 8 }}>
-            Loading photos… {progress.loaded}
-            {progress.total ? ` / ${progress.total}` : ""}
-          </Text>
-          {progress.total ? (
-            <View
-              style={{
-                width: 220,
-                height: 6,
-                backgroundColor: "#e5e7eb",
-                marginTop: 8,
-                borderRadius: 3,
-              }}
-              data={viewerImages} // { uri } 배열 이미 있음
-              horizontal
-              pagingEnabled
-              showsHorizontalScrollIndicator={false}
-              keyExtractor={(_, i) => i.toString()}
-              initialScrollIndex={viewerIndex}
-              getItemLayout={(_, index) => ({
-                length: screenWidth,
-                offset: screenWidth * index,
-                index,
-              })}
-              renderItem={({ item }) => (
-                <Image
-                  source={{ uri: item.uri }}
-                  style={{ width: screenWidth, height: "100%" }}
-                  resizeMode="contain"
-                />
-              )}
-            />
-
-            {/* 닫기 버튼 */}
-            <TouchableOpacity
-              onPress={closeSlideshow}
-              style={{ position: "absolute", top: 20, right: 16, padding: 10 }}
-            >
-              <Ionicons name="close" size={28} color="#fff" />
-            </TouchableOpacity>
-          </SafeAreaView>
-        </Modal>
 
         {loading || isScanning ? (
           <View style={styles.centerContainer}>

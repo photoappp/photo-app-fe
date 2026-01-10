@@ -9,6 +9,8 @@ import {
 } from "react-native";
 import { WebView } from "react-native-webview";
 import * as amplitude from '@amplitude/analytics-react-native';
+import { TRANSLATIONS } from '@/constants/Translations';
+import { useLanguage } from '@/components/context/LanguageContext';
 
 /* 타입 일치를 위해 Photo로 병합
 type Image = {
@@ -38,6 +40,7 @@ type Props = {
 };
 
 export default function MapView({ images }: Props) {
+	const { language } = useLanguage();
   const [visible, setVisible] = useState(false);
   // Collect coordinates from images
   const coordinates = images
@@ -131,7 +134,7 @@ export default function MapView({ images }: Props) {
   return (
     <View>
       <TouchableOpacity onPress={() => setVisible(true)} activeOpacity={0.8}>
-        <Text style={styles.buttonText}>Show on Map</Text>
+					<Text style={styles.buttonText}>{TRANSLATIONS[language].map}</Text>
       </TouchableOpacity>
       <Modal visible={visible} animationType="slide">
         <View style={styles.container}>

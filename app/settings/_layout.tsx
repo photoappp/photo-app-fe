@@ -36,6 +36,11 @@ export default function SettingsLayout() {
 				name="userData"
 				options={{ title: 'User Data' }}
 			/>
+			
+			<Stack.Screen
+				name="sunnyApps"
+				options={{ title: 'Sunny\'s Games and Apps' }}
+			/>
 
 			<Stack.Screen
 				name="credits"

@@ -22,6 +22,7 @@ const SettingsScreen = () => {
 		{ id: 'language', title: TRANSLATIONS[language].language, type: 'language' },
 		{ id: 'slideshow', title: TRANSLATIONS[language].slideshowInterval, type: 'slideshow', value: slideshowTime },
 		{ id: 'theme', title: TRANSLATIONS[language].theme, type: 'theme' },
+		{ id: 'sunnyApps', title: TRANSLATIONS[language].sunnyApps, route: '/settings/sunnyApps' },
 		{ id: 'instagram', title: TRANSLATIONS[language].instagram, type: 'link', link: 'https://www.instagram.com/sunnyinnolab' },
 		{ id: 'twitter', title: TRANSLATIONS[language].twitter, type: 'link', link: 'https://x.com/sunnyinnolab' },
 		{ id: 'credits', title: TRANSLATIONS[language].credits, route: '/settings/credits' },

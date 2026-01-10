@@ -20,6 +20,9 @@ import {
 import DateTimePicker from "./DateTimePicker";
 import LocationSelector from "./LocationSelector";
 
+import { TRANSLATIONS } from '@/constants/Translations';
+import { useLanguage } from '@/components/context/LanguageContext';
+
 type DatePickersResponsiveProps = {
   dateStart: Date;
   dateEnd: Date;
@@ -217,6 +220,8 @@ export default function DateTimeFilter({
   const timeLabel = `${fmtTime(timeStart)} – ${fmtTime(timeEnd)}`;
   const [locationLabel, setLocationLabel] = useState("Anywhere");
 
+	const { language } = useLanguage();
+	
   return (
     <View>
       {/* 하단 고정 필터 패널 */}
@@ -302,10 +307,10 @@ export default function DateTimeFilter({
 
               {/* 즐겨찾기 */}
               <View style={styles.favs}>
-                <Fav label="One Year Ago" onPress={favOneYearAgo} />
-                <Fav label="One Month Ago" onPress={favOneMonthAgo} />
-                <Fav label="Past Month" onPress={favPastMonth} />
-                <Fav label="Past Week" onPress={favPastWeek} />
+								<Fav label={TRANSLATIONS[language].oneYearAgo} onPress={favOneYearAgo} />
+                <Fav label={TRANSLATIONS[language].oneMonthAgo} onPress={favOneMonthAgo} />
+                <Fav label={TRANSLATIONS[language].past30Days} onPress={favPastMonth} />
+                <Fav label={TRANSLATIONS[language].past7Days} onPress={favPastWeek} />
               </View>
 
               <DatePickersResponsive

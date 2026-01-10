@@ -29,7 +29,8 @@
             "photo"
           ]
         }
-      ]
+      ],
+      "react-native-localize"
     ],
     "ios": {
       "supportsTablet": true,
