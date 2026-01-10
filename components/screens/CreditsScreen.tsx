@@ -10,7 +10,7 @@ const CreditsScreen: React.FC = () => {
 	const STAT_OPTIONS = [
 		{ id: 'producer', title: 'Producer', value: 'R.S.' },
 		{ id: 'programmers', title: 'Programmers', value: '' },
-		{ id: 'artist', id: 'artist', title: 'Artist', value: '' },
+		{ id: 'designer', id: 'designer', title: 'UI/UX Designer', value: '' },
 		{ id: 'qaTesters', title: 'QA Testers', value: 'YC, SJ' },
 		{ id: 'localizationManagers', title: 'Localization Managers', value: 'Mary, Carol, Ann, Edward' },
 		{ id: 'specialThanks', title: 'Special Thanks', value: 'Toronto Korean Developers' },

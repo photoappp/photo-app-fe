@@ -4,6 +4,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 
 interface UserData {
 	startDate: string;
+	dateSearchCount: number;
 	timeSearchCount: number;
 	locationSearchCount: number;
 	totalPhotos: number;
@@ -12,6 +13,7 @@ interface UserData {
 interface UserDataContextType {
 	userData: UserData;
 	updateUserData: (partial: Partial<UserData>) => void;
+	incrementDateFilter: () => void;
 	incrementTimeFilter: () => void;
 	incrementLocationFilter: () => void;
 	updateTotalPhotos: () => void;
@@ -19,6 +21,7 @@ interface UserDataContextType {
 
 const defaultUserData: UserData = {
 	startDate: '-',
+	dateSearchCount: 0,
 	timeSearchCount: 0,
 	locationSearchCount: 0,
 	totalPhotos: 0,
@@ -58,6 +61,10 @@ export const UserDataProvider = ({ children }: { children: ReactNode }) => {
 		setUserData(prev => ({ ...prev, ...partial }));
 	};
 
+	const incrementDateFilter = () => {
+		setUserData(prev => ({ ...prev, dateSearchCount: prev.dateSearchCount + 1 }));
+	};
+	
 	const incrementTimeFilter = () => {
 		setUserData(prev => ({ ...prev, timeSearchCount: prev.timeSearchCount + 1 }));
 	};
@@ -72,7 +79,7 @@ export const UserDataProvider = ({ children }: { children: ReactNode }) => {
 
 	return (
 		<UserDataContext.Provider
-			value={{ userData, updateUserData, incrementTimeFilter, incrementLocationFilter, updateTotalPhotos }}
+			value={{ userData, updateUserData, incrementDateFilter, incrementTimeFilter, incrementLocationFilter, updateTotalPhotos }}
 		>
 			{children}
 		</UserDataContext.Provider>

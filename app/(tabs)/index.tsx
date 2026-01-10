@@ -28,7 +28,6 @@ import ImageViewing from 'react-native-image-viewing';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Link, Stack, useRouter, useNavigation } from 'expo-router';
 
-import * as amplitude from '@amplitude/analytics-react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import uuid from 'react-native-uuid';
 import { useTheme } from '@/components/context/ThemeContext';
@@ -36,8 +35,6 @@ import { useUserData } from '@/components/context/UserDataContext';
 import { useSlideshowTime } from '@/components/context/SlideshowTimeContext';
 import ScreenWrapper from '@/components/screens/ScreenWrapper';
 
-// 설치 단위 가상 디바이스 ID 생성
-const deviceId = uuid.v4() as string;
 
 import ShowonmapIcon from "@/assets/icons/showonmap.svg";
 import SlideshowIcon from "@/assets/icons/slideshow.svg";
@@ -75,51 +72,11 @@ export default function HomeScreen() {
 	const navigation = useNavigation();
 	const { isDarkTheme, colors } = useTheme();
 //	const { userData, updateUserData } = useUserData();
-	const { incrementTimeFilter, incrementLocationFilter, incrementTotalPhotos } = useUserData();
+	const { incrementDateFilter, incrementTimeFilter, incrementLocationFilter, incrementTotalPhotos } = useUserData();
 	
 	useEffect(() => {
 			navigation.setOptions({ headerShown: false });
 		}, [navigation]);
-
-	useEffect(() => {
-		async function setupAmplitude() {
-			// 앱 설치 단위 랜덤 고유 ID 생성
-			let userId = await AsyncStorage.getItem('userId');
-			if (!userId) {
-				userId = uuid.v4() as string; // 랜덤 UUID 생성
-				await AsyncStorage.setItem('userId', userId);
-			}
-
-			// SDK 초기화
-			amplitude.init('3b48b6b041a40b99d4aa3c6b37bbcaad', undefined, {
-				disableCookies: true,
-				logLevel: amplitude.Types.LogLevel.Debug,
-			});
-
-			// Amplitude에 userId 설정
-			amplitude.setUserId(userId);
-
-			// 디바이스/앱 정보 user properties로 기록
-			const identifyObj = new amplitude.Identify();
-			identifyObj.set('deviceOS', Platform.OS);
-			identifyObj.set('appVersion', '0.0.1'); // 업데이트 하기
-			identifyObj.set('platform', Platform.OS);
-			amplitude.identify(identifyObj);
-			
-			// 테스트 이벤트
-//			amplitude.track('Home Screen Viewed');
-		}
-
-		setupAmplitude();
-	}, []);
-	
-	// Amplitude 클릭 이벤트
- const handleDateClick = () => amplitude.track("Date_Clicked");
- const handleTimeClick = () => amplitude.track("Time_Clicked");
- const handleLocationClick = () => amplitude.track("Location_Clicked");
- const handleSlideClick = () => amplitude.track("Slide_Clicked");
- const handleShowOnMapClick = () => amplitude.track("Show_on_the_map");
- const handleSettingsClick = () => amplitude.track("Settings_Clicked");
 
   const [images, setImages] = useState<any[]>([]);
   const [error, setError] = useState<string | null>(null);
@@ -492,15 +449,12 @@ export default function HomeScreen() {
 	
   useEffect(() => {
 		// 필터 변경 시 사용 횟수 증가
-		const usedDateTime =
-			!!filter.dateStart ||
-			!!filter.dateEnd ||
-			filter.timeStart !== 0 ||
-			filter.timeEnd !== 1440;
-
+		const usedDate = !!filter.dateStart || !!filter.dateEnd;
+		const usedTime = filter.timeStart !== 0 || filter.timeEnd !== 1440;
 		const usedLocation = filter.countries.length > 0 || filter.cities.length > 0;
-
-		if (usedDateTime) incrementTimeFilter();
+		
+		if (usedDate) incrementDateFilter();
+		if (usedTime) incrementTimeFilter();
 		if (usedLocation) incrementLocationFilter();
 
     // 필터 바뀌면 페이지네이션 리셋 후 처음부터 다시 로드

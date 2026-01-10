@@ -22,6 +22,7 @@ const UserDataScreen: React.FC = () => {
 	
 	const STAT_OPTIONS = React.useMemo(() => [
 		{ id: 'startDate', title: TRANSLATIONS[language].startDate, value: formatDateOnly(userData.startDate) },
+		{ id: 'dateSearchCount', title: TRANSLATIONS[language].dateSearchCount, value: userData.dateSearchCount ?? 0 },
 		{ id: 'timeSearchCount', title: TRANSLATIONS[language].timeSearchCount, value: userData.timeSearchCount ?? 0 },
 		{ id: 'locationSearchCount', title: TRANSLATIONS[language].locationSearchCount, value: userData.locationSearchCount ?? 0 },
 		{ id: 'totalPhotos', title: TRANSLATIONS[language].totalPhotos, value: userData.totalPhotos ?? 0 },

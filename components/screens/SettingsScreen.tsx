@@ -7,6 +7,7 @@ import { useTheme } from '@/components/context/ThemeContext';
 import { useLanguage } from '@/components/context/LanguageContext';
 import { useSlideshowTime } from '@/components/context/SlideshowTimeContext';
 import { TRANSLATIONS } from '@/constants/Translations';
+import DropDownPicker from 'react-native-dropdown-picker';
 
 const SettingsScreen = () => {
 	const { isDarkTheme, setIsDarkTheme } = useTheme();
@@ -14,7 +15,7 @@ const SettingsScreen = () => {
 	const { slideshowTime, setSlideshowTime } = useSlideshowTime();
 	const [modalVisible, setModalVisible] = useState(false);
 
-	const LANGUAGES = ['English', '한국어', '日本語', '繁體中文', '簡体中文'];
+	const LANGUAGES = ['English', '한국어', '日本語', '繁體中文', '簡体中文', 'Français', 'Spanish'];
 
 	const SETTINGS_OPTIONS = React.useMemo(() => [
 		{ id: 'userData', title: TRANSLATIONS[language].userData, route: '/settings/userData' },
@@ -28,27 +29,75 @@ const SettingsScreen = () => {
 		{ id: 'appVersion', title: TRANSLATIONS[language].appVersion, type: 'text', value: '1.0.0' }
 	], [language, slideshowTime]);
 	
+	const [langOpen, setLangOpen] = useState(false);
+	const langItems = [
+		{ label: 'English', value: 'English' },
+		{ label: '한국어', value: 'Korean' },
+		{ label: '日本語', value: 'Japanese' },
+		{ label: '繁體中文', value: 'ChineseTraditional' },
+		{ label: '简体中文', value: 'ChineseSimplified' },
+		{ label: 'Français', value: 'French' },
+		{ label: 'Spanish', value: 'Spanish' },
+	];
+
 	const [inputValue, setInputValue] = useState((slideshowTime / 1000).toString());
 	
 	const renderItem = ({ item }: { item: any }) => {
 		switch (item.type) {
 			case 'language':
 				return (
-					<TouchableOpacity style={styles.optionRow} onPress={() => setModalVisible(true)}>
-						<Text style={[styles.optionText, { color: isDarkTheme ? '#fff' : '#000' }]}>{item.title}</Text>
-						<Text style={styles.valueText}>{/* 현재 화면에 보여줄 언어 */
-							(() => {
-								const displayMap: Record<string, string> = {
-									'English': 'English',
-									'Korean': '한국어',
-									'Japanese': '日本語',
-									'ChineseTraditional': '繁體中文',
-									'ChineseSimplified': '簡体中文',
-								};
-								return displayMap[language];
-							})()}
-						</Text>
-					</TouchableOpacity>
+								<View style={[styles.optionRow, { zIndex: langOpen ? 1000 : 1 }]}>
+									{/* 왼쪽 라벨 */}
+									<Text style={[styles.optionText, { color: isDarkTheme ? '#fff' : '#000' }]}>
+										{item.title}
+									</Text>
+
+									{/* 오른쪽 드롭다운 */}
+									<View style={{ width: 160 }}>
+										<DropDownPicker
+											listMode="SCROLLVIEW"
+											dropDownDirection="BOTTOM"
+											maxHeight={300}
+											open={langOpen}
+											value={language}
+											items={langItems}
+											setOpen={setLangOpen}
+											setValue={(callback) => {
+												const next = callback(language);
+												setLanguage(next);
+											}}
+											setItems={() => {}}
+											style={{
+												backgroundColor: isDarkTheme ? '#1c1c1e' : '#fff',
+												borderColor: isDarkTheme ? '#333' : '#ccc',
+												minHeight: 36,
+											}}
+											textStyle={{
+												color: isDarkTheme ? '#fff' : '#000',
+												fontSize: 14,
+											}}
+											dropDownContainerStyle={{
+												backgroundColor: isDarkTheme ? '#1c1c1e' : '#fff',
+												borderColor: isDarkTheme ? '#333' : '#ccc',
+											}}
+										/>
+									</View>
+								</View>
+//					<TouchableOpacity style={styles.optionRow} onPress={() => setModalVisible(true)}>
+//						<Text style={[styles.optionText, { color: isDarkTheme ? '#fff' : '#000' }]}>{item.title}</Text>
+//						<Text style={styles.valueText}>{/* 현재 화면에 보여줄 언어 */
+//							(() => {
+//								const displayMap: Record<string, string> = {
+//									'English': 'English',
+//									'Korean': '한국어',
+//									'Japanese': '日本語',
+//									'ChineseTraditional': '繁體中文',
+//									'ChineseSimplified': '簡体中文',
+//								};
+//								return displayMap[language];
+//							})()}
+//						</Text>
+//					</TouchableOpacity>
 				);
 			case 'slideshow':
 				return (
@@ -110,9 +159,9 @@ const SettingsScreen = () => {
 				return (
 					<View style={styles.optionRow}>
 						<Text style={[styles.optionText, { color: isDarkTheme ? '#fff' : '#000' }]}>{item.title}</Text>
-						<TouchableOpacity style={styles.linkButton} onPress={() => Linking.openURL(item.link)}>
-							<Text style={styles.linkText}>Open</Text>
-						</TouchableOpacity>
+							<TouchableOpacity onPress={() => Linking.openURL(item.link)}>
+								<Text style={styles.linkText}>Link</Text>
+							</TouchableOpacity>
 					</View>
 				);
 			case 'text':
@@ -139,34 +188,6 @@ const SettingsScreen = () => {
 				renderItem={renderItem}
 				ItemSeparatorComponent={() => <View style={[styles.separator, { backgroundColor: isDarkTheme ? '#333' : '#ddd' }]} />}
 			/>
-
-			{/* Language Modal */}
-			<Modal visible={modalVisible} transparent animationType="slide">
-				<View style={styles.modalOverlay}>
-					<View style={styles.modalContent}>
-						{LANGUAGES.map((lang) => (
-							<TouchableOpacity
-								key={lang}
-								style={styles.modalItem}
-								onPress={() => {
-										const keyMap: Record<string, string> = {
-											'English': 'English',
-											'한국어' : 'Korean',
-											'日本語': 'Japanese',
-											'繁體中文': 'ChineseTraditional',
-											'簡体中文': 'ChineseSimplified',
-										};
-									setLanguage(keyMap[lang]);
-									setModalVisible(false);
-								}}
-							>
-								<Text style={styles.modalItemText}>{lang}</Text>
-							</TouchableOpacity>
-						))}
-						<Button title="Cancel" onPress={() => setModalVisible(false)} />
-					</View>
-				</View>
-			</Modal>
 		</ScreenWrapper>
 	);
 };
