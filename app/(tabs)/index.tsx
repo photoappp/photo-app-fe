@@ -1,12 +1,12 @@
 import DateTimeFilter from "@/components/DateTimeFilter";
 import ShowOnMap from "@/components/ShowOnMap";
 import { Photo } from "@/types/Photo";
-import { Ionicons } from "@expo/vector-icons";
-import { useNavigation } from "@react-navigation/native";
-import { LinearGradient } from "expo-linear-gradient";
+import { Ionicons } from '@expo/vector-icons';
+// import { useNavigation } from '@react-navigation/native';
+import { LinearGradient } from 'expo-linear-gradient';
 import * as Location from "expo-location";
 import * as MediaLibrary from "expo-media-library";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, useLayoutEffect } from "react";
 import {
   ActivityIndicator,
   Alert,
@@ -23,8 +23,19 @@ import {
   useColorScheme,
   View,
 } from "react-native";
-import ImageViewing from "react-native-image-viewing";
-import { SafeAreaView } from "react-native-safe-area-context";
+import Share from 'react-native-share';
+import ImageViewing from 'react-native-image-viewing';
+import { SafeAreaView } from 'react-native-safe-area-context';
+import { Link, Stack, useRouter, useNavigation } from 'expo-router';
+
+import AsyncStorage from '@react-native-async-storage/async-storage';
+import uuid from 'react-native-uuid';
+import { useTheme } from '@/components/context/ThemeContext';
+import { useUserData } from '@/components/context/UserDataContext';
+import { useSlideshowTime } from '@/components/context/SlideshowTimeContext';
+import ScreenWrapper from '@/components/screens/ScreenWrapper';
+import { useLanguage } from '@/components/context/LanguageContext';
+import { TRANSLATIONS } from '@/constants/Translations';
 
 import ShowonmapIcon from "@/assets/icons/showonmap.svg";
 import SlideshowIcon from "@/assets/icons/slideshow.svg";
@@ -58,13 +69,18 @@ type FilterState = DateTimeFilterState & LocationFilterState;
 
 /** ---------- HomeScreen ---------- */
 export default function HomeScreen() {
-  const navigation = useNavigation<any>();
+	const router = useRouter();
+	const navigation = useNavigation();
+	const { isDarkTheme, colors } = useTheme();
+	const { language } = useLanguage();
+//	const { userData, updateUserData } = useUserData();
+	const { incrementDateFilter, incrementTimeFilter, incrementLocationFilter, incrementTotalPhotos } = useUserData();
+	
+	useEffect(() => {
+			navigation.setOptions({ headerShown: false });
+		}, [navigation]);
 
-  const handleOpenSettings = () => {
-    //navigation.navigate('Settings'); // 실제 설정 스크린 이름으로 바꿔 사용
-    console.log("Move to Setting page");
-  };
-
+  const [images, setImages] = useState<any[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [selectedImage, setSelectedImage] = useState<string | null>(null);
   const [isScanning, setIsScanning] = useState(false);
@@ -76,7 +92,8 @@ export default function HomeScreen() {
   const sleep = (ms: number) => new Promise((res) => setTimeout(res, ms));
 
   // ---- 사진 목록/페이지네이션 ----
-  const [photos, setPhotos] = useState<Photo[]>([]); // 화면에 뿌릴 가공된 데이터
+  const [photos, setPhotos] = useState<Photo[]>([]); // 화면에 뿌릴 가공된 데이터 (필터 적용 후)
+	const [photosAll, setPhotosAll] = useState<Photo[]>([]); // 필터 적용 전 전체 사진
   const [endCursor, setEndCursor] = useState<string | null>(null); // MediaLibrary가 돌려주는 다음 페이지 커서 문자열
   const [hasNextPage, setHasNextPage] = useState<boolean>(true); // 다음 페이지 있는지 여부
   const [loading, setLoading] = useState<boolean>(false);
@@ -98,7 +115,7 @@ export default function HomeScreen() {
   const lastEndCallRef = useRef(0);
   const onEndLockRef = useRef(false); // 연속 호출 잠금
   const onEndDuringMomentumRef = useRef(true); // 모멘텀 중 중복 호출 방지
-  const isPaginatingRef = useRef(false); // footer 로딩바 표시에만 사용
+  const isPaginatingRef = useRef(false);       // footer 로딩바 표시에만 사용
 
   // 날짜,시간 필터링 관련 ===> 컴포넌트로 분리하기!!
   const dayStartMs = (d: Date) =>
@@ -132,6 +149,7 @@ export default function HomeScreen() {
 
   // 슬라이드쇼 관련
   const SLIDESHOW_MS = 2000;
+	const { slideshowTime } = useSlideshowTime();
   const [slideshowOn, setSlideshowOn] = useState(false);
   const slideshowTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const closingRef = useRef(false);
@@ -162,31 +180,34 @@ export default function HomeScreen() {
       setSlideshowOn(true);
       setViewerIndex(startIndex);
       setSlideshowVisible(true);
-
-      slideshowTimerRef.current = setInterval(() => {
-        if (closingRef.current) return; // ✅ 닫는 중이면 업데이트 금지
-
-        const len = photosRef.current.length;
-        if (!len) return;
-
-        setViewerIndex((prev) => {
-          const next = prev + 1;
-
-          if (next >= len) {
-            closeSlideshow();
-            return prev;
-          }
-
-          slideshowListRef.current?.scrollToIndex({
-            index: next,
-            animated: true,
-          });
-
-          return next;
-        });
-      }, SLIDESHOW_MS);
+  
+			slideshowTimerRef.current = setInterval(() => {
+				
+				if (closingRef.current) return; // ✅ 닫는 중이면 업데이트 금지
+				
+				const len = photosRef.current.length;
+				if (!len) return;
+				
+				setViewerIndex((prev) => {
+					const next = prev + 1;
+					
+					if (next >= len) {
+						closeSlideshow();
+						return prev;
+					}
+					
+					slideshowListRef.current?.scrollToIndex({
+						index: next,
+						animated: true,
+					});
+					
+					return next;
+				});
+				}, slideshowTime); // SettingsScreen과 연결
+//      }, SLIDESHOW_MS);
+      
     },
-    [stopSlideshow]
+    [stopSlideshow, slideshowTime]
   );
 
   useEffect(() => {
@@ -298,13 +319,13 @@ export default function HomeScreen() {
       } else {
         console.log("Access permit OK");
       }
-
+  
       // 2) 중복 호출 / 페이지 끝 체크
       if (loading) return;
       if (!reset && !hasNextPage) return;
-
+  
       setLoading(true);
-
+  
       try {
         // 3) 한 페이지 가져오기
         const result = await MediaLibrary.getAssetsAsync({
@@ -313,7 +334,7 @@ export default function HomeScreen() {
           after: reset ? undefined : endCursor ?? undefined,
           sortBy: [MediaLibrary.SortBy.creationTime],
         });
-
+  
         const assets = result.assets ?? [];
 
         // 4) 날짜/시간 필터
@@ -349,7 +370,7 @@ export default function HomeScreen() {
           if (tsMs < dayStartMs(dateStart) || tsMs >= dayEndNextMs(dateEnd)) {
             return false;
           }
-
+  
           return inTimeWindow(tsMs, timeStart, timeEnd);
         });
 
@@ -421,7 +442,23 @@ export default function HomeScreen() {
     [loading, hasNextPage, endCursor, filter]
   );
 
+	// 전체 사진 수 Context 저장
+	useEffect(() => {
+		if (!loading && photosAll.length > 0) {
+			updateUserData({ totalPhotos: photosAll.length });
+		}
+	}, [photosAll.length, loading]);
+	
   useEffect(() => {
+		// 필터 변경 시 사용 횟수 증가
+		const usedDate = !!filter.dateStart || !!filter.dateEnd;
+		const usedTime = filter.timeStart !== 0 || filter.timeEnd !== 1440;
+		const usedLocation = filter.countries.length > 0 || filter.cities.length > 0;
+		
+		if (usedDate) incrementDateFilter();
+		if (usedTime) incrementTimeFilter();
+		if (usedLocation) incrementLocationFilter();
+
     // 필터 바뀌면 페이지네이션 리셋 후 처음부터 다시 로드
     setEndCursor(null);
     setHasNextPage(true);
@@ -476,16 +513,92 @@ export default function HomeScreen() {
     return `${yyyy}/${MM}/${DD} ${hh}:${mm}`;
   };
 
-  const Header = useCallback(() => {
+	const Header = useCallback(() => {
+		return (
+			<View style={styles.header}>
+				<TouchableOpacity
+					onPress={() => setViewerVisible(false)}
+					style={styles.closeBtn}
+				>
+					<Text style={styles.closeTxt}>✕</Text>
+				</TouchableOpacity>
+			</View>
+		);
+	}, []);
+
+  const Footer = useCallback(() => {
     const current = photos[viewerIndex];
+		const locationText = current?.city && current?.country
+				? `${current.city}, ${current.country}`
+				: current?.country
+				? current.country
+				: "";
+		
+		const handleShare = async (photoUri: string, message: string) => {
+			try {
+				const shareOptions: Share.ShareOptions = {
+					message,
+					url: Platform.OS === 'android' ? `file://${photoUri}` : photoUri,
+					type: 'image/jpeg',
+				};
+				await Share.open(shareOptions);
+			} catch (err) {
+				// 사용자가 공유하기 취소한 경우
+				if (err?.message === 'User did not share') {
+					return; // 아무것도 하지 않음
+				}
+
+				console.log(err);
+				Alert.alert("Error", "Failed to share the photo.");
+			}
+		};
+		
+		const onPressShare = async () => {
+			if (!current?.uri) return;
+			const message = `Check out this photo! ${locationText}`;
+			await handleShare(current.uri, message);
+		};
+		
+		const handleDelete = () => {
+				Alert.alert(
+					"Delete Photo",
+					"Are you sure you want to delete this photo?",
+					[
+						{ text: "Cancel", style: "cancel" },
+						{
+							text: "Delete",
+							style: "destructive",
+							onPress: () => {
+								// photos 배열에서 제거
+								setPhotos((prev) =>
+									prev.filter((_, idx) => idx !== viewerIndex)
+								);
+								setViewerVisible(false);
+							},
+						},
+					]
+				);
+			};
+		
     return (
-      <View style={styles.header}>
-        <Text style={styles.metaTxt}>
-          {current ? fmtDateTime(current.takenAt) : ""}
-        </Text>
-        <TouchableOpacity onPress={closeViewer} style={styles.closeBtn}>
-          <Text style={styles.closeTxt}>X</Text>
-        </TouchableOpacity>
+      <View style={styles.footer}>
+				{/* 왼쪽: Share 버튼 */}
+				<TouchableOpacity onPress={onPressShare} style={styles.leftBtn}>
+					<Ionicons name="share-outline" size={24} color="white" />
+				</TouchableOpacity>
+				{/* 중앙: 날짜/시간 + 장소 */}
+				<View style={styles.headerTextContainer}>
+						<Text style={styles.metaTxt}>
+							{current ? fmtDateTime(current.takenAt) : ""}
+						</Text>
+						{locationText ? (
+							 <Text style={styles.locationTxt}>{locationText}</Text>
+						) : null}
+				</View>
+				{/* 오른쪽: Delete 버튼 */}
+				<TouchableOpacity onPress={handleDelete} style={styles.rightBtn}>
+					<Ionicons name="trash-outline" size={24} color="white" />
+				</TouchableOpacity>
       </View>
     );
   }, [photos, viewerIndex]);
@@ -539,7 +652,7 @@ export default function HomeScreen() {
                     height={16}
                     style={{ marginRight: 8 }}
                   />
-                  <Text style={styles.primaryButtonText}>Slideshow</Text>
+                  <Text style={styles.primaryButtonText}>{TRANSLATIONS[language].play}</Text>
                 </LinearGradient>
               </TouchableOpacity>
 
@@ -555,7 +668,7 @@ export default function HomeScreen() {
 
               {/* 설정 아이콘 버튼 */}
               <TouchableOpacity
-                onPress={handleOpenSettings}
+                onPress={() => router.push('/settings')}
                 activeOpacity={0.7}
                 style={styles.iconButton}
               >
@@ -634,60 +747,59 @@ export default function HomeScreen() {
           </View>
         </View>
 
-        {/* 전체화면 이미지 뷰어 (핀치줌/스와이프) */}
-        <ImageViewing
-          //images={photos.map(p => ({ uri: p.uri }))}
-          onImageIndexChange={(i: number) => {
-            viewerIndexRef.current = i; // 화면 재렌더 없이 최신 index만 기억
-          }}
-          images={viewerImages}
-          imageIndex={viewerIndex}
-          visible={viewerVisible}
-          onRequestClose={closeViewer}
-          //onImageIndexChange={(i: number) => setViewerIndex(i)} // ← 추가
-          // 선택: 상단 닫기버튼(간단한 헤더)
-          HeaderComponent={Header}
-          // 선택: 바닥 여백(제스처 충돌 완화)
-          backgroundColor="rgba(0,0,0,0.98)"
-          swipeToCloseEnabled={false} // ← 스와이프 제스처가 터치 선점하는 것 방지
-          doubleTapToZoomEnabled
-        />
+      {/* 전체화면 이미지 뷰어 (핀치줌/스와이프) */}
+      <ImageViewing
+        //images={photos.map(p => ({ uri: p.uri }))}
+        onImageIndexChange={(i: number) => {
+          viewerIndexRef.current = i;  // 화면 재렌더 없이 최신 index만 기억
+        }}
+        images={viewerImages}
+        imageIndex={viewerIndex}
+        visible={viewerVisible}
+        onRequestClose={closeViewer}
+        //onImageIndexChange={(i: number) => setViewerIndex(i)} // ← 추가
+        // 선택: 상단 닫기버튼(간단한 헤더)
+        HeaderComponent={Header}
+				FooterComponent={Footer}
+        // 선택: 바닥 여백(제스처 충돌 완화)
+        backgroundColor="rgba(0,0,0,0.98)"
+        swipeToCloseEnabled={false} // ← 스와이프 제스처가 터치 선점하는 것 방지
+        doubleTapToZoomEnabled
+      />
 
-        <Modal visible={slideshowVisible} animationType="fade">
-          <SafeAreaView style={{ flex: 1, backgroundColor: "black" }}>
-            <FlatList
-              ref={(r) => {
-                slideshowListRef.current = r;
-              }}
-              data={viewerImages} // { uri } 배열 이미 있음
-              horizontal
-              pagingEnabled
-              showsHorizontalScrollIndicator={false}
-              keyExtractor={(_, i) => i.toString()}
-              initialScrollIndex={viewerIndex}
-              getItemLayout={(_, index) => ({
-                length: screenWidth,
-                offset: screenWidth * index,
-                index,
-              })}
-              renderItem={({ item }) => (
-                <Image
-                  source={{ uri: item.uri }}
-                  style={{ width: screenWidth, height: "100%" }}
-                  resizeMode="contain"
-                />
-              )}
-            />
+      <Modal visible={slideshowVisible} animationType="fade">
+        <SafeAreaView style={{ flex: 1, backgroundColor: "black" }}>
+          <FlatList
+            ref={(r) => {slideshowListRef.current = r;}}
+            data={viewerImages} // { uri } 배열 이미 있음
+            horizontal
+            pagingEnabled
+            showsHorizontalScrollIndicator={false}
+            keyExtractor={(_, i) => i.toString()}
+            initialScrollIndex={viewerIndex}
+            getItemLayout={(_, index) => ({
+              length: screenWidth,
+              offset: screenWidth * index,
+              index,
+            })}
+            renderItem={({ item }) => (
+              <Image
+                source={{ uri: item.uri }}
+                style={{ width: screenWidth, height: "100%" }}
+                resizeMode="contain"
+              />
+            )}
+          />
 
-            {/* 닫기 버튼 */}
-            <TouchableOpacity
-              onPress={closeSlideshow}
-              style={{ position: "absolute", top: 20, right: 16, padding: 10 }}
-            >
-              <Ionicons name="close" size={28} color="#fff" />
-            </TouchableOpacity>
-          </SafeAreaView>
-        </Modal>
+          {/* 닫기 버튼 */}
+          <TouchableOpacity
+            onPress={closeSlideshow}
+            style={{ position: "absolute", top: 20, right: 16, padding: 10 }}
+          >
+            <Ionicons name="close" size={28} color="#fff" />
+          </TouchableOpacity>
+        </SafeAreaView>
+      </Modal>
 
         {loading || isScanning ? (
           <View style={styles.centerContainer}>
@@ -872,6 +984,13 @@ const styles = StyleSheet.create({
     alignItems: "center",
     gap: 20,
   },
+	header: {
+			flexDirection: "row",
+			justifyContent: "flex-end",
+			alignItems: "center",
+			paddingHorizontal: 15,
+			height: 48,
+		},
   header: {
     position: "absolute",
     top: 44, // 노치 고려해서 여백
@@ -883,6 +1002,7 @@ const styles = StyleSheet.create({
   },
   counter: { color: "#fff", fontSize: 16, fontWeight: "600" },
   metaTxt: { color: "#fff", fontSize: 14, fontWeight: "600" },
+	locationTxt: { color: "#fff", fontSize: 14, fontWeight: "600", marginTop: 2 },
   closeBtn: {
     zIndex: 999,
     width: 32,
@@ -893,6 +1013,25 @@ const styles = StyleSheet.create({
     justifyContent: "center",
   },
   closeTxt: { color: "#fff", fontSize: 18, fontWeight: "700" },
+	headerTextContainer: {
+		flexDirection: "column",
+		alignItems: "center",
+		flexShrink: 1, // 긴 텍스트도 잘림
+		marginHorizontal: 8,
+	},
+	footer: {
+		flexDirection: "row",
+		justifyContent: "space-between",
+		alignItems: "center",
+		paddingHorizontal: 16,
+		paddingVertical: 10,
+		backgroundColor: "rgba(0,0,0,0.6)",
+		position: "absolute",
+		bottom: 0,
+		width: "100%",
+		zIndex: 20, // zIndex 높여서 이미지 위로
+		minHeight: 60, // 충분한 높이 지정
+	},
   thumbnailCard: {
     backgroundColor: "#FFFFFF", // 내부 흰색
     borderRadius: 32, // 모서리 둥글게
