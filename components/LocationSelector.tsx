@@ -1,54 +1,55 @@
 import { Colors } from "@/constants/Colors";
 import { Photo } from "@/types/Photo";
+import { LinearGradient } from "expo-linear-gradient";
 import { useEffect, useState } from "react";
-import { Button, Modal, Pressable, StyleSheet, Text, View } from "react-native";
-const CONTINENTS = [
-  "Africa",
-  "Asia",
-  "Europe",
-  "Oceania",
-  "North America",
-  "South America",
-];
-type CountryTranslations = {
+import {
+  FlatList,
+  Modal,
+  Pressable,
+  StyleSheet,
+  Text,
+  TouchableOpacity,
+  View,
+} from "react-native";
+type Translations = {
   en: string;
   ko?: string;
   ja?: string;
-  zh?: string;
+  "zh-Hans"?: string;
+  "zh-Hant"?: string;
 };
-
+type CountryBlock = {
+  country: Translations;
+  cities: Translations[];
+};
 type LocationMap = {
-  [continent: string]: {
-    countries: CountryTranslations[];
-    cities?: Record<string, string[]>;
-  };
+  [country: string]: CountryBlock;
 };
 
 type Props = {
+  visible: boolean;
+  onClose: () => void;
   photos: Photo[];
   onSelectionChange?: (selected: {
-    continents: string[];
     countries: string[];
     cities: string[];
+    locationLabel: string;
   }) => void;
 };
 
-export default function ContinentSelector({
+export default function LocationSelector({
   photos,
+  visible,
+  onClose,
   onSelectionChange,
 }: Props) {
-  const [visible, setVisible] = useState(false);
-  const [modalStep, setModalStep] = useState<"continent" | "country" | "city">(
-    "continent"
-  );
-  // Final selections (what user confirmed)
-  const [selectedContinents, setSelectedContinents] = useState<string[]>([]);
+  // const [visible, setVisible] = useState(false);
+  const [allCountries, setAllCountries] = useState<string[]>([]);
+  const [allCities, setAllCities] = useState<string[]>([]);
   const [selectedCountries, setSelectedCountries] = useState<string[]>([]);
   const [selectedCities, setSelectedCities] = useState<string[]>([]);
   const [translations, setTranslations] = useState<string[][]>([]);
   const [locationMap, setLocationMap] = useState<LocationMap>({});
-  // Temporary selections in modal
-  const [tempContinents, setTempContinents] = useState<string[]>([]);
   const [tempCountries, setTempCountries] = useState<string[]>([]);
   const [tempCities, setTempCities] = useState<string[]>([]);
 
@@ -61,164 +62,108 @@ export default function ContinentSelector({
       .then((csvText) => {
         const rows = csvText.split("\n").map((row) => row.split(","));
         setTranslations(rows);
+        const countryTranslationMap: Record<string, Translations> = {};
+        const langCodes = rows[0];
+        const allCountriesSet = new Set<string>();
+        const allCitiesSet = new Set<string>();
+        translations.slice(1).forEach((row) => {
+          const enName = row[0];
+          countryTranslationMap[enName] = { en: enName };
 
-        const locationMap: LocationMap = CONTINENTS.reduce((acc, continent) => {
-          acc[continent] = { countries: [], cities: {} };
-          return acc;
-        }, {} as LocationMap);
+          row.forEach((val, i) => {
+            const code = langCodes[i] as keyof Translations;
+            if (val) {
+              countryTranslationMap[enName][code] = val;
+            }
+          });
+        });
 
         photos.forEach(({ country, city }) => {
           if (!country) return;
 
-          const row = translations.find((r) => r[1] === country);
-          if (!row) return;
-
-          const continent = row[0];
-          if (!continent) return;
-
-          if (!locationMap[continent].countries.some((c) => c.en === country)) {
-            locationMap[continent].countries.push({ en: country });
-          }
-
+          // Initialize country block if missing
+          locationMap[country] = {
+            country: countryTranslationMap[country] ?? { en: country },
+            cities: [],
+          };
+          allCountriesSet.add(country);
+          // Add city if present and not duplicated
           if (city) {
-            if (!locationMap[continent].cities)
-              locationMap[continent].cities = {};
-            if (!locationMap[continent].cities[country])
-              locationMap[continent].cities[country] = [];
-            if (!locationMap[continent].cities[country].includes(city)) {
-              locationMap[continent].cities[country].push(city);
+            const exists = locationMap[country].cities.some(
+              (c) => c.en === city
+            );
+            allCitiesSet.add(city);
+            if (!exists) {
+              locationMap[country].cities.push({ en: city });
             }
           }
         });
         setLocationMap(locationMap);
+        if (allCountriesSet.size > 0) {
+          setAllCountries(["All", ...Array.from(allCountriesSet)]);
+          setAllCities(["All", ...Array.from(allCitiesSet)]);
+          setTempCountries(["All", ...Array.from(allCountriesSet)]);
+          setTempCities(["All", ...Array.from(allCitiesSet)]);
+        }
       })
       .catch(console.error);
   }, [photos]);
 
-  const goNext = () => {
-    if (modalStep === "continent") {
-      setSelectedContinents(tempContinents);
-
-      // Get all countries from selected continents
-      const allCountries = tempContinents.flatMap((continent) => {
-        const continentData = locationMap[continent];
-        if (!continentData) return [];
-        return continentData.countries.map((c) => c.en);
-      });
-
-      setTempCountries(["All", ...allCountries]);
-      setModalStep("country");
-    } else if (modalStep === "country") {
-      setSelectedCountries(tempCountries);
-
-      const allCities = tempCountries.flatMap((country) => {
-        const continent = Object.keys(locationMap).find((cont) =>
-          locationMap[cont].countries.some((c) => c.en === country)
-        );
-        if (!continent) return [];
-        return locationMap[continent].cities?.[country] ?? [];
-      });
-      const citiesWithAll = ["All", ...allCities];
-      setTempCities(citiesWithAll);
-      setSelectedCities(citiesWithAll);
-
-      setModalStep("city");
-    }
-  };
-
-  const goBack = () => {
-    if (modalStep === "city") {
-      setSelectedCities([]);
-      setModalStep("country");
-    } else if (modalStep === "country") {
-      setTempCountries(selectedCountries);
-      setSelectedCountries([]);
-      setModalStep("continent");
-    }
-  };
-  // Get temporary selection array based on current step
-  const getTempSelection = () => {
-    if (modalStep === "continent") return tempContinents;
-    if (modalStep === "country") return tempCountries;
-    if (modalStep === "city") return tempCities;
+  // Get temporary selection array based on type
+  const getTempSelection = (type: "country" | "city") => {
+    if (type === "country") return tempCountries;
+    if (type === "city") return tempCities;
     return [];
   };
 
-  const setTempSelection = (items: string[]) => {
-    if (modalStep === "continent") setTempContinents(items);
-    else if (modalStep === "country") setTempCountries(items);
+  const setTempSelection = (type: "country" | "city", items: string[]) => {
+    if (type === "country") setTempCountries(items);
     else setTempCities(items);
   };
 
-  const toggleItem = (item: string) => {
-    const current = getTempSelection();
-    const allItems = getCurrentItems();
+  const toggleItem = (type: "country" | "city", item: string) => {
+    const current = getTempSelection(type);
+    const allItems = getCurrentItems(type);
 
     if (item === "All") {
       if (!current.includes("All")) {
-        setTempSelection(allItems);
+        setTempSelection(type, allItems);
       } else {
-        setTempSelection([]);
+        setTempSelection(type, []);
       }
       return;
     }
-
-    // Normal toggle
     let updated: string[];
     if (current.includes(item)) {
-      updated = current.filter((i) => i !== item);
+      updated = current.filter((i) => i !== item && i !== "All");
     } else {
       updated = [...current, item];
     }
-
-    if (updated.includes("All") && updated.length !== allItems.length) {
-      updated = updated.filter((i) => i !== "All");
-    }
-    const nonAllItems = allItems.filter((i) => i !== "All");
-    if (
-      nonAllItems.every((i) => updated.includes(i)) &&
-      !updated.includes("All")
-    ) {
-      updated = [...allItems];
-    }
-
-    setTempSelection(updated);
+    setTempSelection(type, updated);
   };
 
-  const getCurrentItems = () => {
-    if (modalStep === "continent") return CONTINENTS;
-
-    if (modalStep === "country") {
-      const countries = tempContinents.flatMap((continent) => {
-        const continentData = locationMap[continent];
-        if (!continentData) return [];
-        return continentData.countries.map((c) => c.en);
-      });
-      if (countries.length === 0) return [];
-      return ["All", ...countries];
+  const getCurrentItems = (type: "country" | "city") => {
+    if (type === "country") {
+      return Array.from(new Set([...allCountries]));
     }
-    if (modalStep === "city") {
-      const cities = tempCountries.flatMap((country) => {
-        const continent = Object.keys(locationMap).find((cont) =>
-          locationMap[cont].countries.some((c) => c.en === country)
-        );
+    if (type === "city") {
+      const allCitiesSet = new Set<string>();
 
-        if (!continent) return [];
-
-        const cityList = locationMap[continent].cities?.[country] ?? [];
-        return cityList;
+      tempCountries.forEach((country) => {
+        const cities = locationMap[country]?.cities ?? [];
+        cities.forEach((c) => {
+          if (c.en) allCitiesSet.add(c.en);
+        });
       });
-
-      return ["All", ...cities];
+      if (allCitiesSet.size == 0) return [];
+      return Array.from(new Set(["All", ...allCitiesSet]));
     }
 
     return [];
   };
 
   const getButtonTitle = () => {
-    const countryTitles =
-      selectedCountries.length > 1 ? selectedCountries : selectedContinents;
-    if (!countryTitles.length && !selectedContinents.length) return "Anywhere";
+    if (tempCountries.length == 0 && tempCities.length == 0) return "None";
 
     const formatLabel = (items: string[]) => {
       if (!items.includes("All")) {
@@ -226,163 +171,250 @@ export default function ContinentSelector({
           ? items[0]
           : `${items[1]}+${items.length - 1}`;
       }
-      return items.length === 1 ? items[1] : `${items[1]}+${items.length - 1}`;
+      return items[0];
     };
 
-    const countryLabel = countryTitles.length
-      ? formatLabel([...countryTitles].sort())
+    const countryLabel = tempCountries.length
+      ? formatLabel([...tempCountries].sort())
       : "";
 
-    const cityLabel = selectedCities.length
-      ? formatLabel([...selectedCities].sort())
+    const cityLabel = tempCities.length
+      ? formatLabel([...tempCities].sort())
       : "";
 
     return [countryLabel, cityLabel].filter(Boolean).join(", ");
   };
 
   const handleReset = () => {
-    setSelectedContinents([]);
     setSelectedCountries([]);
     setSelectedCities([]);
     setTempCities([]);
     setTempCountries([]);
 
     onSelectionChange?.({
-      continents: [],
       countries: [],
       cities: [],
+      locationLabel: "Anywhere",
     });
   };
 
   return (
-    <View style={{ alignItems: "center", marginBottom: 10 }}>
-      <View
-        style={{
-          flexDirection: "row",
-          alignItems: "center",
-          flexWrap: "wrap",
-        }}
-      >
-        <Text style={{ flexShrink: 1, fontSize: 16 }}>Location:</Text>
-        <Button
-          title={getButtonTitle()}
-          onPress={() => {
-            setVisible(true);
-            if (modalStep === "continent")
-              setTempContinents(selectedContinents);
-            else if (modalStep === "country")
-              setTempCountries(selectedCountries);
-            else setTempCities(selectedCities);
-          }}
-        />
-        <Button title="Reset" onPress={handleReset} />
-      </View>
-
-      <Modal
-        transparent
-        visible={visible}
-        animationType="slide"
-        onRequestClose={() => setVisible(false)}
-      >
+    <Modal
+      transparent
+      visible={visible}
+      animationType="slide"
+      onRequestClose={onClose}
+    >
+      <Pressable style={styles.overlay} onPress={onClose}>
         <View style={styles.modalContainer}>
           <View style={styles.selectionContainer}>
-            <Text style={{ fontWeight: "bold" }}>{getButtonTitle()}</Text>
-
-            {getCurrentItems().map((item) => (
-              <Pressable
-                key={item}
-                onPress={() => toggleItem(item)}
-                style={{ flexDirection: "row", alignItems: "center", gap: 8 }}
-              >
-                <View
-                  style={[
-                    styles.checkBoxContainer,
-                    {
-                      backgroundColor: getTempSelection().includes(item)
-                        ? Colors.light.selected
-                        : Colors.light.background,
-                    },
-                  ]}
-                >
-                  {getTempSelection().includes(item) && (
-                    <Text style={{ color: "white", fontWeight: "bold" }}>
-                      ✓
-                    </Text>
-                  )}
-                </View>
-                <Text>{item}</Text>
-              </Pressable>
-            ))}
-
-            <View style={styles.buttonContainer}>
-              <Button
-                title="Cancel"
-                onPress={() => {
-                  setVisible(false);
-                  setModalStep("continent");
+            <View
+              style={{
+                flexDirection: "row",
+                justifyContent: "space-between",
+                paddingLeft: "3%",
+                paddingRight: "3%",
+                paddingBottom: "3%",
+                paddingTop: "1%",
+              }}
+            >
+              <Text>Select Location</Text>
+              <View
+                style={{
+                  flexDirection: "row",
+                  justifyContent: "flex-end",
+                  gap: 10,
                 }}
-              />
-              <View style={{ flexDirection: "row", gap: 10 }}>
-                {modalStep !== "continent" && (
-                  <Button title="Back" onPress={goBack} />
-                )}
-                {modalStep !== "city" && getTempSelection().length > 0 && (
-                  <Button title="Next" onPress={goNext} />
-                )}
-                {modalStep !== "continent" && (
-                  <Button
-                    title="OK"
-                    onPress={() => {
-                      if (modalStep === "country")
-                        setSelectedCountries(tempCountries);
-                      else setSelectedCities(tempCities);
-                      onSelectionChange?.({
-                        continents: tempContinents,
-                        countries: tempCountries,
-                        cities: tempCities,
-                      });
+              >
+                <TouchableOpacity onPress={handleReset}>
+                  <Text style={styles.button}>Reset</Text>
+                </TouchableOpacity>
+                <TouchableOpacity onPress={onClose}>
+                  <Text style={styles.button}>Close</Text>
+                </TouchableOpacity>
+              </View>
+            </View>
+            <View
+              style={{
+                flexDirection: "row",
+              }}
+            >
+              <View
+                style={{
+                  borderRightWidth: 1.18,
+                  borderColor: "#DBEAFE",
+                  flex: 1,
+                  justifyContent: "center",
+                }}
+              >
+                <Text style={styles.tableTitle}>Country</Text>
+                <FlatList
+                  data={getCurrentItems("country")}
+                  renderItem={({ item }) => {
+                    const isSelected =
+                      getTempSelection("country").includes(item);
 
-                      setVisible(false);
-                      setModalStep("continent");
+                    return (
+                      <Pressable
+                        key={item}
+                        onPress={() => toggleItem("country", item)}
+                        style={({ pressed }) => [
+                          {
+                            backgroundColor: pressed
+                              ? "#EFF6FF"
+                              : isSelected
+                              ? "#EFF6FF"
+                              : Colors.light.background,
+                          },
+                        ]}
+                      >
+                        <Text style={styles.listItem}>{item}</Text>
+                      </Pressable>
+                    );
+                  }}
+                  keyExtractor={(item) => item}
+                />
+              </View>
+              <View
+                style={{
+                  flex: 1,
+                }}
+              >
+                <Text style={styles.tableTitle}>City</Text>
+                {tempCountries && (
+                  <FlatList
+                    data={getCurrentItems("city")}
+                    renderItem={({ item }) => {
+                      const isSelected =
+                        getTempSelection("city").includes(item);
+
+                      return (
+                        <Pressable
+                          key={item}
+                          onPress={() => toggleItem("city", item)}
+                          style={({ pressed }) => [
+                            {
+                              backgroundColor: pressed
+                                ? "#EFF6FF"
+                                : isSelected
+                                ? "#EFF6FF"
+                                : Colors.light.background,
+                            },
+                          ]}
+                        >
+                          <Text style={styles.listItem}>{item}</Text>
+                        </Pressable>
+                      );
                     }}
+                    keyExtractor={(item) => item}
                   />
                 )}
               </View>
             </View>
+            <View style={styles.buttonContainer}>
+              <TouchableOpacity
+                onPress={() => {
+                  setSelectedCountries(tempCountries);
+                  setSelectedCities(tempCities);
+                  console.log("Applying selection:", {
+                    countries: tempCountries,
+                    cities: tempCities,
+                    locationLabel: getButtonTitle(),
+                  });
+                  onSelectionChange?.({
+                    countries: tempCountries,
+                    cities: tempCities,
+                    locationLabel: getButtonTitle(),
+                  });
+
+                  onClose();
+                }}
+              >
+                <LinearGradient
+                  colors={["#2B7FFF", "#AD46FF"]}
+                  start={{ x: 0, y: 0 }}
+                  end={{ x: 1, y: 0 }}
+                  style={styles.primaryButton}
+                >
+                  <Text style={styles.primaryButtonText}>Apply Location</Text>
+                </LinearGradient>
+              </TouchableOpacity>
+            </View>
           </View>
         </View>
-      </Modal>
-    </View>
+      </Pressable>
+    </Modal>
   );
 }
 const styles = StyleSheet.create({
   modalContainer: {
-    flex: 1,
-    justifyContent: "center",
-    backgroundColor: "rgba(0,0,0,0.5)",
-    padding: 20,
+    backgroundColor: "white",
+    borderTopLeftRadius: 20,
+    borderTopRightRadius: 20,
+    paddingTop: 20,
+    paddingBottom: 40, // 아이폰 홈 바 영역 고려
+    maxHeight: "40%",
+    shadowColor: "#000",
+    shadowOffset: {
+      width: 0,
+      height: -2,
+    },
+    shadowOpacity: 0.25,
+    shadowRadius: 4,
+    elevation: 5, // 안드로이드 그림자
   },
   selectionContainer: {
-    backgroundColor: Colors.light.background,
-    borderRadius: 10,
-    padding: 20,
-    gap: 10,
+    borderRadius: 3,
+    marginBottom: 15,
   },
-  checkBoxContainer: {
-    width: 20,
-    height: 20,
-    borderWidth: 1,
-    borderColor: "#444",
-    justifyContent: "center",
-    alignItems: "center",
+  overlay: {
+    flex: 1,
+    justifyContent: "flex-end",
+    backgroundColor: "rgba(0, 0, 0, 0.4)", // 반투명 검은 배경
+  },
+  listItem: {
+    fontSize: 14,
+    paddingTop: 8,
+    paddingLeft: 8,
+    paddingBottom: 8,
+  },
+  button: {
+    fontWeight: "500",
+    fontSize: 16,
+    color: "#2B7FFF",
   },
   buttonContainer: {
-    flexDirection: "row",
-    justifyContent: "space-between",
     paddingHorizontal: 15,
     paddingVertical: 10,
     borderTopWidth: 1,
     borderColor: "#ccc",
     backgroundColor: Colors.light.background,
+  },
+  tableTitle: {
+    paddingTop: 8,
+    paddingLeft: 8,
+    paddingBottom: 8,
+    backgroundColor: "#F9FAFB",
+    borderColor: "#DBEAFE",
+    borderBottomWidth: 1.18,
+    borderTopWidth: 1.18,
+  },
+  primaryButton: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    paddingHorizontal: 20,
+    height: 40,
+    borderRadius: 14,
+    shadowColor: "#2563EB",
+    shadowOpacity: 0.25,
+    shadowRadius: 10,
+    shadowOffset: { width: 0, height: 6 },
+    elevation: 4,
+  },
+  primaryButtonText: {
+    color: "#FFFFFF",
+    fontSize: 14,
+    fontWeight: "600",
   },
 });

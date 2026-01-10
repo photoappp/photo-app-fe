@@ -1,5 +1,12 @@
 import { useState } from "react";
-import { Button, Dimensions, Modal, StyleSheet, View } from "react-native";
+import {
+  Dimensions,
+  Modal,
+  StyleSheet,
+  Text,
+  TouchableOpacity,
+  View,
+} from "react-native";
 import { WebView } from "react-native-webview";
 import * as amplitude from '@amplitude/analytics-react-native';
 
@@ -15,7 +22,7 @@ type Image = {
 };*/
 type Photo = {
   uri: string;
-  takenAt?: number | null;  // 있으면 쓰고, 아니면 빼도 됨
+  takenAt?: number | null; // 있으면 쓰고, 아니면 빼도 됨
 
   //localUri: string;
   city?: string;
@@ -123,15 +130,9 @@ export default function MapView({ images }: Props) {
 	
   return (
     <View>
-			<Button 
-					title="Show on Map"
-					onPress={() => {
-							setVisible(true)
-							// Amplitude 이벤트
-							amplitude.track('Show on the map');
-					}}
-			/>
-
+      <TouchableOpacity onPress={() => setVisible(true)} activeOpacity={0.8}>
+        <Text style={styles.buttonText}>Show on Map</Text>
+      </TouchableOpacity>
       <Modal visible={visible} animationType="slide">
         <View style={styles.container}>
           <WebView
@@ -141,7 +142,32 @@ export default function MapView({ images }: Props) {
 						onMessage={handleMessage}
           />
           <View style={styles.closeButton}>
-            <Button title="X" onPress={() => setVisible(false)} />
+            <TouchableOpacity
+              onPress={() => setVisible(false)}
+              style={{
+                width: 44,
+                height: 44,
+                borderRadius: 14,
+                backgroundColor: "#FFFFFF",
+                alignItems: "center",
+                justifyContent: "center",
+                shadowColor: "#000",
+                shadowOpacity: 0.12,
+                shadowRadius: 16,
+                shadowOffset: { width: 0, height: 8 },
+                elevation: 6,
+              }}
+            >
+              <Text
+                style={{
+                  color: "#374151",
+                  fontSize: 16,
+                  fontWeight: "bold",
+                }}
+              >
+                X
+              </Text>
+            </TouchableOpacity>
           </View>
         </View>
       </Modal>
@@ -155,7 +181,12 @@ const styles = StyleSheet.create({
     width: Dimensions.get("window").width,
     height: Dimensions.get("window").height,
   },
+  buttonText: {
+    color: "#314158",
+    fontSize: 14,
+  },
   closeButton: {
+    backgroundColor: "transparent",
     position: "absolute",
     top: "5%",
     right: "4%",
