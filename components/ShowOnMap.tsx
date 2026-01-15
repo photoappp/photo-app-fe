@@ -8,6 +8,10 @@ import {
   View,
 } from "react-native";
 import { WebView } from "react-native-webview";
+import * as amplitude from '@amplitude/analytics-react-native';
+import { TRANSLATIONS } from '@/constants/Translations';
+import { useLanguage } from '@/components/context/LanguageContext';
+
 /* 타입 일치를 위해 Photo로 병합
 type Image = {
   localUri: string;
@@ -36,6 +40,7 @@ type Props = {
 };
 
 export default function MapView({ images }: Props) {
+	const { language } = useLanguage();
   const [visible, setVisible] = useState(false);
   // Collect coordinates from images
   const coordinates = images
@@ -88,6 +93,16 @@ export default function MapView({ images }: Props) {
             L.marker([c.latitude, c.longitude])
               .addTo(map)
               .bindPopup(c.city + ', ' +c.country || i);
+		
+							// 마커 클릭 시 React Native로 메시지 전달
+							marker.on('click', () => {
+								window.ReactNativeWebView.postMessage(JSON.stringify({
+									type: 'marker_click',
+									uri: c.uri,
+									city: c.city,
+									country: c.country
+								}));
+							});
           });
 
           // Fit all markers
@@ -99,11 +114,27 @@ export default function MapView({ images }: Props) {
       </body>
       </html>
     `;
-
+	
+	// 웹뷰에서 메시지 받기, Amplitude 이벤트
+	const handleMessage = (event: WebViewMessageEvent) => {
+		try {
+			const data = JSON.parse(event.nativeEvent.data);
+			if (data.type === 'marker_click') {
+				amplitude.track('Location_Clicked', {
+					uri: data.uri,
+					city: data.city,
+					country: data.country,
+				});
+			}
+		} catch (e) {
+			console.error('WebView message parse error', e);
+		}
+	};
+	
   return (
     <View>
       <TouchableOpacity onPress={() => setVisible(true)} activeOpacity={0.8}>
-        <Text style={styles.buttonText}>Show on Map</Text>
+					<Text style={styles.buttonText}>{TRANSLATIONS[language].map}</Text>
       </TouchableOpacity>
       <Modal visible={visible} animationType="slide">
         <View style={styles.container}>
@@ -111,6 +142,7 @@ export default function MapView({ images }: Props) {
             originWhitelist={["*"]}
             source={{ html }}
             style={styles.webview}
+						onMessage={handleMessage}
           />
           <View style={styles.closeButton}>
             <TouchableOpacity

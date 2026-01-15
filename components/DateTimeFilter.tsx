@@ -20,6 +20,9 @@ import {
 import DateTimePicker from "./DateTimePicker";
 import LocationSelector from "./LocationSelector";
 
+import { TRANSLATIONS } from '@/constants/Translations';
+import { useLanguage } from '@/components/context/LanguageContext';
+
 type DatePickersResponsiveProps = {
   dateStart: Date;
   dateEnd: Date;
@@ -217,6 +220,8 @@ export default function DateTimeFilter({
   const timeLabel = `${fmtTime(timeStart)} – ${fmtTime(timeEnd)}`;
   const [locationLabel, setLocationLabel] = useState("Anywhere");
 
+	const { language } = useLanguage();
+	
   return (
     <View>
       {/* 하단 고정 필터 패널 */}
@@ -302,10 +307,10 @@ export default function DateTimeFilter({
 
               {/* 즐겨찾기 */}
               <View style={styles.favs}>
-                <Fav label="One Year Ago" onPress={favOneYearAgo} />
-                <Fav label="One Month Ago" onPress={favOneMonthAgo} />
-                <Fav label="Past Month" onPress={favPastMonth} />
-                <Fav label="Past Week" onPress={favPastWeek} />
+								<Fav label={TRANSLATIONS[language].oneYearAgo} onPress={favOneYearAgo} />
+                <Fav label={TRANSLATIONS[language].oneMonthAgo} onPress={favOneMonthAgo} />
+                <Fav label={TRANSLATIONS[language].past30Days} onPress={favPastMonth} />
+                <Fav label={TRANSLATIONS[language].past7Days} onPress={favPastWeek} />
               </View>
 
               <DatePickersResponsive
@@ -479,191 +484,150 @@ const Fav = ({ label, onPress }: FavProps) => (
 
 /* ---------------- 스타일 ---------------- */
 const styles = StyleSheet.create({
-  filterCard: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
-    backgroundColor: "#fff",
-    paddingHorizontal: 14,
-    paddingVertical: 10,
-    borderRadius: 12,
-    // 그림자
-    elevation: 3,
-    shadowColor: "#000",
-    shadowOpacity: 0.12,
-    shadowOffset: { width: 0, height: 2 },
-    shadowRadius: 4,
-    flex: 1, // ← 레이블 옆에서 가능한 공간을 전부 차지함
-    marginLeft: 12,
-  },
-  filterLabel: {
-    fontSize: 14,
-    fontWeight: "bold",
-    color: "#777",
-    width: 65, // ← 레이블 길이를 고정해야 줄바꿈 안 생김
-  },
-  filterValue: {
-    fontSize: 12,
-    color: "#000",
-    flex: 1,
-  },
-  filterEdit: {
-    fontSize: 10,
-    color: "#3478f6",
-    marginLeft: 12,
-  },
-  filterPanel: {
-    //borderTopWidth: 1,
-    //borderColor: '#eee',
-    //backgroundColor: '#fff',
-    paddingHorizontal: 0,
-    paddingTop: 0,
-    paddingBottom: 0,
-  },
-  filterRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
-    marginBottom: 12,
-  },
-  filterTitle: {
-    fontSize: 12,
-    color: "#888",
-    width: 90, // 왼쪽 제목 폭 고정해서 정렬
-  },
-  filterValueArea: {
-    flex: 1,
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
-  },
-  chip: {
-    flexDirection: "row",
-    alignItems: "center",
-    borderWidth: 1,
-    borderColor: "#ccc",
-    borderRadius: 20,
-    paddingHorizontal: 10,
-    paddingVertical: 6,
-    marginRight: 8,
-  },
 
-  chipTxt: { fontSize: 12, color: "#000" },
-  resetBtn: { marginLeft: "auto" },
-  resetTxt: { color: "#3478f6", fontWeight: "600" },
-  thumb: {
-    width: "24%",
-    aspectRatio: 1,
-    backgroundColor: "#ddd",
-    margin: "0.5%",
-    borderRadius: 6,
-  },
-  modalBackdrop: {
-    flex: 1,
-    justifyContent: "flex-end",
-    backgroundColor: "rgba(0,0,0,0.35)",
-  },
-  sheet: {
-    backgroundColor: "#fff",
-    borderTopLeftRadius: 16,
-    borderTopRightRadius: 16,
-    padding: 12,
-    maxHeight: "80%",
-  },
-  sheetHeader: {
-    flexDirection: "row",
-    justifyContent: "space-between",
-    alignItems: "center",
-  },
-  sheetTitle: { fontWeight: "600", fontSize: 15, color: "#000" },
-  link: { color: "#3478f6", fontWeight: "600" },
-  row: {
-    flexDirection: "row",
-    justifyContent: "space-between",
-    alignItems: "center",
-    marginTop: 8,
-    color: "#000",
-  },
-  section: { fontWeight: "600", color: "#000" },
-  pickerBox: {
-    width: "49%",
-    borderWidth: 1,
-    borderColor: "#eee",
-    borderRadius: 12,
-    ...Platform.select({
-      ios: { height: VISIBLE_HEIGHT }, // 3줄
-      android: {
-        // 안드로이드는 휠 자체가 더 커서 높이를 충분히 주고 잘라내지 않음
-        height: 130,
-      },
-    }),
-    overflow: "hidden",
-    position: "relative",
-    alignItems: "center",
-    justifyContent: "center",
-    backgroundColor: "#fff", // 모달 배경과 동일해야 덮개가 티 안남
-    color: "#000",
-    marginBottom: 0,
-  },
-  cover: {
-    position: "absolute",
-    left: 0,
-    right: 0,
-    backgroundColor: "#fff", // 모달 바탕색과 동일
-    zIndex: 10,
-  },
-  pickerBoxStack: { width: "100%", marginTop: 5 },
-  favs: { flexDirection: "row", flexWrap: "wrap", gap: 4, marginTop: 12 },
-  favBtn: {
-    backgroundColor: "#F3F4F6",
-    borderWidth: 1,
-    borderColor: "#F3F4F6",
-    borderRadius: 20,
-    paddingHorizontal: 10,
-    paddingVertical: 5,
-    marginRight: 0,
-    marginBottom: 0,
-  },
-  favTxt: { fontSize: 9, fontWeight: "800", color: "#FFF" },
+    filterCard: {
+      flexDirection: "row",
+      alignItems: "center",
+      justifyContent: "space-between",
+      backgroundColor: "#fff",
+      paddingHorizontal: 14,
+      paddingVertical: 10,
+      borderRadius: 12,
+      // 그림자
+      elevation: 3,
+      shadowColor: "#000",
+      shadowOpacity: 0.12,
+      shadowOffset: { width: 0, height: 2 },
+      shadowRadius: 4,
+      flex: 1,   // ← 레이블 옆에서 가능한 공간을 전부 차지함
+      marginLeft: 12,
+    },
+    filterLabel: {
+      fontSize: 14,
+      fontWeight: "bold",
+      color: "#777",
+      width: 65,   // ← 레이블 길이를 고정해야 줄바꿈 안 생김
+    },
+    filterValue: {
+      fontSize: 12,
+      color: "#000",
+      flex: 1,
+    },
+    filterEdit: {
+      fontSize: 10,
+      color: "#3478f6",
+      marginLeft: 12,
+    },
+    filterPanel: {
+      //borderTopWidth: 1,
+      //borderColor: '#eee',
+      //backgroundColor: '#fff',
+      paddingHorizontal: 0,
+      paddingTop: 0,
+      paddingBottom: 0,
+    },
+    filterRow: {
+      flexDirection: "row",
+      alignItems: "center",
+      justifyContent: "space-between",
+      marginBottom: 12,
+    },
+    filterTitle: {
+      fontSize: 12,
+      color: '#888',
+      width: 90,              // 왼쪽 제목 폭 고정해서 정렬
+    },
+    filterValueArea: {
+      flex: 1,
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'space-between',
+    },
+    chip: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      borderWidth: 1, borderColor: '#ccc', borderRadius: 20,
+      paddingHorizontal: 10, paddingVertical: 6, marginRight: 8,
+    },
 
-  timePresetGrid: {
-    marginTop: 12,
-    flexDirection: "row",
-    flexWrap: "wrap",
-    justifyContent: "space-between",
-  },
-  timePresetBtn: {
-    width: "49%",
-    //borderWidth: 1,
-    //borderColor: '#999',
-    borderRadius: 10,
-    paddingVertical: 0,
-    marginBottom: 5,
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  timePresetAny: {
-    width: "100%",
-    borderColor: "#999",
-    //paddingVertical: 12,
-  },
-  timePresetTxt: {
-    fontWeight: "600",
-    color: "#FFF",
-  },
+    chipTxt: { fontSize: 12, color: '#000', },
+    resetBtn: { marginLeft: 'auto' },
+    resetTxt: { color: '#3478f6', fontWeight: '600' },
+    thumb: { width: '24%', aspectRatio: 1, backgroundColor: '#ddd', margin: '0.5%', borderRadius: 6 },
+    modalBackdrop: { flex: 1, justifyContent: 'flex-end', backgroundColor: 'rgba(0,0,0,0.35)' },
+    sheet: { backgroundColor: '#fff', borderTopLeftRadius: 16, borderTopRightRadius: 16, padding: 12, maxHeight: '80%' },
+    sheetHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
+    sheetTitle: { fontWeight: '600', fontSize: 15, color: '#000', },
+    link: { color: '#3478f6', fontWeight: '600' },
+    row: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginTop: 8, color: '#000', },
+    section: { fontWeight: '600', color: '#000', },
+    pickerBox: {
+      width: '49%',
+      borderWidth: 1, borderColor: '#eee', borderRadius: 12,
+      ...Platform.select({
+        ios: { height: VISIBLE_HEIGHT }, // 3줄
+        android: { // 안드로이드는 휠 자체가 더 커서 높이를 충분히 주고 잘라내지 않음
+          height: 130,
+        },
+      }),
+      overflow: 'hidden',
+      position: 'relative',
+      alignItems: 'center',
+      justifyContent: 'center',
+      backgroundColor: '#fff',    // 모달 배경과 동일해야 덮개가 티 안남
+      color: '#000',
+      marginBottom: 0,
+    },
+    cover: {
+      position: 'absolute',
+      left: 0, right: 0,
+      backgroundColor: '#fff',    // 모달 바탕색과 동일
+      zIndex: 10,
+    },
+    pickerBoxStack: { width: '100%', marginTop: 5, },
+    favs: { flexDirection: 'row', flexWrap: 'wrap', gap: 4, marginTop: 12, },
+    favBtn: { backgroundColor: '#F3F4F6', borderWidth: 1, borderColor: '#F3F4F6', borderRadius: 20, paddingHorizontal: 10, paddingVertical: 5, marginRight: 0, marginBottom: 0 },
+    favTxt: { fontSize: 9, fontWeight: '800', color: '#FFF', },
+  
+    timePresetGrid: {
+      marginTop: 12,
+      flexDirection: 'row',
+      flexWrap: 'wrap',
+      justifyContent: 'space-between',
+    },
+    timePresetBtn: {
+      width: '49%',
+      //borderWidth: 1,
+      //borderColor: '#999',        
+      borderRadius: 10,
+      paddingVertical: 0,
+      marginBottom: 5,
+      alignItems: 'center',
+      justifyContent: 'center',
+    },
+    timePresetAny: {
+      width: '100%',
+      borderColor: '#999',
+      //paddingVertical: 12,
+    },
+    timePresetTxt: {
+      fontWeight: '600',
+      color: '#FFF',
+    },
 
-  quickBtnGradient: {
-    paddingHorizontal: 14,
-    paddingVertical: 8,
-    borderRadius: 14,
-  },
+    quickBtnGradient: {
+      paddingHorizontal: 14,
+      paddingVertical: 8,
+      borderRadius: 14,
+    },
+    
+    rangeBtnGradient: {
+      paddingVertical: 10,
+      paddingHorizontal: 12,
+      borderRadius: 12,
+      width: '100%',
+      justifyContent: 'center',
+      alignItems: 'center',
+    },
 
-  rangeBtnGradient: {
-    paddingVertical: 10,
-    paddingHorizontal: 12,
-    borderRadius: 12,
-    width: "100%",
-    justifyContent: "center",
-    alignItems: "center",
-  },
 });
