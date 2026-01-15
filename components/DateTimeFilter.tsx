@@ -1,19 +1,26 @@
-// App.js
-import { LinearGradient } from 'expo-linear-gradient';
+// DateTimeFilter.tsx
+import { Photo } from "@/types/Photo";
+import { LinearGradient } from "expo-linear-gradient";
 import {
   SetStateAction,
   useEffect,
-  //useCallback, useMemo, useRef, 
-  useState
-} from 'react';
+  //useCallback, useMemo, ,
+  useRef,
+  useState,
+} from "react";
 import {
   Modal,
   Platform,
-  StyleSheet, Text,
-  //Button, Image, FlatList, PermissionsAndroid, 
-  TouchableOpacity, useWindowDimensions, View,
-} from 'react-native';
-import DateTimePicker from './DateTimePicker';
+  StyleSheet,
+  Text,
+  //Button, Image, FlatList, PermissionsAndroid,
+  TouchableOpacity,
+  useWindowDimensions,
+  View,
+} from "react-native";
+import DateTimePicker from "./DateTimePicker";
+import LocationSelector from "./LocationSelector";
+import * as amplitude from "@amplitude/analytics-react-native";
 
 
 type DatePickersResponsiveProps = {
@@ -65,15 +72,100 @@ const today = new Date();
 const oneYearAgo = new Date(today.getFullYear() - 1, today.getMonth(), today.getDate());
 
 type DateTimeFilterValue = {
-    dateStart: Date;
-    dateEnd: Date;
-    timeStart: number;  // 0~1440
-    timeEnd: number;
-  };
+  dateStart: Date;
+  dateEnd: Date;
+  timeStart: number; // 0~1440
+  timeEnd: number;
+};
+
+type DateTimeFilterProps = {
+  onChange?: (value: DateTimeFilterValue) => void;
+  photos: Photo[]; // add photos here
+  onLocationChange: (value: {
+    countries: string[];
+    cities: string[];
+    locationLabel: string;
+  }) => void;
+};
+
+// 날짜, 시간 변경 타이밍 관련
+const debounceTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+const lastEmittedRef = useRef<string>(""); // 동일 값 중복 emit 방지용(선택이지만 추천)
+
+export default function DateTimeFilter({
+  onChange,
+  photos,
+  onLocationChange,
+}: DateTimeFilterProps) {
+  // ---- 필터 상태 ----
+  const [dateStart, setDateStart] = useState(oneYearAgo);
+  const [dateEnd, setDateEnd] = useState(today);
+
+  // 시간은 분 단위 (0~1440; 1440=24:00 허용)
+  const [timeStart, setTimeStart] = useState(0);
+  const [timeEnd, setTimeEnd] = useState(1440);
+
+  // ---- 모달 표시 상태 ----
+  const [dateModalVisible, setDateModalVisible] = useState(false);
+  const [timeModalVisible, setTimeModalVisible] = useState(false);
+  const [locationModalVisible, setLocationModalVisible] = useState(false);
+
+  // 플랫폼 플래그
+  const isIOS = Platform.OS === "ios";
+
+  // 안드로이드에서만 사용할, “어느 필드를 편집 중인지” 상태
+  const [androidDateField, setAndroidDateField] = useState<
+    "start" | "end" | null
+  >(null);
+  const [androidTimeField, setAndroidTimeField] = useState<
+    "start" | "end" | null
+  >(null);
+
+  const DEBOUNCE_MS = 500; // 0.5초
+
+  useEffect(() => {
+    if (!onChange) return;
   
-  type DateTimeFilterProps = {
-    onChange?: (value: DateTimeFilterValue) => void;
+    // 이전 예약 취소
+    if (debounceTimerRef.current) clearTimeout(debounceTimerRef.current);
+  
+    // 새로 예약
+    debounceTimerRef.current = setTimeout(() => {
+      emitChange();
+      debounceTimerRef.current = null;
+    }, DEBOUNCE_MS);
+  
+    // cleanup (언마운트/다음 변경 시 안전)
+    return () => {
+      if (debounceTimerRef.current) clearTimeout(debounceTimerRef.current);
+    };
+  }, [dateStart, dateEnd, timeStart, timeEnd, onChange]);
+  
+
+  useEffect(() => {
+    console.log("dateModalVisible =", dateModalVisible);
+  }, [dateModalVisible]);
+
+  useEffect(() => {
+    console.log("timeModalVisible =", timeModalVisible);
+  }, [timeModalVisible]);
+
+  // 분→라벨 보조(필요시)
+  const mm = (m: number) =>
+    `${`${Math.floor(m / 60)}`.padStart(2, "0")}:${`${m % 60}`.padStart(
+      2,
+      "0"
+    )}`;
+
+  // 프리셋 적용
+  const applyTimePreset = (
+    s: SetStateAction<number>,
+    e: SetStateAction<number>
+  ) => {
+    setTimeStart(s);
+    setTimeEnd(e);
   };
+}
 
 export default function DateTimeFilter({ onChange }: DateTimeFilterProps) {
     // ---- 필터 상태 ----
@@ -97,6 +189,50 @@ export default function DateTimeFilter({ onChange }: DateTimeFilterProps) {
     const [androidTimeField, setAndroidTimeField] =
       useState<'start' | 'end' | null>(null);
 
+  // ---- 즐겨찾기 ----
+  const favOneYearAgo = () => {
+    amplitude.track("tap_date_favorite", {
+      screen_name: "home",
+      favorite_key: "one_year_ago",
+    });
+    const now = new Date();
+    const d = new Date(now.getFullYear() - 1, now.getMonth(), now.getDate());
+    setDateStart(d);
+    setDateEnd(d);
+  };
+  const favOneMonthAgo = () => {
+    amplitude.track("tap_date_favorite", {
+      screen_name: "home",
+      favorite_key: "one_month_ago",
+    });
+    const now = new Date();
+    const d = new Date(now.getFullYear(), now.getMonth() - 1, now.getDate());
+    setDateStart(d);
+    setDateEnd(d);
+  };
+  const favPastMonth = () => {
+    amplitude.track("tap_date_favorite", {
+      screen_name: "home",
+      favorite_key: "past_month",
+    });
+    const now = new Date();
+    const first = new Date(now.getFullYear(), now.getMonth() - 1, 1);
+    const last = new Date(now.getFullYear(), now.getMonth(), 0);
+    setDateStart(first);
+    setDateEnd(last);
+  };
+  const favPastWeek = () => {
+    amplitude.track("tap_date_favorite", {
+      screen_name: "home",
+      favorite_key: "past_week",
+    });
+    const now = new Date();
+    const s = new Date(now.getFullYear(), now.getMonth(), now.getDate() - 7);
+    const e = new Date(now.getFullYear(), now.getMonth(), now.getDate() - 1);
+    setDateStart(s);
+    setDateEnd(e);
+  };
+
     // 필터 값 바뀔 때마다 메인에 알려주기
     useEffect(() => {
         onChange?.({ dateStart, dateEnd, timeStart, timeEnd });
@@ -106,87 +242,86 @@ export default function DateTimeFilter({ onChange }: DateTimeFilterProps) {
       console.log('dateModalVisible =', dateModalVisible);
     }, [dateModalVisible]);
 
-    useEffect(() => {
-      console.log('timeModalVisible =', timeModalVisible);
-    }, [timeModalVisible]);
+
+  const emitChange = () => {
+    const payload = { dateStart, dateEnd, timeStart, timeEnd };
   
-    // 분→라벨 보조(필요시)
-    const mm = (m: number) => `${`${Math.floor(m/60)}`.padStart(2,'0')}:${`${m%60}`.padStart(2,'0')}`;
+    // 같은 값이면 또 안 쏘게
+    const sig =
+      `${dateStart.getTime()}|${dateEnd.getTime()}|${timeStart}|${timeEnd}`;
   
-    // 프리셋 적용
-    const applyTimePreset = (s: SetStateAction<number>, e: SetStateAction<number>) => {
-      setTimeStart(s);
-      setTimeEnd(e);
-    };
+    if (sig === lastEmittedRef.current) return;
+    lastEmittedRef.current = sig;
   
-    // 프리셋 값(요구사항)
-    const PRESETS = [
-      { label: '00:00 - 05:59', s: 0,    e: 6*60-1 },  // 00:00~05:59
-      { label: '06:00 - 11:59', s: 6*60, e: 12*60-1 }, // 06:00~11:59
-      { label: '12:00 - 17:59', s: 12*60, e: 18*60-1}, // 12:00~17:59
-      { label: '18:00 - 23:59', s: 18*60, e: 24*60-1}, // 18:00~23:59
-    ];
+    onChange?.(payload);
+  };
+
+  // close 눌렀을시
+  const flushPendingChange = () => {
+    if (debounceTimerRef.current) {
+      clearTimeout(debounceTimerRef.current);
+      debounceTimerRef.current = null;
+    }
+    emitChange();
+  };
   
-    // ---- Reset ----
-    const resetAll = () => {
-      setDateStart(oneYearAgo);
-      setDateEnd(today);
-      setTimeStart(0);
-      setTimeEnd(1440);
-    };
+  // 날짜, 시간 초기화 버튼
+  // const resetProcess = () => {
+
+  // };
   
-    // ---- 즐겨찾기 ----
-    const favOneYearAgo = () => {
-      const now = new Date();
-      const d = new Date(now.getFullYear() - 1, now.getMonth(), now.getDate());
-      setDateStart(d);
-      setDateEnd(d);
-    };
-    const favOneMonthAgo = () => {
-      const now = new Date();
-      const d = new Date(now.getFullYear(), now.getMonth() - 1, now.getDate());
-      setDateStart(d);
-      setDateEnd(d);
-    };
-    const favPastMonth = () => {
-      const now = new Date();
-      const first = new Date(now.getFullYear(), now.getMonth() - 1, 1);
-      const last = new Date(now.getFullYear(), now.getMonth(), 0);
-      setDateStart(first);
-      setDateEnd(last);
-    };
-    const favPastWeek = () => {
-      const now = new Date();
-      const s = new Date(now.getFullYear(), now.getMonth(), now.getDate() - 7);
-      const e = new Date(now.getFullYear(), now.getMonth(), now.getDate() - 1);
-      setDateStart(s);
-      setDateEnd(e);
-    };
-  
-    // ---- Time 수정 유틸 (시/분을 분단위로) ----
-    const setTimeHM = (which: string, hours: number, minutes: number) => {
-      const mins = hours * 60 + minutes;
-      if (which === 'start') setTimeStart(mins);
-      else setTimeEnd(mins);
-    };
-  
-    // ---- 렌더 ----
-    const dateLabel = `${fmtDate(dateStart)} – ${fmtDate(dateEnd)}`;
-    const timeLabel = `${fmtTime(timeStart)} – ${fmtTime(timeEnd)}`;
-  
-    return (
-      <View>
-        {/* 하단 고정 필터 패널 */}
-        <View style={styles.filterPanel}>
-          {/* Date row */}
-          
-          <View style={styles.filterRow}>
-            <Text style={styles.filterLabel}>Date</Text>
-            <TouchableOpacity
-              onPress={() => setDateModalVisible(true)}
-              activeOpacity={0.8}
-              style={styles.filterCard}
-            >
+  return (
+    <View>
+      {/* 하단 고정 필터 패널 */}
+      <View style={styles.filterPanel}>
+        {/* Date row */}
+
+        <View style={styles.filterRow}>
+          <Text style={styles.filterLabel}>Date</Text>
+          <TouchableOpacity
+            onPress={() => {
+              amplitude.track("tap_date_filter", { screen_name: "home" });
+              setDateModalVisible(true);
+            }}
+            activeOpacity={0.8}
+            style={styles.filterCard}
+          >
+            <Text style={styles.filterValue} numberOfLines={1}>
+              {dateLabel}
+            </Text>
+            <Text style={styles.filterEdit}>Reset</Text>
+          </TouchableOpacity>
+        </View>
+
+        <View style={styles.filterRow}>
+          <Text style={styles.filterLabel}>Time</Text>
+          <TouchableOpacity
+            onPress={() => {
+              amplitude.track("tap_time_filter", { screen_name: "home" });
+              setTimeModalVisible(true);
+            }}
+            activeOpacity={0.8}
+            style={styles.filterCard}
+          >
+            <Text style={styles.filterValue} numberOfLines={1}>
+              {timeLabel}
+            </Text>
+            <Text style={styles.filterEdit}>Reset</Text>
+          </TouchableOpacity>
+        </View>
+
+        {/* Location row – 기존 Location 필터 로직에 맞게 onPress 연결 */}
+        <View style={styles.filterRow}>
+          <Text style={styles.filterLabel}>Location</Text>
+          <TouchableOpacity
+            onPress={() => {
+              amplitude.track("tap_location_filter", { screen_name: "home" });
+              setLocationModalVisible(true);
+            }}
+            activeOpacity={0.8}
+            style={styles.filterCard}
+          >
+            <View style={styles.filterValueArea}>
               <Text style={styles.filterValue} numberOfLines={1}>
                 {dateLabel}
               </Text>
@@ -225,133 +360,187 @@ export default function DateTimeFilter({ onChange }: DateTimeFilterProps) {
             </TouchableOpacity>
           </View>
         </View>
-  
-        {/* 날짜 범위 모달: Start/End 한 팝업, 즐겨찾기 포함 (좁은 화면은 세로 스택) */}
-        {true && (
-          <Modal
-            visible={dateModalVisible}
-            transparent
-            animationType="slide"
-            onRequestClose={() => setDateModalVisible(false)}
-          >
-            <View style={styles.modalBackdrop}>
-              <View style={styles.sheet}>
-                <View style={styles.sheetHeader}>
-                  <Text style={styles.sheetTitle}>Select Date</Text>
-                  <View style={{ flexDirection: 'row' }}>
-                    <TouchableOpacity onPress={() => { setDateStart(oneYearAgo); setDateEnd(today); setDateModalVisible(false); }}>
-                      <Text style={styles.link}>Reset</Text>
-                    </TouchableOpacity>
-                    <TouchableOpacity onPress={() => setDateModalVisible(false)} style={{ marginLeft: 16 }}>
-                      <Text style={styles.link}>Close</Text>
-                    </TouchableOpacity>
-                  </View>
-                </View>
-                
-                {/* 즐겨찾기 */}
-                <View style={styles.favs}>
-                  <Fav label="One Year Ago" onPress={favOneYearAgo} />
-                  <Fav label="One Month Ago" onPress={favOneMonthAgo} />
-                  <Fav label="Past Month" onPress={favPastMonth} />
-                  <Fav label="Past Week" onPress={favPastWeek} />
-                </View>
-    
-                <DatePickersResponsive
-                  dateStart={dateStart}
-                  dateEnd={dateEnd}
-                  onChangeStart={setDateStart}
-                  onChangeEnd={setDateEnd}
-                />
-    
-
-              </View>
-            </View>
-          </Modal>
-        )}
-
-        {/* 시간 범위 모달: Start/End 한 팝업 */}
-        {true && (
-          <Modal
-            visible={timeModalVisible}
-            transparent
-            animationType="slide"
-            onRequestClose={() => setTimeModalVisible(false)}
-          >
-            <View style={styles.modalBackdrop}>
-              <View style={styles.sheet}>
-                <View style={styles.sheetHeader}>
-                  <Text style={styles.sheetTitle}>Select Time</Text>
-                  <View style={{ flexDirection: 'row' }}>
-                    <TouchableOpacity onPress={() => { setTimeStart(0); setTimeEnd(1439); setTimeModalVisible(false); }}>
-                      <Text style={styles.link}>Reset</Text>
-                    </TouchableOpacity>
-                    <TouchableOpacity onPress={() => setTimeModalVisible(false)} style={{ marginLeft: 16 }}>
-                      <Text style={styles.link}>Close</Text>
-                    </TouchableOpacity>
-                  </View>
-                </View>
-
-                <View style={styles.row}>
-                    <View style={styles.pickerBox}>
-                      <DateTimePicker
-                        mode="time"
-                        value={new Date(2000, 0, 1, Math.floor(timeStart / 60), timeStart % 60)}
-                        onChange={(d) => setTimeHM('start', d.getHours(), d.getMinutes())}
-                      />
-                    </View>
-
-                    <View style={styles.pickerBox}>
-                      <DateTimePicker
-                        mode="time"
-                        value={new Date(2000, 0, 1, Math.floor(timeEnd / 60), timeEnd % 60)}
-                        onChange={(d) => setTimeHM('end', d.getHours(), d.getMinutes())}
-                      />
-                    </View>
-                </View>
-
-                {/* 프리셋 4개 (2x2 그리드) */}
-                <View style={styles.timePresetGrid}>
-                  {PRESETS.map(p => (
-                    <TouchableOpacity
-                      key={p.label}
-                      style={styles.timePresetBtn}
-                      activeOpacity={0.8}
-                      onPress={() => applyTimePreset(p.s, p.e)}
-                    >
-                      <LinearGradient
-                        colors={['#2B7FFF', '#AD46FF']}
-                        start={{ x: 0, y: 0 }}
-                        end={{ x: 1, y: 0 }}
-                        style={styles.rangeBtnGradient}
-                      >
-                        <Text style={styles.timePresetTxt}>{p.label}</Text>
-                      </LinearGradient>
-                    </TouchableOpacity>
-                  ))}
-                </View>
-
-                {/* Anytime 한 줄 */}
-                <TouchableOpacity
-                  style={[styles.timePresetBtn, styles.timePresetAny]}
-                  activeOpacity={0.8}
-                  onPress={() => applyTimePreset(0, 1439)}
-                >
-                  <LinearGradient
-                          colors={['#2B7FFF', '#AD46FF']}
-                          start={{ x: 0, y: 0 }}
-                          end={{ x: 1, y: 0 }}
-                          style={styles.rangeBtnGradient}
-                  >
-                    <Text style={styles.timePresetTxt}>All day</Text>
-                  </LinearGradient>
-                </TouchableOpacity>
-              </View>
-            </View>
-          </Modal>
-        )}
       </View>
-    );
-}
+
+      {/* 날짜 범위 모달 */}
+      {true && (
+        <Modal
+          visible={dateModalVisible}
+          transparent
+          animationType="slide"
+          onRequestClose={() => setDateModalVisible(false)}
+        >
+          <View style={styles.modalBackdrop}>
+            <View style={styles.sheet}>
+              {/* 헤더 */}
+              <View style={styles.sheetHeader}>
+                <Text style={styles.sheetTitle}>Select Date</Text>
+                <View style={{ flexDirection: "row" }}>
+                  <TouchableOpacity
+                    onPress={() => {
+                      setDateStart(oneYearAgo);
+                      setDateEnd(today);
+                      setDateModalVisible(false);
+                    }}
+                  >
+                    <Text style={styles.link}>Reset</Text>
+                  </TouchableOpacity>
+
+                  <TouchableOpacity
+                    onPress={() => {
+                      setDateModalVisible(false);
+                      flushPendingChange();
+                    }}
+                    style={{ marginLeft: 16 }}
+                  >
+                    <Text style={styles.link}>Close</Text>
+                  </TouchableOpacity>
+                </View>
+              </View>
+
+              {/* 즐겨찾기 */}
+              <View style={styles.favs}>
+                <Fav label="One Year Ago" onPress={favOneYearAgo} />
+                <Fav label="One Month Ago" onPress={favOneMonthAgo} />
+                <Fav label="Past Month" onPress={favPastMonth} />
+                <Fav label="Past Week" onPress={favPastWeek} />
+              </View>
+
+              <DatePickersResponsive
+                dateStart={dateStart}
+                dateEnd={dateEnd}
+                onChangeStart={setDateStart}
+                onChangeEnd={setDateEnd}
+              />
+            </View>
+          </View>
+        </Modal>
+      )}
+
+      {/* 시간 범위 모달 */}
+      {true && (
+        <Modal
+          visible={timeModalVisible}
+          transparent
+          animationType="slide"
+          onRequestClose={() => setTimeModalVisible(false)}
+        >
+          <View style={styles.modalBackdrop}>
+            <View style={styles.sheet}>
+              {/* 헤더 */}
+              <View style={styles.sheetHeader}>
+                <Text style={styles.sheetTitle}>Select Time</Text>
+                <View style={{ flexDirection: "row" }}>
+                  <TouchableOpacity
+                    onPress={() => {
+                      setTimeStart(0);
+                      setTimeEnd(1439);
+                      setTimeModalVisible(false);
+                    }}
+                  >
+                    <Text style={styles.link}>Reset</Text>
+                  </TouchableOpacity>
+
+                  <TouchableOpacity
+                    onPress={() => {
+                      setTimeModalVisible(false);
+                      flushPendingChange();
+                    }}
+                    style={{ marginLeft: 16 }}
+                  >
+                    <Text style={styles.link}>Close</Text>
+                  </TouchableOpacity>
+                </View>
+              </View>
+
+              {/* 2개 피커 */}
+              <View style={styles.row}>
+                <View style={styles.pickerBox}>
+                  <DateTimePicker
+                    mode="time"
+                    value={
+                      new Date(
+                        2000,
+                        0,
+                        1,
+                        Math.floor(timeStart / 60),
+                        timeStart % 60
+                      )
+                    }
+                    onChange={(d) => setTimeHM("start", d.getHours(), d.getMinutes())}
+                  />
+                </View>
+
+                <View style={styles.pickerBox}>
+                  <DateTimePicker
+                    mode="time"
+                    value={
+                      new Date(2000, 0, 1, Math.floor(timeEnd / 60), timeEnd % 60)
+                    }
+                    onChange={(d) => setTimeHM("end", d.getHours(), d.getMinutes())}
+                  />
+                </View>
+              </View>
+
+              {/* 프리셋 4개 */}
+              <View style={styles.timePresetGrid}>
+                {PRESETS.map((p) => (
+                  <TouchableOpacity
+                    key={p.label}
+                    style={styles.timePresetBtn}
+                    activeOpacity={0.8}
+                    onPress={() => {
+                      amplitude.track("tap_time_favorite", {
+                        screen_name: "home",
+                        preset_label: p.label,
+                        time_start_min: p.s,
+                        time_end_min: p.e,
+                      });
+                      applyTimePreset(p.s, p.e);
+                    }}
+                  >
+                    <LinearGradient
+                      colors={["#2B7FFF", "#AD46FF"]}
+                      start={{ x: 0, y: 0 }}
+                      end={{ x: 1, y: 0 }}
+                      style={styles.rangeBtnGradient}
+                    >
+                      <Text style={styles.timePresetTxt}>{p.label}</Text>
+                    </LinearGradient>
+                  </TouchableOpacity>
+                ))}
+              </View>
+
+              {/* all_day */}
+              <TouchableOpacity
+                style={[styles.timePresetBtn, styles.timePresetAny]}
+                activeOpacity={0.8}
+                onPress={() => {
+                  amplitude.track("tap_time_favorite", {
+                    screen_name: "home",
+                    preset_label: "all_day",
+                    time_start_min: 0,
+                    time_end_min: 1439,
+                  });
+                  applyTimePreset(0, 1439);
+                }}
+              >
+                <LinearGradient
+                  colors={["#2B7FFF", "#AD46FF"]}
+                  start={{ x: 0, y: 0 }}
+                  end={{ x: 1, y: 0 }}
+                  style={styles.rangeBtnGradient}
+                >
+                  <Text style={styles.timePresetTxt}>All day</Text>
+                </LinearGradient>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </Modal>
+      )}
+      </View>
+  );
+
 
 /* ---------------- UI 컴포넌트 ---------------- */
 type ChipProps = {

@@ -29,7 +29,10 @@ import { SafeAreaView } from "react-native-safe-area-context";
 import ShowonmapIcon from '@/assets/icons/showonmap.svg';
 import SlideshowIcon from '@/assets/icons/slideshow.svg';
 
-
+import ShowonmapIcon from "@/assets/icons/showonmap.svg";
+import SlideshowIcon from "@/assets/icons/slideshow.svg";
+import { AMPLITUDE_API_KEY } from '@/constants/env';
+import * as amplitude from '@amplitude/analytics-react-native';
 
 // Responsive image grid calculations
 const screenWidth = Dimensions.get("window").width;
@@ -66,6 +69,11 @@ export default function HomeScreen() {
   const handleOpenSettings = () => {
     //navigation.navigate('Settings'); // 실제 설정 스크린 이름으로 바꿔 사용
     console.log("Move to Setting page");
+    const handleOpenSettings = () => {
+      amplitude.track("tap_settings_button", {
+        screen_name: "home",
+      });
+    };
   };
 
   const [error, setError] = useState<string | null>(null);
@@ -102,6 +110,16 @@ export default function HomeScreen() {
   const onEndLockRef = useRef(false); // 연속 호출 잠금
   const onEndDuringMomentumRef = useRef(true); // 모멘텀 중 중복 호출 방지
   const isPaginatingRef = useRef(false); // footer 로딩바 표시에만 사용
+
+  // ----- amplitude tracking helpers -----
+  const is_amp_ready_ref = useRef(false);
+  const home_view_start_ms_ref = useRef<number>(Date.now());
+
+  // swipe threshold tracking (viewer)
+  const swipe_count_ref = useRef(0);
+  const swipe_threshold_fired_ref = useRef(false);
+  const SWIPE_THRESHOLD = 10;
+  let app_launched_tracked = false;
 
   // 날짜,시간 필터링 관련 ===> 컴포넌트로 분리하기!!
   const dayStartMs = (d: Date) =>
@@ -197,11 +215,44 @@ export default function HomeScreen() {
   );
 
   useEffect(() => {
+    if (!AMPLITUDE_API_KEY) {
+      console.warn("amplitude_api_key_missing");
+      return;
+    }
+  
+    // init은 보통 1회만 하는 게 정석이지만,
+    // 동일 API key로 중복 init이 문제되면 아래도 guard 걸면 됨.
+    amplitude.init(AMPLITUDE_API_KEY);
+  
+    if (!app_launched_tracked) {
+      app_launched_tracked = true;
+      amplitude.track("app_launched", {
+        platform: Platform.OS,
+        env: __DEV__ ? "dev" : "prod",
+      });
+    }
+  }, []);
+
+  useEffect(() => {
+    home_view_start_ms_ref.current = Date.now();
+  
+    amplitude.track("screen_home_viewed", {
+      screen_name: "home",
+    });
+  }, []);
+
+  useEffect(() => {
     photosRef.current = photos;
   }, [photos]);
   
   useEffect(() => {
     return () => {
+      // 앱 체류시간 측정
+      const dwell_ms = Date.now() - home_view_start_ms_ref.current;
+      amplitude.track("screen_home_exited", {
+        screen_name: "home",
+        dwell_ms,
+      });
       // 화면 떠날 때 타이머 정리
       if (slideshowTimerRef.current) clearInterval(slideshowTimerRef.current);
     };
@@ -220,7 +271,12 @@ export default function HomeScreen() {
       clearInterval(slideshowTimerRef.current);
       slideshowTimerRef.current = null;
     }
-  
+
+    amplitude.track("slideshow_closed", {
+      screen_name: "home",
+      end_index: viewerIndexRef.current ?? 0,
+    });
+
     setSlideshowVisible(false); // ✅ 모달 닫기까지 여기서 끝냄
   }, []);
 
@@ -228,6 +284,12 @@ export default function HomeScreen() {
     // 예: 현재 선택된 index에서 시작하고 싶으면 viewerIndexRef.current 사용
     startSlideshow(viewerIndexRef.current ?? 0);
     console.log("Slideshow start");
+
+    amplitude.track("tap_slideshow_button", {
+      screen_name: "home",
+      slideshow_on: slideshowOn,
+      photo_count: photosRef.current.length,
+    });
   };
   
   
@@ -442,6 +504,15 @@ export default function HomeScreen() {
         style={styles.imageContainer}
         activeOpacity={0.9}
         onPress={() => {
+          amplitude.track("tap_photo_thumbnail", {
+            screen_name: "home",
+            photo_index: index,
+            photo_count: photosRef.current.length,
+          });
+          // 뷰어 swipe 카운트 초기화 (열 때마다)
+          swipe_count_ref.current = 0;
+          swipe_threshold_fired_ref.current = false;
+
           setViewerIndex(index);
           setViewerVisible(true);
         }}
@@ -629,7 +700,6 @@ export default function HomeScreen() {
         </View>
       </View>
     
-
       {/* 전체화면 이미지 뷰어 (핀치줌/스와이프) */}
       <ImageViewing
         //images={photos.map(p => ({ uri: p.uri }))}
@@ -648,6 +718,42 @@ export default function HomeScreen() {
         swipeToCloseEnabled={false} // ← 스와이프 제스처가 터치 선점하는 것 방지
         doubleTapToZoomEnabled
       />
+        {/* 전체화면 이미지 뷰어 (핀치줌/스와이프) */}
+        <ImageViewing
+          //images={photos.map(p => ({ uri: p.uri }))}
+          onImageIndexChange={(i: number) => {
+            // 기존
+            viewerIndexRef.current = i;
+          
+            // swipe count 증가 (첫 진입은 0->선택 index로 이미 열리니, 변경 이벤트만 카운트)
+            swipe_count_ref.current += 1;
+          
+            if (!swipe_threshold_fired_ref.current && swipe_count_ref.current >= SWIPE_THRESHOLD) {
+              swipe_threshold_fired_ref.current = true;
+          
+              const dwell_ms = Date.now() - home_view_start_ms_ref.current;
+          
+              amplitude.track("photo_swipe_threshold_reached", {
+                screen_name: "home",
+                threshold: SWIPE_THRESHOLD,
+                swipe_count: swipe_count_ref.current,
+                current_index: i,
+                dwell_ms,
+              });
+            }
+          }}
+          images={viewerImages}
+          imageIndex={viewerIndex}
+          visible={viewerVisible}
+          onRequestClose={closeViewer}
+          //onImageIndexChange={(i: number) => setViewerIndex(i)} // ← 추가
+          // 선택: 상단 닫기버튼(간단한 헤더)
+          HeaderComponent={Header}
+          // 선택: 바닥 여백(제스처 충돌 완화)
+          backgroundColor="rgba(0,0,0,0.98)"
+          swipeToCloseEnabled={false} // ← 스와이프 제스처가 터치 선점하는 것 방지
+          doubleTapToZoomEnabled
+        />
 
       <Modal visible={slideshowVisible} animationType="fade">
         <SafeAreaView style={{ flex: 1, backgroundColor: "black" }}>
