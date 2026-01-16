@@ -25,10 +25,6 @@ import {
 } from "react-native";
 import ImageViewing from "react-native-image-viewing";
 import { SafeAreaView } from "react-native-safe-area-context";
-
-import ShowonmapIcon from '@/assets/icons/showonmap.svg';
-import SlideshowIcon from '@/assets/icons/slideshow.svg';
-
 import ShowonmapIcon from "@/assets/icons/showonmap.svg";
 import SlideshowIcon from "@/assets/icons/slideshow.svg";
 import { AMPLITUDE_API_KEY } from '@/constants/env';
@@ -40,9 +36,9 @@ const minImageWidth = 100;
 const horizontalPadding = 4;
 const imageMargin = 2;
 const numColumns = 5;
-// ✅ 실제로 쓸 수 있는 폭: 화면 - (바깥 24 + 안쪽 horizontalPadding) * 2
+// 실제로 쓸 수 있는 폭: 화면 - (바깥 24 + 안쪽 horizontalPadding) * 2
 const usableWidth = screenWidth - (24 + horizontalPadding) * 2;
-// ✅ 이 usableWidth 기준으로 5등분 + margin
+// 이 usableWidth 기준으로 5등분 + margin
 const imageWidth = Math.floor(
   (usableWidth - numColumns * imageMargin * 2) / numColumns
 );
@@ -181,14 +177,14 @@ export default function HomeScreen() {
         slideshowTimerRef.current = null;
       }      
 
-      closingRef.current = false; // ✅ 시작할 때 닫기 플래그 해제
+      closingRef.current = false; // 시작할 때 닫기 플래그 해제
       setSlideshowOn(true);
       setViewerIndex(startIndex);
       setSlideshowVisible(true);
   
       slideshowTimerRef.current = setInterval(() => {
 
-        if (closingRef.current) return; // ✅ 닫는 중이면 업데이트 금지
+        if (closingRef.current) return; // 닫는 중이면 업데이트 금지
 
         const len = photosRef.current.length;
         if (!len) return;
@@ -277,7 +273,7 @@ export default function HomeScreen() {
       end_index: viewerIndexRef.current ?? 0,
     });
 
-    setSlideshowVisible(false); // ✅ 모달 닫기까지 여기서 끝냄
+    setSlideshowVisible(false); // 모달 닫기까지 여기서 끝냄
   }, []);
 
   const handleSlideshow = () => {
@@ -291,7 +287,6 @@ export default function HomeScreen() {
       photo_count: photosRef.current.length,
     });
   };
-  
   
   async function imagesWithLocation(
     images: any[],
@@ -350,9 +345,16 @@ export default function HomeScreen() {
   const PAGE_SIZE = 50;
   const { dateStart, dateEnd, timeStart, timeEnd, countries, cities } = filter;
 
+  const loadCountRef = useRef(0);
   const loadPhotos = useCallback(
 
     async ({ reset = false }: { reset?: boolean } = {}) => {
+
+      // 딜레이 처리 제대로 되는지 테스트 START
+      loadCountRef.current += 1;
+      console.log(`[LOAD #${loadCountRef.current}]`, new Date().toISOString());
+      // 딜레이 처리 제대로 되는지 테스트 END
+
       // 1) 권한 확인
       const { status, canAskAgain } = await MediaLibrary.getPermissionsAsync();
 
@@ -598,102 +600,172 @@ export default function HomeScreen() {
       <View style={{ flex: 1 }}>
         <View style={styles.topArea}>
 
-          {/* 상단버튼영역 */}
+          {/* 상단버튼영역 START */}
           <View style={styles.topButtonsRow}>
 
-              {/* 슬라이드쇼 버튼 (파란 그라디언트) */}
-              <TouchableOpacity
-                onPress={() => (slideshowOn ? closeSlideshow() : handleSlideshow())}
-                activeOpacity={0.9}
+            {/* 슬라이드쇼 버튼 (파란 그라디언트) */}
+            <TouchableOpacity
+              onPress={() => (slideshowOn ? closeSlideshow() : handleSlideshow())}
+              activeOpacity={0.9}
+            >
+              <LinearGradient
+                colors={['#2B7FFF', '#AD46FF']}
+                start={{ x: 0, y: 0 }}
+                end={{ x: 1, y: 0 }}
+                style={styles.primaryButton}
               >
-                <LinearGradient
-                  colors={['#2B7FFF', '#AD46FF']}
-                  start={{ x: 0, y: 0 }}
-                  end={{ x: 1, y: 0 }}
-                  style={styles.primaryButton}
-                >
-                  <SlideshowIcon width={16} height={16} style={{ marginRight: 8 }}/>
-                  <Text style={styles.primaryButtonText}>Slideshow</Text>
-                </LinearGradient>
-              </TouchableOpacity>
-      
-              {/* Show on map 버튼 (화이트 카드) */}
-              <View style={styles.secondaryButton}>
-                <ShowonmapIcon width={16} height={16} style={{ marginRight: 8 }}/>
-                <ShowOnMap images={photos} />
-              </View>
-
-              {/* 설정 아이콘 버튼 */}
-              <TouchableOpacity
-                onPress={handleOpenSettings}
-                activeOpacity={0.7}
-                style={styles.iconButton}
-              >
-                <Ionicons name="settings-outline" size={20} color="#374151" />
-              </TouchableOpacity>
+                <SlideshowIcon width={16} height={16} style={{ marginRight: 8 }}/>
+                <Text style={styles.primaryButtonText}>Play</Text>
+              </LinearGradient>
+            </TouchableOpacity>
+    
+            {/* Show on map 버튼 (화이트 카드) */}
+            <View style={styles.secondaryButton}>
+              <ShowonmapIcon width={16} height={16} style={{ marginRight: 8 }}/>
+              <ShowOnMap images={photos} />
             </View>
-            
-          {/* 썸네일 그리드 */}
-          <FlatList<Photo>
-            style={{ flex: 1 }} // 리스트가 남은 세로 공간을 다 차지
-            data={photos}
-            numColumns={numColumns}
-            keyExtractor={(_, i) => i.toString()}
-            renderItem={renderItem}
-            contentContainerStyle={{
-              paddingHorizontal: horizontalPadding,
-              padding: 8,
-              backgroundColor: "#FFF",
-              borderRadius: 10,
-            }}
-            onScrollBeginDrag={() => {
-              setUserScrolled(true);
-            }}
-            onMomentumScrollBegin={() => {
-              setUserScrolled(true);
-              onEndDuringMomentumRef.current = false;
-            }}
-            onMomentumScrollEnd={() => {
-              onEndDuringMomentumRef.current = true;
-            }}
-            onEndReachedThreshold={0.4}
-            onEndReached={() => {
-              // 1) 스크롤 시작 전이면 무시
-              if (!userScrolled) return;
-              // 2) 모멘텀 중 첫 호출만 허용
-              if (onEndDuringMomentumRef.current) return;
-              // 3) 이미 로딩 중/락이면 무시
-              if (loading || onEndLockRef.current) return;
-              // 4) 더 불러올 페이지 없으면 무시
-              if (!hasNextPage) return;
-              // ---- 페이지네이션 시작 ----
-              onEndLockRef.current = true;
-              onEndDuringMomentumRef.current = true; // 이번 모멘텀 사이클에서는 한 번만
-              isPaginatingRef.current = true;
 
-              loadPhotos({ reset: false }).finally(() => {
-                onEndLockRef.current = false;
-                isPaginatingRef.current = false;
-              });
-            }}
-            ListFooterComponent={
-              // 사용자가 스크롤해서 로딩하는 경우에만 표시(초기 자동 로딩 표시 억제)
-              isPaginatingRef.current && loading ? (
-                <ActivityIndicator style={{ marginVertical: 12 }} />
-              ) : null
-            }
-            onLayout={({
-              nativeEvent: {
-                layout: { height: lh },
-              },
-            }) => {
-              // 높이는 onContentSizeChange에서 비교
-            }}
-            onContentSizeChange={(_, ch) => {
-              // 화면보다 컨텐츠가 클 때만 다음 페이지 로딩 허용
-              setListCanScroll(ch > 0);
-            }}
-          />
+            {/* 설정 아이콘 버튼 */}
+            <TouchableOpacity
+              onPress={handleOpenSettings}
+              activeOpacity={0.7}
+              style={styles.iconButton}
+            >
+              <Ionicons name="settings-outline" size={20} color="#374151" />
+            </TouchableOpacity>
+          </View>
+          {/* 상단버튼영역 END */}
+            
+          {/* 썸네일 그리드 START */}
+          <View style={styles.gridWrap}>
+            <FlatList<Photo>
+              style={{ flex: 1 }} // 리스트가 남은 세로 공간을 다 차지
+              data={photos}
+              numColumns={numColumns}
+              keyExtractor={(_, i) => i.toString()}
+              renderItem={renderItem}
+              contentContainerStyle={{
+                paddingHorizontal: horizontalPadding,
+                padding: 8,
+                flexGrow: 1, // 아이템 0개여도 높이 채우기
+                backgroundColor: "#FFF",
+                borderRadius: 10,
+              }}
+              ListEmptyComponent={ /** 데이타 0건인 경우 */
+                (!loading && !isScanning && !error) ? (
+                  <View style={styles.emptyWrap}>
+                    <Text style={styles.emptyTitle}>No photos found</Text>
+                    <Text style={styles.emptyDesc}>
+                      Try expanding the filters.
+                    </Text>
+                  </View>
+                ) : null
+              }
+              onScrollBeginDrag={() => {
+                setUserScrolled(true);
+              }}
+              onMomentumScrollBegin={() => {
+                setUserScrolled(true);
+                onEndDuringMomentumRef.current = false;
+              }}
+              onMomentumScrollEnd={() => {
+                onEndDuringMomentumRef.current = true;
+              }}
+              onEndReachedThreshold={0.4}
+              onEndReached={() => {
+                // 1) 스크롤 시작 전이면 무시
+                if (!userScrolled) return;
+                // 2) 모멘텀 중 첫 호출만 허용
+                if (onEndDuringMomentumRef.current) return;
+                // 3) 이미 로딩 중/락이면 무시
+                if (loading || onEndLockRef.current) return;
+                // 4) 더 불러올 페이지 없으면 무시
+                if (!hasNextPage) return;
+                // ---- 페이지네이션 시작 ----
+                onEndLockRef.current = true;
+                onEndDuringMomentumRef.current = true; // 이번 모멘텀 사이클에서는 한 번만
+                isPaginatingRef.current = true;
+
+                loadPhotos({ reset: false }).finally(() => {
+                  onEndLockRef.current = false;
+                  isPaginatingRef.current = false;
+                });
+              }}
+              ListFooterComponent={
+                // 사용자가 스크롤해서 로딩하는 경우에만 표시(초기 자동 로딩 표시 억제)
+                isPaginatingRef.current && loading ? (
+                  <ActivityIndicator style={{ marginVertical: 12 }} />
+                ) : null
+              }
+              onLayout={({
+                nativeEvent: {
+                  layout: { height: lh },
+                },
+              }) => {
+                // 높이는 onContentSizeChange에서 비교
+              }}
+              onContentSizeChange={(_, ch) => {
+                // 화면보다 컨텐츠가 클 때만 다음 페이지 로딩 허용
+                setListCanScroll(ch > 0);
+              }}
+            />
+            {/* 썸네일 그리드 END */}
+            {/** Progress bar START */}
+            {loading || isScanning ? (
+              <View style={styles.gridOverlay} pointerEvents="auto">
+                <View style={styles.loadingBox}>
+                  <ActivityIndicator size="large" />
+                  <Text style={styles.loadingText}>
+                    Loading photos…
+                    {progress.total ? ` / ${progress.total}` : ""}
+                  </Text>
+                </View>
+                {progress.total ? (
+                  <View
+                    style={{
+                      width: 220,
+                      height: 6,
+                      backgroundColor: "#e5e7eb",
+                      marginTop: 8,
+                      borderRadius: 3,
+                    }}
+                  >
+                    <View
+                      style={{
+                        width: `${(progress.loaded / progress.total) * 100}%`,
+                        height: "100%",
+                        backgroundColor: "#9ca3af",
+                        borderRadius: 3,
+                      }}
+                    />
+                  </View>
+                ) : null}
+              </View>
+            ) : error ? (
+              <View style={styles.centerContainer}>
+                <Text style={styles.errorText}>{error}</Text>
+              </View>
+            ) : (
+              <>
+                <Modal visible={!!selectedImage} animationType="slide">
+                  <Image
+                    source={{ uri: selectedImage || "" }}
+                    style={{
+                      flex: 1,
+                      width: "100%",
+                      height: "100%",
+                      resizeMode: "contain",
+                    }}
+                  />
+                  <View style={{ position: "absolute", top: 40, left: 20 }}>
+                    <Button title="Close" onPress={() => setSelectedImage(null)} />
+                  </View>
+                </Modal>
+              </>
+            )}
+            {/** Progress bar END */}
+          </View>
+          
         </View>
         <View style={styles.bottomArea}>
           <DateTimeFilter onChange={handleDateTimeChange} />
@@ -788,57 +860,6 @@ export default function HomeScreen() {
           </TouchableOpacity>
         </SafeAreaView>
       </Modal>
-
-      {loading || isScanning ? (
-        <View style={styles.centerContainer}>
-          <ActivityIndicator />
-          <Text style={{ marginTop: 8 }}>
-            Loading photos… {progress.loaded}
-            {progress.total ? ` / ${progress.total}` : ""}
-          </Text>
-          {progress.total ? (
-            <View
-              style={{
-                width: 220,
-                height: 6,
-                backgroundColor: "#e5e7eb",
-                marginTop: 8,
-                borderRadius: 3,
-              }}
-            >
-              <View
-                style={{
-                  width: `${(progress.loaded / progress.total) * 100}%`,
-                  height: "100%",
-                  backgroundColor: "#9ca3af",
-                  borderRadius: 3,
-                }}
-              />
-            </View>
-          ) : null}
-        </View>
-      ) : error ? (
-        <View style={styles.centerContainer}>
-          <Text style={styles.errorText}>{error}</Text>
-        </View>
-      ) : (
-        <>
-          <Modal visible={!!selectedImage} animationType="slide">
-            <Image
-              source={{ uri: selectedImage || "" }}
-              style={{
-                flex: 1,
-                width: "100%",
-                height: "100%",
-                resizeMode: "contain",
-              }}
-            />
-            <View style={{ position: "absolute", top: 40, left: 20 }}>
-              <Button title="Close" onPress={() => setSelectedImage(null)} />
-            </View>
-          </Modal>
-        </>
-      )}
     </SafeAreaView>
     </LinearGradient>
   );
@@ -875,7 +896,7 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'flex-start',
-    columnGap: 8, // ✅ 간격 보장
+    columnGap: 8, // 간격 보장
     marginBottom: 16,
   },
   iconButton: {
@@ -913,7 +934,7 @@ const styles = StyleSheet.create({
   },
   // 흰색 보조 버튼
   secondaryButton: {
-    flex: 1, // ✅ 남는 공간을 먹고
+    flex: 1, // 남는 공간을 먹고
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
@@ -995,7 +1016,7 @@ const styles = StyleSheet.create({
   closeTxt: { color: "#fff", fontSize: 18, fontWeight: "700" },
   thumbnailCard: {
     backgroundColor: '#FFFFFF',   // 내부 흰색
-    borderRadius: 32,             // 모서리 둥글게
+    borderRadius: 32, // 모서리 둥글게
     padding: 12,
     marginTop: 12,
     // 살짝 떠 있는 느낌
@@ -1004,6 +1025,64 @@ const styles = StyleSheet.create({
     shadowRadius: 20,
     shadowOffset: { width: 0, height: 10 },
     elevation: 6,                 // Android
+  },
+  gridWrap: {
+    flex: 1,
+    position: "relative", // overlay 기준점
+  },
+
+  gridOverlay: {
+    ...StyleSheet.absoluteFillObject, // gridWrap 전체 덮음
+    backgroundColor: "rgba(0,0,0,0.25)", // 딤처리
+    justifyContent: "center",
+    alignItems: "center",
+    zIndex: 999,
+    // 안드에서 가끔 zIndex만으로 부족하면:
+    elevation: 10,
+  },
+
+  loadingBox: {
+    minWidth: 220,
+    paddingVertical: 14,
+    paddingHorizontal: 14,
+    borderRadius: 14,
+    backgroundColor: "rgba(255,255,255,0.90)", // 박스는 살짝만 불투명
+    alignItems: "center",
+  },
+
+  loadingText: {
+    marginTop: 10,
+    fontSize: 14,
+    color: "#111",
+  },
+
+  gridWrapCard: {
+    flex: 1,
+    marginHorizontal: 16,
+    marginTop: 8,
+    marginBottom: 12,
+    backgroundColor: "#FFF",
+    borderRadius: 10,
+    overflow: "hidden", // radius 안 깨지게
+    position: "relative",
+  },
+
+  emptyWrap: {
+    flex: 1, // contentContainerStyle flexGrow:1 와 세트
+    justifyContent: "center",
+    alignItems: "center",
+    padding: 20,
+  },
+  emptyTitle: { fontSize: 16, fontWeight: "700", color: "#111", marginBottom: 6 },
+  emptyDesc: { fontSize: 13, color: "#666", textAlign: "center", lineHeight: 18 },
+
+  gridOverlay: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: "rgba(0,0,0,0.18)",
+    justifyContent: "center",
+    alignItems: "center",
+    zIndex: 999,
+    elevation: 10,
   },
 
 });
