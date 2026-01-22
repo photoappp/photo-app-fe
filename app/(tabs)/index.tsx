@@ -6,7 +6,8 @@ import { Ionicons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
 import * as Location from "expo-location";
 import * as MediaLibrary from "expo-media-library";
-import { useCallback, useEffect, useMemo, useRef, useState, useLayoutEffect } from "react";
+import { useNavigation, useRouter } from 'expo-router';
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   ActivityIndicator,
   Alert,
@@ -23,22 +24,18 @@ import {
   useColorScheme,
   View,
 } from "react-native";
-import Share from 'react-native-share';
 import ImageViewing from 'react-native-image-viewing';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { Link, Stack, useRouter, useNavigation } from 'expo-router';
 
-import AsyncStorage from '@react-native-async-storage/async-storage';
-import uuid from 'react-native-uuid';
+import { useLanguage } from '@/components/context/LanguageContext';
+import { useSlideshowTime } from '@/components/context/SlideshowTimeContext';
 import { useTheme } from '@/components/context/ThemeContext';
 import { useUserData } from '@/components/context/UserDataContext';
-import { useSlideshowTime } from '@/components/context/SlideshowTimeContext';
-import ScreenWrapper from '@/components/screens/ScreenWrapper';
-import { useLanguage } from '@/components/context/LanguageContext';
-import { TRANSLATIONS } from '@/constants/Translations';
 
 import ShowonmapIcon from "@/assets/icons/showonmap.svg";
 import SlideshowIcon from "@/assets/icons/slideshow.svg";
+import { AMPLITUDE_API_KEY } from '@/constants/env';
+import * as amplitude from '@amplitude/analytics-react-native';
 
 // Responsive image grid calculations
 const screenWidth = Dimensions.get("window").width;
@@ -46,9 +43,9 @@ const minImageWidth = 100;
 const horizontalPadding = 4;
 const imageMargin = 2;
 const numColumns = 5;
-// ✅ 실제로 쓸 수 있는 폭: 화면 - (바깥 24 + 안쪽 horizontalPadding) * 2
+// 실제로 쓸 수 있는 폭: 화면 - (바깥 24 + 안쪽 horizontalPadding) * 2
 const usableWidth = screenWidth - (24 + horizontalPadding) * 2;
-// ✅ 이 usableWidth 기준으로 5등분 + margin
+// 이 usableWidth 기준으로 5등분 + margin
 const imageWidth = Math.floor(
   (usableWidth - numColumns * imageMargin * 2) / numColumns
 );
@@ -74,13 +71,27 @@ export default function HomeScreen() {
 	const { isDarkTheme, colors } = useTheme();
 	const { language } = useLanguage();
 //	const { userData, updateUserData } = useUserData();
-	const { incrementDateFilter, incrementTimeFilter, incrementLocationFilter, incrementTotalPhotos } = useUserData();
+  /* 2026.01.21 문제 코드 주석처리 
+	const { incrementDateFilter, incrementTimeFilter, incrementLocationFilter, incrementTotalPhotos } = useUserData(); */
+  const { incrementDateFilter, incrementTimeFilter, incrementLocationFilter } = useUserData();
 	
 	useEffect(() => {
 			navigation.setOptions({ headerShown: false });
 		}, [navigation]);
 
   const [images, setImages] = useState<any[]>([]);
+
+
+  const handleOpenSettings = () => {
+    //navigation.navigate('Settings'); // 실제 설정 스크린 이름으로 바꿔 사용
+    console.log("Move to Setting page");
+    const handleOpenSettings = () => {
+      amplitude.track("tap_settings_button", {
+        screen_name: "home",
+      });
+    };
+  };
+
   const [error, setError] = useState<string | null>(null);
   const [selectedImage, setSelectedImage] = useState<string | null>(null);
   const [isScanning, setIsScanning] = useState(false);
@@ -115,7 +126,17 @@ export default function HomeScreen() {
   const lastEndCallRef = useRef(0);
   const onEndLockRef = useRef(false); // 연속 호출 잠금
   const onEndDuringMomentumRef = useRef(true); // 모멘텀 중 중복 호출 방지
-  const isPaginatingRef = useRef(false);       // footer 로딩바 표시에만 사용
+  const isPaginatingRef = useRef(false); // footer 로딩바 표시에만 사용
+
+  // ----- amplitude tracking helpers -----
+  const is_amp_ready_ref = useRef(false);
+  const home_view_start_ms_ref = useRef<number>(Date.now());
+
+  // swipe threshold tracking (viewer)
+  const swipe_count_ref = useRef(0);
+  const swipe_threshold_fired_ref = useRef(false);
+  const SWIPE_THRESHOLD = 10;
+  let app_launched_tracked = false;
 
   // 날짜,시간 필터링 관련 ===> 컴포넌트로 분리하기!!
   const dayStartMs = (d: Date) =>
@@ -176,39 +197,65 @@ export default function HomeScreen() {
         slideshowTimerRef.current = null;
       }
 
-      closingRef.current = false; // ✅ 시작할 때 닫기 플래그 해제
+      closingRef.current = false; // 시작할 때 닫기 플래그 해제
       setSlideshowOn(true);
       setViewerIndex(startIndex);
       setSlideshowVisible(true);
   
-			slideshowTimerRef.current = setInterval(() => {
-				
-				if (closingRef.current) return; // ✅ 닫는 중이면 업데이트 금지
-				
-				const len = photosRef.current.length;
-				if (!len) return;
-				
-				setViewerIndex((prev) => {
-					const next = prev + 1;
-					
-					if (next >= len) {
-						closeSlideshow();
-						return prev;
-					}
-					
-					slideshowListRef.current?.scrollToIndex({
-						index: next,
-						animated: true,
-					});
-					
-					return next;
-				});
-				}, slideshowTime); // SettingsScreen과 연결
-//      }, SLIDESHOW_MS);
+      slideshowTimerRef.current = setInterval(() => {
+
+        if (closingRef.current) return; // 닫는 중이면 업데이트 금지
+
+        const len = photosRef.current.length;
+        if (!len) return;
+      
+        setViewerIndex((prev) => {
+          const next = prev + 1;
+      
+          if (next >= len) {
+            closeSlideshow();
+            return prev;
+          }
+      
+          slideshowListRef.current?.scrollToIndex({
+            index: next,
+            animated: true,
+          });
+      
+          return next;
+        });
+      }, SLIDESHOW_MS);      
       
     },
     [stopSlideshow, slideshowTime]
   );
+
+  useEffect(() => {
+    if (!AMPLITUDE_API_KEY) {
+      console.warn("amplitude_api_key_missing");
+      return;
+    }
+  
+    // init은 보통 1회만 하는 게 정석이지만,
+    // 동일 API key로 중복 init이 문제되면 아래도 guard 걸면 됨.
+    amplitude.init(AMPLITUDE_API_KEY);
+  
+    if (!app_launched_tracked) {
+      app_launched_tracked = true;
+      amplitude.track("app_launched", {
+        platform: Platform.OS,
+        env: __DEV__ ? "dev" : "prod",
+      });
+    }
+  }, []);
+
+  useEffect(() => {
+    home_view_start_ms_ref.current = Date.now();
+  
+    amplitude.track("screen_home_viewed", {
+      screen_name: "home",
+    });
+  }, []);
 
   useEffect(() => {
     photosRef.current = photos;
@@ -216,6 +263,12 @@ export default function HomeScreen() {
 
   useEffect(() => {
     return () => {
+      // 앱 체류시간 측정
+      const dwell_ms = Date.now() - home_view_start_ms_ref.current;
+      amplitude.track("screen_home_exited", {
+        screen_name: "home",
+        dwell_ms,
+      });
       // 화면 떠날 때 타이머 정리
       if (slideshowTimerRef.current) clearInterval(slideshowTimerRef.current);
     };
@@ -235,15 +288,26 @@ export default function HomeScreen() {
       slideshowTimerRef.current = null;
     }
 
-    setSlideshowVisible(false); // ✅ 모달 닫기까지 여기서 끝냄
+    amplitude.track("slideshow_closed", {
+      screen_name: "home",
+      end_index: viewerIndexRef.current ?? 0,
+    });
+
+    setSlideshowVisible(false); // 모달 닫기까지 여기서 끝냄
   }, []);
 
   const handleSlideshow = () => {
     // 예: 현재 선택된 index에서 시작하고 싶으면 viewerIndexRef.current 사용
     startSlideshow(viewerIndexRef.current ?? 0);
     console.log("Slideshow start");
-  };
 
+    amplitude.track("tap_slideshow_button", {
+      screen_name: "home",
+      slideshow_on: slideshowOn,
+      photo_count: photosRef.current.length,
+    });
+  };
+  
   async function imagesWithLocation(
     images: any[],
     opts?: { maxLookups?: number; precision?: number; delayMs?: number }
@@ -301,8 +365,15 @@ export default function HomeScreen() {
   const PAGE_SIZE = 50;
   const { dateStart, dateEnd, timeStart, timeEnd, countries, cities } = filter;
 
+  const loadCountRef = useRef(0);
   const loadPhotos = useCallback(
     async ({ reset = false }: { reset?: boolean } = {}) => {
+
+      // 딜레이 처리 제대로 되는지 테스트 START
+      loadCountRef.current += 1;
+      console.log(`[LOAD #${loadCountRef.current}]`, new Date().toISOString());
+      // 딜레이 처리 제대로 되는지 테스트 END
+
       // 1) 권한 확인
       const { status, canAskAgain } = await MediaLibrary.getPermissionsAsync();
 
@@ -445,7 +516,7 @@ export default function HomeScreen() {
 	// 전체 사진 수 Context 저장
 	useEffect(() => {
 		if (!loading && photosAll.length > 0) {
-			updateUserData({ totalPhotos: photosAll.length });
+			//updateUserData({ totalPhotos: photosAll.length }); --- 2026.01.21 문제 코드 주석처리
 		}
 	}, [photosAll.length, loading]);
 	
@@ -473,6 +544,15 @@ export default function HomeScreen() {
         style={styles.imageContainer}
         activeOpacity={0.9}
         onPress={() => {
+          amplitude.track("tap_photo_thumbnail", {
+            screen_name: "home",
+            photo_index: index,
+            photo_count: photosRef.current.length,
+          });
+          // 뷰어 swipe 카운트 초기화 (열 때마다)
+          swipe_count_ref.current = 0;
+          swipe_threshold_fired_ref.current = false;
+
           setViewerIndex(index);
           setViewerVisible(true);
         }}
@@ -535,6 +615,7 @@ export default function HomeScreen() {
 				: "";
 		
 		const handleShare = async (photoUri: string, message: string) => {
+      /* 2026.01.21 문제 코드 주석처리
 			try {
 				const shareOptions: Share.ShareOptions = {
 					message,
@@ -546,11 +627,11 @@ export default function HomeScreen() {
 				// 사용자가 공유하기 취소한 경우
 				if (err?.message === 'User did not share') {
 					return; // 아무것도 하지 않음
-				}
+				} 
 
 				console.log(err);
 				Alert.alert("Error", "Failed to share the photo.");
-			}
+			}*/
 		};
 		
 		const onPressShare = async () => {
@@ -583,9 +664,10 @@ export default function HomeScreen() {
     return (
       <View style={styles.footer}>
 				{/* 왼쪽: Share 버튼 */}
+        {/* 2026.01.21 문제 코드 주석처리
 				<TouchableOpacity onPress={onPressShare} style={styles.leftBtn}>
 					<Ionicons name="share-outline" size={24} color="white" />
-				</TouchableOpacity>
+				</TouchableOpacity> */}
 				{/* 중앙: 날짜/시간 + 장소 */}
 				<View style={styles.headerTextContainer}>
 						<Text style={styles.metaTxt}>
@@ -596,9 +678,10 @@ export default function HomeScreen() {
 						) : null}
 				</View>
 				{/* 오른쪽: Delete 버튼 */}
+         {/* 2026.01.21 문제 코드 주석처리
 				<TouchableOpacity onPress={handleDelete} style={styles.rightBtn}>
 					<Ionicons name="trash-outline" size={24} color="white" />
-				</TouchableOpacity>
+				</TouchableOpacity>*/}
       </View>
     );
   }, [photos, viewerIndex]);
@@ -629,54 +712,48 @@ export default function HomeScreen() {
       colors={["#E8F2FF", "#F9F3FF"]} // 연한 하늘색 + 약간 보라 느낌
       style={styles.screen}
     >
-      <SafeAreaView style={{ flex: 1 }} edges={["left", "right"]}>
-        <View style={{ flex: 1 }}>
-          <View style={styles.topArea}>
-            {/* 상단버튼영역 */}
-            <View style={styles.topButtonsRow}>
-              {/* 슬라이드쇼 버튼 (파란 그라디언트) */}
-              <TouchableOpacity
-                onPress={() =>
-                  slideshowOn ? closeSlideshow() : handleSlideshow()
-                }
-                activeOpacity={0.9}
-              >
-                <LinearGradient
-                  colors={["#2B7FFF", "#AD46FF"]}
-                  start={{ x: 0, y: 0 }}
-                  end={{ x: 1, y: 0 }}
-                  style={styles.primaryButton}
-                >
-                  <SlideshowIcon
-                    width={16}
-                    height={16}
-                    style={{ marginRight: 8 }}
-                  />
-                  <Text style={styles.primaryButtonText}>{TRANSLATIONS[language].play}</Text>
-                </LinearGradient>
-              </TouchableOpacity>
+    <SafeAreaView style={{ flex: 1 }} edges={["left", "right"]}>
+      <View style={{ flex: 1 }}>
+        <View style={styles.topArea}>
 
-              {/* Show on map 버튼 (화이트 카드) */}
-              <View style={styles.secondaryButton}>
-                <ShowonmapIcon
-                  width={16}
-                  height={16}
-                  style={{ marginRight: 8 }}
-                />
-                <ShowOnMap images={photos} />
-              </View>
+          {/* 상단버튼영역 START */}
+          <View style={styles.topButtonsRow}>
 
-              {/* 설정 아이콘 버튼 */}
-              <TouchableOpacity
-                onPress={() => router.push('/settings')}
-                activeOpacity={0.7}
-                style={styles.iconButton}
+            {/* 슬라이드쇼 버튼 (파란 그라디언트) */}
+            <TouchableOpacity
+              onPress={() => (slideshowOn ? closeSlideshow() : handleSlideshow())}
+              activeOpacity={0.9}
+            >
+              <LinearGradient
+                colors={['#2B7FFF', '#AD46FF']}
+                start={{ x: 0, y: 0 }}
+                end={{ x: 1, y: 0 }}
+                style={styles.primaryButton}
               >
-                <Ionicons name="settings-outline" size={20} color="#374151" />
-              </TouchableOpacity>
+                <SlideshowIcon width={16} height={16} style={{ marginRight: 8 }}/>
+                <Text style={styles.primaryButtonText}>Play</Text>
+              </LinearGradient>
+            </TouchableOpacity>
+    
+            {/* Show on map 버튼 (화이트 카드) */}
+            <View style={styles.secondaryButton}>
+              <ShowonmapIcon width={16} height={16} style={{ marginRight: 8 }}/>
+              <ShowOnMap images={photos} />
             </View>
 
-            {/* 썸네일 그리드 */}
+            {/* 설정 아이콘 버튼 */}
+            <TouchableOpacity
+              onPress={() => router.push('/settings')}
+              activeOpacity={0.7}
+              style={styles.iconButton}
+            >
+              <Ionicons name="settings-outline" size={20} color="#374151" />
+            </TouchableOpacity>
+          </View>
+          {/* 상단버튼영역 END */}
+            
+          {/* 썸네일 그리드 START */}
+          <View style={styles.gridWrap}>
             <FlatList<Photo>
               style={{ flex: 1 }} // 리스트가 남은 세로 공간을 다 차지
               data={photos}
@@ -686,9 +763,20 @@ export default function HomeScreen() {
               contentContainerStyle={{
                 paddingHorizontal: horizontalPadding,
                 padding: 8,
+                flexGrow: 1, // 아이템 0개여도 높이 채우기
                 backgroundColor: "#FFF",
                 borderRadius: 10,
               }}
+              ListEmptyComponent={ /** 데이타 0건인 경우 */
+                (!loading && !isScanning && !error) ? (
+                  <View style={styles.emptyWrap}>
+                    <Text style={styles.emptyTitle}>No photos found</Text>
+                    <Text style={styles.emptyDesc}>
+                      Try expanding the filters.
+                    </Text>
+                  </View>
+                ) : null
+              }
               onScrollBeginDrag={() => {
                 setUserScrolled(true);
               }}
@@ -737,16 +825,73 @@ export default function HomeScreen() {
                 setListCanScroll(ch > 0);
               }}
             />
+            {/* 썸네일 그리드 END */}
+            {/** Progress bar START */}
+            {loading || isScanning ? (
+              <View style={styles.gridOverlay} pointerEvents="auto">
+                <View style={styles.loadingBox}>
+                  <ActivityIndicator size="large" />
+                  <Text style={styles.loadingText}>
+                    Loading photos…
+                    {progress.total ? ` / ${progress.total}` : ""}
+                  </Text>
+                </View>
+                {progress.total ? (
+                  <View
+                    style={{
+                      width: 220,
+                      height: 6,
+                      backgroundColor: "#e5e7eb",
+                      marginTop: 8,
+                      borderRadius: 3,
+                    }}
+                  >
+                    <View
+                      style={{
+                        width: `${(progress.loaded / progress.total) * 100}%`,
+                        height: "100%",
+                        backgroundColor: "#9ca3af",
+                        borderRadius: 3,
+                      }}
+                    />
+                  </View>
+                ) : null}
+              </View>
+            ) : error ? (
+              <View style={styles.centerContainer}>
+                <Text style={styles.errorText}>{error}</Text>
+              </View>
+            ) : (
+              <>
+                <Modal visible={!!selectedImage} animationType="slide">
+                  <Image
+                    source={{ uri: selectedImage || "" }}
+                    style={{
+                      flex: 1,
+                      width: "100%",
+                      height: "100%",
+                      resizeMode: "contain",
+                    }}
+                  />
+                  <View style={{ position: "absolute", top: 40, left: 20 }}>
+                    <Button title="Close" onPress={() => setSelectedImage(null)} />
+                  </View>
+                </Modal>
+              </>
+            )}
+            {/** Progress bar END */}
           </View>
-          <View style={styles.bottomArea}>
+          
+        </View>
+        <View style={styles.bottomArea}>
             <DateTimeFilter
               onChange={handleDateTimeChange}
               photos={photos}
               onLocationChange={handleLocationChange}
             />
           </View>
-        </View>
-
+      </View>
+    
       {/* 전체화면 이미지 뷰어 (핀치줌/스와이프) */}
       <ImageViewing
         //images={photos.map(p => ({ uri: p.uri }))}
@@ -760,12 +905,47 @@ export default function HomeScreen() {
         //onImageIndexChange={(i: number) => setViewerIndex(i)} // ← 추가
         // 선택: 상단 닫기버튼(간단한 헤더)
         HeaderComponent={Header}
-				FooterComponent={Footer}
         // 선택: 바닥 여백(제스처 충돌 완화)
         backgroundColor="rgba(0,0,0,0.98)"
         swipeToCloseEnabled={false} // ← 스와이프 제스처가 터치 선점하는 것 방지
         doubleTapToZoomEnabled
       />
+        {/* 전체화면 이미지 뷰어 (핀치줌/스와이프) */}
+        <ImageViewing
+          //images={photos.map(p => ({ uri: p.uri }))}
+          onImageIndexChange={(i: number) => {
+            // 기존
+            viewerIndexRef.current = i;
+          
+            // swipe count 증가 (첫 진입은 0->선택 index로 이미 열리니, 변경 이벤트만 카운트)
+            swipe_count_ref.current += 1;
+          
+            if (!swipe_threshold_fired_ref.current && swipe_count_ref.current >= SWIPE_THRESHOLD) {
+              swipe_threshold_fired_ref.current = true;
+          
+              const dwell_ms = Date.now() - home_view_start_ms_ref.current;
+          
+              amplitude.track("photo_swipe_threshold_reached", {
+                screen_name: "home",
+                threshold: SWIPE_THRESHOLD,
+                swipe_count: swipe_count_ref.current,
+                current_index: i,
+                dwell_ms,
+              });
+            }
+          }}
+          images={viewerImages}
+          imageIndex={viewerIndex}
+          visible={viewerVisible}
+          onRequestClose={closeViewer}
+          //onImageIndexChange={(i: number) => setViewerIndex(i)} // ← 추가
+          // 선택: 상단 닫기버튼(간단한 헤더)
+          HeaderComponent={Header}
+          // 선택: 바닥 여백(제스처 충돌 완화)
+          backgroundColor="rgba(0,0,0,0.98)"
+          swipeToCloseEnabled={false} // ← 스와이프 제스처가 터치 선점하는 것 방지
+          doubleTapToZoomEnabled
+        />
 
       <Modal visible={slideshowVisible} animationType="fade">
         <SafeAreaView style={{ flex: 1, backgroundColor: "black" }}>
@@ -800,58 +980,7 @@ export default function HomeScreen() {
           </TouchableOpacity>
         </SafeAreaView>
       </Modal>
-
-        {loading || isScanning ? (
-          <View style={styles.centerContainer}>
-            <ActivityIndicator />
-            <Text style={{ marginTop: 8 }}>
-              Loading photos… {progress.loaded}
-              {progress.total ? ` / ${progress.total}` : ""}
-            </Text>
-            {progress.total ? (
-              <View
-                style={{
-                  width: 220,
-                  height: 6,
-                  backgroundColor: "#e5e7eb",
-                  marginTop: 8,
-                  borderRadius: 3,
-                }}
-              >
-                <View
-                  style={{
-                    width: `${(progress.loaded / progress.total) * 100}%`,
-                    height: "100%",
-                    backgroundColor: "#9ca3af",
-                    borderRadius: 3,
-                  }}
-                />
-              </View>
-            ) : null}
-          </View>
-        ) : error ? (
-          <View style={styles.centerContainer}>
-            <Text style={styles.errorText}>{error}</Text>
-          </View>
-        ) : (
-          <>
-            <Modal visible={!!selectedImage} animationType="slide">
-              <Image
-                source={{ uri: selectedImage || "" }}
-                style={{
-                  flex: 1,
-                  width: "100%",
-                  height: "100%",
-                  resizeMode: "contain",
-                }}
-              />
-              <View style={{ position: "absolute", top: 40, left: 20 }}>
-                <Button title="Close" onPress={() => setSelectedImage(null)} />
-              </View>
-            </Modal>
-          </>
-        )}
-      </SafeAreaView>
+    </SafeAreaView>
     </LinearGradient>
   );
 }
@@ -884,10 +1013,10 @@ const styles = StyleSheet.create({
     paddingTop: 8,
   },
   topButtonsRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "flex-start",
-    columnGap: 8, // ✅ 간격 보장
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'flex-start',
+    columnGap: 8, // 간격 보장
     marginBottom: 16,
   },
   iconButton: {
@@ -925,10 +1054,10 @@ const styles = StyleSheet.create({
   },
   // 흰색 보조 버튼
   secondaryButton: {
-    flex: 1, // ✅ 남는 공간을 먹고
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "center",
+    flex: 1, // 남는 공간을 먹고
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
     paddingHorizontal: 24,
     height: 44,
     borderRadius: 14,
@@ -984,13 +1113,6 @@ const styles = StyleSheet.create({
     alignItems: "center",
     gap: 20,
   },
-	header: {
-			flexDirection: "row",
-			justifyContent: "flex-end",
-			alignItems: "center",
-			paddingHorizontal: 15,
-			height: 48,
-		},
   header: {
     position: "absolute",
     top: 44, // 노치 고려해서 여백
@@ -1033,7 +1155,7 @@ const styles = StyleSheet.create({
 		minHeight: 60, // 충분한 높이 지정
 	},
   thumbnailCard: {
-    backgroundColor: "#FFFFFF", // 내부 흰색
+    backgroundColor: '#FFFFFF',   // 내부 흰색
     borderRadius: 32, // 모서리 둥글게
     padding: 12,
     marginTop: 12,
@@ -1044,4 +1166,54 @@ const styles = StyleSheet.create({
     shadowOffset: { width: 0, height: 10 },
     elevation: 6, // Android
   },
+  gridWrap: {
+    flex: 1,
+    position: "relative", // overlay 기준점
+  },
+
+  gridOverlay: {
+    ...StyleSheet.absoluteFillObject, // gridWrap 전체 덮음
+    backgroundColor: "rgba(0,0,0,0.25)", // 딤처리
+    justifyContent: "center",
+    alignItems: "center",
+    zIndex: 999,
+    // 안드에서 가끔 zIndex만으로 부족하면:
+    elevation: 10,
+  },
+
+  loadingBox: {
+    minWidth: 220,
+    paddingVertical: 14,
+    paddingHorizontal: 14,
+    borderRadius: 14,
+    backgroundColor: "rgba(255,255,255,0.90)", // 박스는 살짝만 불투명
+    alignItems: "center",
+  },
+
+  loadingText: {
+    marginTop: 10,
+    fontSize: 14,
+    color: "#111",
+  },
+
+  gridWrapCard: {
+    flex: 1,
+    marginHorizontal: 16,
+    marginTop: 8,
+    marginBottom: 12,
+    backgroundColor: "#FFF",
+    borderRadius: 10,
+    overflow: "hidden", // radius 안 깨지게
+    position: "relative",
+  },
+
+  emptyWrap: {
+    flex: 1, // contentContainerStyle flexGrow:1 와 세트
+    justifyContent: "center",
+    alignItems: "center",
+    padding: 20,
+  },
+  emptyTitle: { fontSize: 16, fontWeight: "700", color: "#111", marginBottom: 6 },
+  emptyDesc: { fontSize: 13, color: "#666", textAlign: "center", lineHeight: 18 },
+
 });
