@@ -37,6 +37,8 @@ import SlideshowIcon from "@/assets/icons/slideshow.svg";
 import { AMPLITUDE_API_KEY } from '@/constants/env';
 import * as amplitude from '@amplitude/analytics-react-native';
 
+import Share from 'react-native-share';
+
 // Responsive image grid calculations
 const screenWidth = Dimensions.get("window").width;
 const minImageWidth = 100;
@@ -71,10 +73,9 @@ export default function HomeScreen() {
 	const { isDarkTheme, colors } = useTheme();
 	const { language } = useLanguage();
 //	const { userData, updateUserData } = useUserData();
-  /* 2026.01.21 문제 코드 주석처리 
-	const { incrementDateFilter, incrementTimeFilter, incrementLocationFilter, incrementTotalPhotos } = useUserData(); */
-  const { incrementDateFilter, incrementTimeFilter, incrementLocationFilter } = useUserData();
-	
+
+	const { incrementDateFilter, incrementTimeFilter, incrementLocationFilter, updateTotalPhotos } = useUserData();
+
 	useEffect(() => {
 			navigation.setOptions({ headerShown: false });
 		}, [navigation]);
@@ -615,7 +616,6 @@ export default function HomeScreen() {
 				: "";
 		
 		const handleShare = async (photoUri: string, message: string) => {
-      /* 2026.01.21 문제 코드 주석처리
 			try {
 				const shareOptions: Share.ShareOptions = {
 					message,
@@ -631,7 +631,7 @@ export default function HomeScreen() {
 
 				console.log(err);
 				Alert.alert("Error", "Failed to share the photo.");
-			}*/
+			}
 		};
 		
 		const onPressShare = async () => {
@@ -664,10 +664,9 @@ export default function HomeScreen() {
     return (
       <View style={styles.footer}>
 				{/* 왼쪽: Share 버튼 */}
-        {/* 2026.01.21 문제 코드 주석처리
-				<TouchableOpacity onPress={onPressShare} style={styles.leftBtn}>
+				<TouchableOpacity onPress={onPressShare}>
 					<Ionicons name="share-outline" size={24} color="white" />
-				</TouchableOpacity> */}
+				</TouchableOpacity>
 				{/* 중앙: 날짜/시간 + 장소 */}
 				<View style={styles.headerTextContainer}>
 						<Text style={styles.metaTxt}>
@@ -678,10 +677,9 @@ export default function HomeScreen() {
 						) : null}
 				</View>
 				{/* 오른쪽: Delete 버튼 */}
-         {/* 2026.01.21 문제 코드 주석처리
-				<TouchableOpacity onPress={handleDelete} style={styles.rightBtn}>
+				<TouchableOpacity onPress={handleDelete}>
 					<Ionicons name="trash-outline" size={24} color="white" />
-				</TouchableOpacity>*/}
+				</TouchableOpacity>
       </View>
     );
   }, [photos, viewerIndex]);
