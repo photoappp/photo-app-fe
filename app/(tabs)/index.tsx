@@ -25,7 +25,7 @@ import {
   View,
 } from "react-native";
 import ImageViewing from 'react-native-image-viewing';
-import { SafeAreaView } from 'react-native-safe-area-context';
+import { Edges, SafeAreaView } from 'react-native-safe-area-context';
 
 import { useLanguage } from '@/components/context/LanguageContext';
 import { useSlideshowTime } from '@/components/context/SlideshowTimeContext';
@@ -37,7 +37,6 @@ import SlideshowIcon from "@/assets/icons/slideshow.svg";
 import { AMPLITUDE_API_KEY } from '@/constants/env';
 import * as amplitude from '@amplitude/analytics-react-native';
 
-import Share from 'react-native-share';
 
 // Responsive image grid calculations
 const screenWidth = Dimensions.get("window").width;
@@ -705,12 +704,18 @@ export default function HomeScreen() {
     console.log("Show on map, photos: ", photos.length);
   };
 
+  const edges = ["bottom", "left", "right"];
+  if (Platform.OS === "ios") {
+    edges.push("top"); // iOS는 top 추가해야 UI 안깨짐 
+  }
+  const safeAreaEdges: Edges = edges as Edges;
+
   return (
     <LinearGradient
       colors={["#E8F2FF", "#F9F3FF"]} // 연한 하늘색 + 약간 보라 느낌
       style={styles.screen}
     >
-    <SafeAreaView style={{ flex: 1 }} edges={["left", "right"]}>
+    <SafeAreaView style={{ flex: 1 }} edges={safeAreaEdges}>
       <View style={{ flex: 1 }}>
         <View style={styles.topArea}>
 
@@ -890,7 +895,7 @@ export default function HomeScreen() {
           </View>
       </View>
     
-      {/* 전체화면 이미지 뷰어 (핀치줌/스와이프) */}
+      {/* 전체화면 이미지 뷰어 (핀치줌/스와이프)
       <ImageViewing
         //images={photos.map(p => ({ uri: p.uri }))}
         onImageIndexChange={(i: number) => {
@@ -907,43 +912,43 @@ export default function HomeScreen() {
         backgroundColor="rgba(0,0,0,0.98)"
         swipeToCloseEnabled={false} // ← 스와이프 제스처가 터치 선점하는 것 방지
         doubleTapToZoomEnabled
+      /> */}
+      {/* 전체화면 이미지 뷰어 (핀치줌/스와이프) */}
+      <ImageViewing
+        //images={photos.map(p => ({ uri: p.uri }))}
+        onImageIndexChange={(i: number) => {
+          // 기존
+          viewerIndexRef.current = i;
+        
+          // swipe count 증가 (첫 진입은 0->선택 index로 이미 열리니, 변경 이벤트만 카운트)
+          swipe_count_ref.current += 1;
+        
+          if (!swipe_threshold_fired_ref.current && swipe_count_ref.current >= SWIPE_THRESHOLD) {
+            swipe_threshold_fired_ref.current = true;
+        
+            const dwell_ms = Date.now() - home_view_start_ms_ref.current;
+        
+            amplitude.track("photo_swipe_threshold_reached", {
+              screen_name: "home",
+              threshold: SWIPE_THRESHOLD,
+              swipe_count: swipe_count_ref.current,
+              current_index: i,
+              dwell_ms,
+            });
+          }
+        }}
+        images={viewerImages}
+        imageIndex={viewerIndex}
+        visible={viewerVisible}
+        onRequestClose={closeViewer}
+        //onImageIndexChange={(i: number) => setViewerIndex(i)} // ← 추가
+        // 선택: 상단 닫기버튼(간단한 헤더)
+        HeaderComponent={Header}
+        // 선택: 바닥 여백(제스처 충돌 완화)
+        backgroundColor="rgba(0,0,0,0.98)"
+        swipeToCloseEnabled={false} // ← 스와이프 제스처가 터치 선점하는 것 방지
+        doubleTapToZoomEnabled
       />
-        {/* 전체화면 이미지 뷰어 (핀치줌/스와이프) */}
-        <ImageViewing
-          //images={photos.map(p => ({ uri: p.uri }))}
-          onImageIndexChange={(i: number) => {
-            // 기존
-            viewerIndexRef.current = i;
-          
-            // swipe count 증가 (첫 진입은 0->선택 index로 이미 열리니, 변경 이벤트만 카운트)
-            swipe_count_ref.current += 1;
-          
-            if (!swipe_threshold_fired_ref.current && swipe_count_ref.current >= SWIPE_THRESHOLD) {
-              swipe_threshold_fired_ref.current = true;
-          
-              const dwell_ms = Date.now() - home_view_start_ms_ref.current;
-          
-              amplitude.track("photo_swipe_threshold_reached", {
-                screen_name: "home",
-                threshold: SWIPE_THRESHOLD,
-                swipe_count: swipe_count_ref.current,
-                current_index: i,
-                dwell_ms,
-              });
-            }
-          }}
-          images={viewerImages}
-          imageIndex={viewerIndex}
-          visible={viewerVisible}
-          onRequestClose={closeViewer}
-          //onImageIndexChange={(i: number) => setViewerIndex(i)} // ← 추가
-          // 선택: 상단 닫기버튼(간단한 헤더)
-          HeaderComponent={Header}
-          // 선택: 바닥 여백(제스처 충돌 완화)
-          backgroundColor="rgba(0,0,0,0.98)"
-          swipeToCloseEnabled={false} // ← 스와이프 제스처가 터치 선점하는 것 방지
-          doubleTapToZoomEnabled
-        />
 
       <Modal visible={slideshowVisible} animationType="fade">
         <SafeAreaView style={{ flex: 1, backgroundColor: "black" }}>
@@ -1140,17 +1145,17 @@ const styles = StyleSheet.create({
 		marginHorizontal: 8,
 	},
 	footer: {
-		flexDirection: "row",
-		justifyContent: "space-between",
-		alignItems: "center",
-		paddingHorizontal: 16,
-		paddingVertical: 10,
-		backgroundColor: "rgba(0,0,0,0.6)",
-		position: "absolute",
-		bottom: 0,
-		width: "100%",
-		zIndex: 20, // zIndex 높여서 이미지 위로
-		minHeight: 60, // 충분한 높이 지정
+		// flexDirection: "row",
+		// justifyContent: "space-between",
+		// alignItems: "center",
+		// paddingHorizontal: 16,
+		// paddingVertical: 10,
+		// backgroundColor: "rgba(0,0,0,0.6)",
+		// position: "absolute",
+		// bottom: 0,
+		// width: "100%",
+		// zIndex: 20, // zIndex 높여서 이미지 위로
+		// minHeight: 60, // 충분한 높이 지정
 	},
   thumbnailCard: {
     backgroundColor: '#FFFFFF',   // 내부 흰색
