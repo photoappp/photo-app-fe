@@ -2,11 +2,10 @@
 import { Photo } from "@/types/Photo";
 import { LinearGradient } from "expo-linear-gradient";
 import {
-  SetStateAction,
   useEffect,
   //useCallback, useMemo, ,
   useRef,
-  useState,
+  useState
 } from "react";
 import {
   Modal,
@@ -16,21 +15,22 @@ import {
   //Button, FlatList, PermissionsAndroid,
   TouchableOpacity,
   useWindowDimensions,
-  View,
-  Image,
+  View
 } from "react-native";
 import DateTimePicker from "./DateTimePicker";
 import LocationSelector from "./LocationSelector";
 
-import { TRANSLATIONS } from '@/constants/Translations';
 import { useLanguage } from '@/components/context/LanguageContext';
 
-import * as amplitude from "@amplitude/analytics-react-native";
+import ICON_CLOSE from "@/assets/icons/ic_close.svg";
 import ICON_DATE from "@/assets/icons/ic_date.svg";
-import ICON_TIME from "@/assets/icons/ic_time.svg";
 import ICON_LOCATION from "@/assets/icons/ic_location.svg";
 import ICON_RESET from "@/assets/icons/ic_reset.svg";
-import ICON_CLOSE from "@/assets/icons/ic_close.svg";
+import ICON_TIME from "@/assets/icons/ic_time.svg";
+import * as amplitude from "@amplitude/analytics-react-native";
+import { shiftMonthsClamped, clampToToday } from "@/components/dateUtil";
+
+
 
 type DatePickersResponsiveProps = {
   dateStart: Date;
@@ -48,6 +48,7 @@ const DatePickersResponsive = ({
   const { width } = useWindowDimensions();
   // 폭이 좁으면 세로 스택, 넓으면 좌우 배치
   const stack = true;
+  const maxDate = new Date();
 
   return (
     <>
@@ -58,15 +59,21 @@ const DatePickersResponsive = ({
         ]}
       >
         <View style={[styles.pickerBox, stack && styles.pickerBoxStack]}>
-          <DateTimePicker
-            mode="date"
-            value={dateStart}
-            onChange={onChangeStart}
-          />
+        <DateTimePicker
+          mode="date"
+          value={dateStart}
+          onChange={onChangeStart}
+          maximumDate={maxDate}
+        />
         </View>
 
         <View style={[styles.pickerBox, stack && styles.pickerBoxStack]}>
-          <DateTimePicker mode="date" value={dateEnd} onChange={onChangeEnd} />
+        <DateTimePicker
+          mode="date"
+          value={dateEnd}
+          onChange={onChangeEnd}
+          maximumDate={maxDate}
+        />
         </View>
       </View>
     </>
@@ -156,9 +163,8 @@ const DATE_PRESETS: DatePreset[] = [
     key: "past_12_months",
     label: "Past 12 Months",
     getRange: (now) => {
-      const end = new Date(now);
-      const start = new Date(now);
-      start.setFullYear(start.getFullYear() - 1);
+      const end = clampToToday(now);
+      const start = shiftMonthsClamped(end, -12);
       start.setDate(start.getDate() + 1);
       return { start, end };
     },
@@ -167,8 +173,7 @@ const DATE_PRESETS: DatePreset[] = [
     key: "one_month_ago",
     label: "One Month Ago",
     getRange: (now) => {
-      const d = new Date(now);
-      d.setMonth(d.getMonth() - 1);
+      const d = shiftMonthsClamped(now, -1);
       return { start: d, end: d };
     },
   },
@@ -213,6 +218,8 @@ const DATE_PRESETS: DatePreset[] = [
   },
 ];
 
+
+
 export default function DateTimeFilter({
   onChange,
   photos,
@@ -247,6 +254,19 @@ export default function DateTimeFilter({
   // 날짜, 시간 변경 타이밍 관련
   const debounceTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const lastEmittedRef = useRef<string>(""); // 동일 값 중복 emit 방지용(선택이지만 추천)
+
+  const onChangeStartSafe = (d: Date) => {
+    const nd = clampToToday(d);
+    setDateStart(nd);
+    if (nd > dateEnd) setDateEnd(nd);
+  };
+  
+  const onChangeEndSafe = (d: Date) => {
+    const nd = clampToToday(d);
+    setDateEnd(nd);
+    if (nd < dateStart) setDateStart(nd);
+  };
+  
 
   useEffect(() => {
     if (!onChange) return;
@@ -325,7 +345,7 @@ export default function DateTimeFilter({
       favorite_key: "one_month_ago",
     });
     const now = new Date();
-    const d = new Date(now.getFullYear(), now.getMonth() - 1, now.getDate());
+    const d = shiftMonthsClamped(now, -1);
     setDateStart(d);
     setDateEnd(d);
   };
@@ -525,8 +545,8 @@ export default function DateTimeFilter({
             <DatePickersResponsive
               dateStart={dateStart}
               dateEnd={dateEnd}
-              onChangeStart={setDateStart}
-              onChangeEnd={setDateEnd}
+              onChangeStart={onChangeStartSafe}
+              onChangeEnd={onChangeEndSafe}
             />
             {/* 즐겨찾기 */}
             {/* <View style={styles.favs}>
