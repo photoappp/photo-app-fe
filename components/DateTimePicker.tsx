@@ -9,9 +9,11 @@ type Props = {
   mode: 'date' | 'time';
   value: Date;
   onChange: (d: Date) => void;
+  minimumDate?: Date;
+  maximumDate?: Date;
 };
 
-export default function DateTimePicker({ mode, value, onChange }: Props) {
+export default function DateTimePicker({ mode, value, onChange, minimumDate, maximumDate }: Props) {
   const isAndroid = Platform.OS === 'android';
 
   if (isAndroid) {
@@ -24,6 +26,8 @@ export default function DateTimePicker({ mode, value, onChange }: Props) {
         theme="light"
         //androidVariant="iosClone"
         //textColor="#000000"
+        minimumDate={mode === "date" ? minimumDate : undefined}
+        maximumDate={mode === "date" ? maximumDate : undefined}
       />
     );
   }
@@ -41,6 +45,8 @@ export default function DateTimePicker({ mode, value, onChange }: Props) {
       onChange={handleIOSChange}
       themeVariant="light"
       textColor="#000000"
+      minimumDate={mode === "date" ? minimumDate : undefined}
+      maximumDate={mode === "date" ? maximumDate : undefined}
     />
   );
 }
