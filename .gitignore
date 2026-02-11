@@ -58,3 +58,4 @@ ios/Podfile.lock
 ios/DerivedData/
 ios/*.xcworkspace
 ios/build/
+.env
