@@ -20,11 +20,11 @@ const ScreenWrapper: React.FC<{ children: ReactNode }> = ({ children }) => {
 				/>
 				<View style={styles.links}>
 					<TouchableOpacity onPress={() => Linking.openURL('https://marmalade-neptune-dbe.notion.site/Terms-Conditions-c18656ce6c6045e590f652bf8291f28b?pvs=74')}>
-						<Text style={[styles.linkText, themeStyles.text]}>Terms & Conditions</Text>
+						<Text style={[styles.linkText, themeStyles.text]}>Terms</Text>
 					</TouchableOpacity>
 					<Text style={[styles.separator, themeStyles.text]}>|</Text>
 					<TouchableOpacity onPress={() => Linking.openURL('https://marmalade-neptune-dbe.notion.site/Privacy-Policy-ced8ead72ced4d8791ca4a71a289dd6b')}>
-						<Text style={[styles.linkText, themeStyles.text]}>Privacy Policy</Text>
+						<Text style={[styles.linkText, themeStyles.text]}>Privacy</Text>
 					</TouchableOpacity>
 				</View>
 			</View>
@@ -37,7 +37,7 @@ const styles = StyleSheet.create({
 	content: {flex: 1 },
 	footer: {
 		flexDirection: 'row',
-		justifyContent: 'space-between',
+		justifyContent: 'space-evenly',
 		flexWrap: 'nowrap',
 		padding: 15,
 		borderTopWidth: 1,
