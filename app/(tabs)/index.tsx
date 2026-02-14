@@ -986,12 +986,6 @@ export default function HomeScreen() {
           >
             <Ionicons name="close" size={28} color="#fff" />
           </TouchableOpacity>
-					
-					{/* 2026-02-10 Footer 추가 by Minji */}
-					<View style={styles.slideshowFooter}>
-						<Footer />
-					</View>
-
         </SafeAreaView>
       </Modal>
     </SafeAreaView>
