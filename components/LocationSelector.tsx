@@ -56,7 +56,7 @@ export default function LocationSelector({
   useEffect(() => {
     // Fetch Translations from Google Sheets
     fetch(
-      `https://docs.google.com/spreadsheets/d/e/2PACX-1vRUqmYxjUnGRx-JgOO8CP_gxaa2LNeX1c1grP2z3iVJExf3di7Rj1oWEIe5kTAsEaO2-B0dQM0KIefX/pub?gid=905203283&single=true&output=csv`
+      `https://docs.google.com/spreadsheets/d/e/2PACX-1vRUqmYxjUnGRx-JgOO8CP_gxaa2LNeX1c1grP2z3iVJExf3di7Rj1oWEIe5kTAsEaO2-B0dQM0KIefX/pub?gid=905203283&single=true&output=csv`,
     )
       .then((res) => res.text())
       .then((csvText) => {
@@ -90,7 +90,7 @@ export default function LocationSelector({
           // Add city if present and not duplicated
           if (city) {
             const exists = locationMap[country].cities.some(
-              (c) => c.en === city
+              (c) => c.en === city,
             );
             allCitiesSet.add(city);
             if (!exists) {
@@ -263,8 +263,11 @@ export default function LocationSelector({
                             backgroundColor: pressed
                               ? "#EFF6FF"
                               : isSelected
-                              ? "#EFF6FF"
-                              : Colors.light.background,
+                                ? "#EFF6FF"
+                                : Colors.light.background,
+                            borderBottomWidth: item === "All" ? 1 : 0,
+                            borderBottomColor:
+                              item === "All" ? "#DBEAFE" : "transparent",
                           },
                         ]}
                       >
@@ -297,8 +300,11 @@ export default function LocationSelector({
                               backgroundColor: pressed
                                 ? "#EFF6FF"
                                 : isSelected
-                                ? "#EFF6FF"
-                                : Colors.light.background,
+                                  ? "#EFF6FF"
+                                  : Colors.light.background,
+                              borderBottomWidth: item === "All" ? 1 : 0,
+                              borderBottomColor:
+                                item === "All" ? "#DBEAFE" : "transparent",
                             },
                           ]}
                         >

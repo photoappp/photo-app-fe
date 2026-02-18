@@ -1,6 +1,6 @@
 {
   "expo": {
-    "name": "photo-app-fe",
+    "name": "PicQly",
     "slug": "photo-app-fe",
     "version": "1.0.0",
     "orientation": "portrait",
@@ -25,9 +25,7 @@
         {
           "photosPermission": "Allow photo-app-fe to access your photos.",
           "savePhotosPermission": "Allow photo-app-fe to save photos to your device.",
-          "granularPermissions": [
-            "photo"
-          ]
+          "granularPermissions": ["photo"]
         }
       ],
       "react-native-localize"
