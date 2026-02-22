@@ -134,7 +134,9 @@ export default function LocationSelector({
       return;
     }
     let updated: string[];
-    if (current.includes(item)) {
+    if (current.includes(item) && current.includes("All")) {
+      updated = [item];
+    } else if (current.includes(item)) {
       updated = current.filter((i) => i !== item && i !== "All");
     } else {
       updated = [...current, item];
@@ -320,16 +322,18 @@ export default function LocationSelector({
             <View style={styles.buttonContainer}>
               <TouchableOpacity
                 onPress={() => {
-                  setSelectedCountries(tempCountries);
-                  setSelectedCities(tempCities);
+                  setTempCities(allCities);
+                  setTempCountries(allCountries);
+                  setSelectedCountries(allCountries);
+                  setSelectedCities(allCities);
                   console.log("Applying selection:", {
-                    countries: tempCountries,
-                    cities: tempCities,
+                    countries: allCountries,
+                    cities: allCities,
                     locationLabel: getButtonTitle(),
                   });
                   onSelectionChange?.({
-                    countries: tempCountries,
-                    cities: tempCities,
+                    countries: allCountries,
+                    cities: allCities,
                     locationLabel: getButtonTitle(),
                   });
 
@@ -342,7 +346,7 @@ export default function LocationSelector({
                   end={{ x: 1, y: 0 }}
                   style={styles.primaryButton}
                 >
-                  <Text style={styles.primaryButtonText}>Apply Location</Text>
+                  <Text style={styles.primaryButtonText}>All Locations</Text>
                 </LinearGradient>
               </TouchableOpacity>
             </View>
