@@ -5,7 +5,7 @@ import {
   useEffect,
   //useCallback, useMemo, ,
   useRef,
-  useState
+  useState,
 } from "react";
 import {
   Modal,
@@ -15,22 +15,20 @@ import {
   //Button, FlatList, PermissionsAndroid,
   TouchableOpacity,
   useWindowDimensions,
-  View
+  View,
 } from "react-native";
 import DateTimePicker from "./DateTimePicker";
-import LocationSelector from "./LocationSelector";
+import LocationSelector, { LocationSelectorHandle } from "./LocationSelector";
 
-import { useLanguage } from '@/components/context/LanguageContext';
+import { useLanguage } from "@/components/context/LanguageContext";
 
 import ICON_CLOSE from "@/assets/icons/ic_close.svg";
 import ICON_DATE from "@/assets/icons/ic_date.svg";
 import ICON_LOCATION from "@/assets/icons/ic_location.svg";
 import ICON_RESET from "@/assets/icons/ic_reset.svg";
 import ICON_TIME from "@/assets/icons/ic_time.svg";
+import { clampToToday, shiftMonthsClamped } from "@/components/dateUtil";
 import * as amplitude from "@amplitude/analytics-react-native";
-import { shiftMonthsClamped, clampToToday } from "@/components/dateUtil";
-
-
 
 type DatePickersResponsiveProps = {
   dateStart: Date;
@@ -59,21 +57,21 @@ const DatePickersResponsive = ({
         ]}
       >
         <View style={[styles.pickerBox, stack && styles.pickerBoxStack]}>
-        <DateTimePicker
-          mode="date"
-          value={dateStart}
-          onChange={onChangeStart}
-          maximumDate={maxDate}
-        />
+          <DateTimePicker
+            mode="date"
+            value={dateStart}
+            onChange={onChangeStart}
+            maximumDate={maxDate}
+          />
         </View>
 
         <View style={[styles.pickerBox, stack && styles.pickerBoxStack]}>
-        <DateTimePicker
-          mode="date"
-          value={dateEnd}
-          onChange={onChangeEnd}
-          maximumDate={maxDate}
-        />
+          <DateTimePicker
+            mode="date"
+            value={dateEnd}
+            onChange={onChangeEnd}
+            maximumDate={maxDate}
+          />
         </View>
       </View>
     </>
@@ -102,7 +100,7 @@ const today = new Date();
 const oneYearAgo = new Date(
   today.getFullYear() - 1,
   today.getMonth(),
-  today.getDate()
+  today.getDate(),
 );
 
 type DateTimeFilterValue = {
@@ -129,10 +127,10 @@ type TimePreset = {
 };
 
 const PRESETS: TimePreset[] = [
-  { label: "00:00–05:59", s: 0,        e: 6 * 60 - 1 },   // 00:00 – 05:59
-  { label: "06:00–11:59", s: 6 * 60,    e: 12 * 60 - 1 },  // 06:00 – 11:59
-  { label: "12:00–17:59", s: 12 * 60,   e: 18 * 60 - 1 },  // 12:00 – 17:59
-  { label: "18:00–23:59", s: 18 * 60,   e: 24 * 60 - 1 },  // 18:00 – 23:59
+  { label: "00:00–05:59", s: 0, e: 6 * 60 - 1 }, // 00:00 – 05:59
+  { label: "06:00–11:59", s: 6 * 60, e: 12 * 60 - 1 }, // 06:00 – 11:59
+  { label: "12:00–17:59", s: 12 * 60, e: 18 * 60 - 1 }, // 12:00 – 17:59
+  { label: "18:00–23:59", s: 18 * 60, e: 24 * 60 - 1 }, // 18:00 – 23:59
 ];
 
 type DatePreset = {
@@ -218,8 +216,6 @@ const DATE_PRESETS: DatePreset[] = [
   },
 ];
 
-
-
 export default function DateTimeFilter({
   onChange,
   photos,
@@ -237,6 +233,7 @@ export default function DateTimeFilter({
   const [dateModalVisible, setDateModalVisible] = useState(false);
   const [timeModalVisible, setTimeModalVisible] = useState(false);
   const [locationModalVisible, setLocationModalVisible] = useState(false);
+  const locationRef = useRef<LocationSelectorHandle>(null);
 
   // 플랫폼 플래그
   const isIOS = Platform.OS === "ios";
@@ -260,13 +257,12 @@ export default function DateTimeFilter({
     setDateStart(nd);
     if (nd > dateEnd) setDateEnd(nd);
   };
-  
+
   const onChangeEndSafe = (d: Date) => {
     const nd = clampToToday(d);
     setDateEnd(nd);
     if (nd < dateStart) setDateStart(nd);
   };
-  
 
   useEffect(() => {
     if (!onChange) return;
@@ -281,29 +277,29 @@ export default function DateTimeFilter({
       emitChange();
       return;
     }
-  
+
     // 이전 예약 취소
     if (debounceTimerRef.current) clearTimeout(debounceTimerRef.current);
-  
+
     // 새로 예약
     debounceTimerRef.current = setTimeout(() => {
       emitChange();
       debounceTimerRef.current = null;
     }, DEBOUNCE_MS);
-  
+
     // cleanup (언마운트/다음 변경 시 안전)
     return () => {
       if (debounceTimerRef.current) clearTimeout(debounceTimerRef.current);
     };
-  }, [dateStart, dateEnd, timeStart, timeEnd, onChange]);
+  }, [dateStart, dateEnd, timeStart, timeEnd, onChange, onLocationChange]);
 
   const applyDatePreset = (key: DatePreset["key"]) => {
     const preset = DATE_PRESETS.find((p) => p.key === key);
     if (!preset) return;
-  
+
     const now = new Date();
     const { start, end } = preset.getRange(now);
-  
+
     amplitude.track("tap_date_preset", {
       screen_name: "home",
       preset_key: key,
@@ -318,15 +314,15 @@ export default function DateTimeFilter({
 
   const applyTimePreset = (s: number, e: number) => {
     bypassDebounceRef.current = true;
-  
+
     const clamp = (v: number) => Math.max(0, Math.min(1439, v));
-  
+
     setTimeStart(clamp(s));
     setTimeEnd(clamp(e));
-  
+
     flushPendingChange();
   };
-  
+
   // ---- 즐겨찾기 ----
   const favOneYearAgo = () => {
     amplitude.track("tap_date_favorite", {
@@ -384,34 +380,28 @@ export default function DateTimeFilter({
   const timeLabel = `${fmtTime(timeStart)} – ${fmtTime(timeEnd)}`;
   const [locationLabel, setLocationLabel] = useState("Anywhere");
 
-	const { language } = useLanguage();
-	
+  const { language } = useLanguage();
+
   const emitCountRef = useRef(0);
   const bypassDebounceRef = useRef(false);
   const emitChange = () => {
     const payload = { dateStart, dateEnd, timeStart, timeEnd };
-  
+
     // 같은 값이면 또 안 쏘게
-    const sig =
-      `${dateStart.getTime()}|${dateEnd.getTime()}|${timeStart}|${timeEnd}`;
-  
+    const sig = `${dateStart.getTime()}|${dateEnd.getTime()}|${timeStart}|${timeEnd}`;
+
     if (sig === lastEmittedRef.current) return;
     lastEmittedRef.current = sig;
 
     // 딜레이 처리 제대로 되는지 테스트 START
     emitCountRef.current += 1;
-    console.log(
-      `[EMIT #${emitCountRef.current}]`,
-      new Date().toISOString(),
-      {
-        dateStart: dateStart.toISOString().slice(0, 10),
-        dateEnd: dateEnd.toISOString().slice(0, 10),
-        timeStart,
-        timeEnd,
-      }
-    );
+    console.log(`[EMIT #${emitCountRef.current}]`, new Date().toISOString(), {
+      dateStart: dateStart.toISOString().slice(0, 10),
+      dateEnd: dateEnd.toISOString().slice(0, 10),
+      timeStart,
+      timeEnd,
+    });
     // 딜레이 처리 제대로 되는지 테스트 END
-
     onChange?.(payload);
   };
 
@@ -422,15 +412,15 @@ export default function DateTimeFilter({
       debounceTimerRef.current = null;
     }
     emitChange();
-  };
-  
+  }
+
   // 날짜, 시간 초기화 버튼
   // const resetProcess = () => {
 
   // };
 
   console.log("ICON_DATE = ", ICON_DATE);
-  
+
   return (
     <View>
       {/* 하단 고정 필터 패널 */}
@@ -439,7 +429,7 @@ export default function DateTimeFilter({
         <View style={styles.filterRow}>
           <View style={styles.filterIcon}>
             <ICON_DATE width={50} height={50} />
-          </View>          
+          </View>
           <TouchableOpacity
             onPress={() => {
               amplitude.track("tap_date_filter", { screen_name: "home" });
@@ -452,22 +442,22 @@ export default function DateTimeFilter({
               {dateLabel}
             </Text>
             <TouchableOpacity
-                  onPress={() => {
-                    setDateStart(oneYearAgo);
-                    setDateEnd(today);
-                    setDateModalVisible(false);
-                  }}
-                >
+              onPress={() => {
+                setDateStart(oneYearAgo);
+                setDateEnd(today);
+                setDateModalVisible(false);
+              }}
+            >
               <ICON_RESET width={20} height={20} />
             </TouchableOpacity>
           </TouchableOpacity>
         </View>
-  
+
         {/* Time row */}
         <View style={styles.filterRow}>
           <View style={styles.filterIcon}>
             <ICON_TIME width={50} height={50} />
-          </View>    
+          </View>
           <TouchableOpacity
             onPress={() => {
               amplitude.track("tap_time_filter", { screen_name: "home" });
@@ -480,23 +470,23 @@ export default function DateTimeFilter({
               {timeLabel}
             </Text>
             <TouchableOpacity
-                  onPress={() => {
-                    setTimeStart(0);
-                    setTimeEnd(1439);
-                    setTimeModalVisible(false);
-                  }}
-                >
+              onPress={() => {
+                setTimeStart(0);
+                setTimeEnd(1439);
+                setTimeModalVisible(false);
+              }}
+            >
               <ICON_RESET width={20} height={20} />
             </TouchableOpacity>
           </TouchableOpacity>
         </View>
         {/* 하단 고정 필터 패널 END */}
-  
+
         {/* Location row */}
         <View style={styles.filterRow}>
           <View style={styles.filterIcon}>
             <ICON_LOCATION width={50} height={50} />
-          </View>    
+          </View>
           <TouchableOpacity
             onPress={() => {
               amplitude.track("tap_location_filter", { screen_name: "home" });
@@ -507,17 +497,25 @@ export default function DateTimeFilter({
           >
             <View style={styles.filterValueArea}>
               <Text style={styles.filterValue} numberOfLines={1}>
-                {/* TODO: locationLabel 같은 값으로 교체 */}
-                Location
+                {/* 2026-02-21 location label 변수로 교체 by yen*/}
+                {locationLabel}
               </Text>
-              <View style={styles.filterIcon}>
-                <ICON_RESET width={20} height={20} />
-              </View>   
+
+              {/* 2026-02-21 location reset function trigger added by yen*/}
+              <TouchableOpacity
+                onPress={() => {
+                  locationRef.current?.handleReset();
+                }}
+              >
+                <View style={styles.filterIcon}>
+                  <ICON_RESET width={20} height={20} />
+                </View>
+              </TouchableOpacity>
             </View>
           </TouchableOpacity>
         </View>
       </View>
-  
+
       {/* Date Bottom Sheet START*/}
       <Modal
         visible={dateModalVisible}
@@ -561,7 +559,10 @@ export default function DateTimeFilter({
                 <TouchableOpacity
                   key={p.key}
                   activeOpacity={0.9}
-                  style={[styles.datePresetBtn, p.fullWidth && styles.datePresetBtnFull]}
+                  style={[
+                    styles.datePresetBtn,
+                    p.fullWidth && styles.datePresetBtnFull,
+                  ]}
                   onPress={() => applyDatePreset(p.key)}
                 >
                   <LinearGradient
@@ -579,7 +580,7 @@ export default function DateTimeFilter({
         </View>
       </Modal>
       {/* Date Bottom Sheet END */}
-  
+
       {/* Time Bottom Sheet START */}
       <Modal
         visible={timeModalVisible}
@@ -604,7 +605,7 @@ export default function DateTimeFilter({
                 </TouchableOpacity>
               </View>
             </View>
-  
+
             {/* 2개 피커 */}
             <View style={styles.row}>
               <View style={styles.pickerBox}>
@@ -616,22 +617,28 @@ export default function DateTimeFilter({
                       0,
                       1,
                       Math.floor(timeStart / 60),
-                      timeStart % 60
+                      timeStart % 60,
                     )
                   }
-                  onChange={(d) => setTimeHM("start", d.getHours(), d.getMinutes())}
+                  onChange={(d) =>
+                    setTimeHM("start", d.getHours(), d.getMinutes())
+                  }
                 />
               </View>
-  
+
               <View style={styles.pickerBox}>
                 <DateTimePicker
                   mode="time"
-                  value={new Date(2000, 0, 1, Math.floor(timeEnd / 60), timeEnd % 60)}
-                  onChange={(d) => setTimeHM("end", d.getHours(), d.getMinutes())}
+                  value={
+                    new Date(2000, 0, 1, Math.floor(timeEnd / 60), timeEnd % 60)
+                  }
+                  onChange={(d) =>
+                    setTimeHM("end", d.getHours(), d.getMinutes())
+                  }
                 />
               </View>
             </View>
-  
+
             {/* 프리셋 4개 */}
             <View style={styles.timePresetGrid}>
               {PRESETS.map((p) => (
@@ -660,7 +667,7 @@ export default function DateTimeFilter({
                 </TouchableOpacity>
               ))}
             </View>
-  
+
             {/* all_day */}
             <TouchableOpacity
               style={[styles.timePresetBtn, styles.timePresetAny]}
@@ -686,9 +693,10 @@ export default function DateTimeFilter({
             </TouchableOpacity>
           </View>
         </View>
-      </Modal> 
+      </Modal>
       {
         <LocationSelector
+          ref={locationRef}
           visible={locationModalVisible}
           onClose={() => setLocationModalVisible(false)}
           onSelectionChange={({ countries, cities, locationLabel }) => {
@@ -702,7 +710,6 @@ export default function DateTimeFilter({
     </View>
   );
 }
-  
 
 /* ---------------- UI 컴포넌트 ---------------- */
 type ChipProps = {
@@ -740,187 +747,226 @@ const Fav = ({ label, onPress }: FavProps) => (
 
 /* ---------------- 스타일 ---------------- */
 const styles = StyleSheet.create({
+  filterCard: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    backgroundColor: "#fff",
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+    borderRadius: 12,
+    // 그림자
+    elevation: 3,
+    shadowColor: "#000",
+    shadowOpacity: 0.12,
+    shadowOffset: { width: 0, height: 2 },
+    shadowRadius: 4,
+    flex: 1, // ← 레이블 옆에서 가능한 공간을 전부 차지함
+    marginLeft: 12,
+  },
+  filterLabel: {
+    fontSize: 14,
+    fontWeight: "bold",
+    color: "#777",
+    width: 65, // ← 레이블 길이를 고정해야 줄바꿈 안 생김
+  },
+  filterIcon: {
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  filterValue: {
+    fontSize: 12,
+    color: "#000",
+    flex: 1,
+  },
+  filterEdit: {
+    fontSize: 10,
+    color: "#3478f6",
+    marginLeft: 12,
+  },
+  filterPanel: {
+    //borderTopWidth: 1,
+    //borderColor: '#eee',
+    //backgroundColor: '#fff',
+    paddingHorizontal: 0,
+    paddingTop: 0,
+    paddingBottom: 0,
+  },
+  filterRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    marginBottom: 12,
+  },
+  filterTitle: {
+    fontSize: 12,
+    color: "#888",
+    width: 90, // 왼쪽 제목 폭 고정해서 정렬
+  },
+  filterValueArea: {
+    flex: 1,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+  },
+  chip: {
+    flexDirection: "row",
+    alignItems: "center",
+    borderWidth: 1,
+    borderColor: "#ccc",
+    borderRadius: 20,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    marginRight: 8,
+  },
 
-    filterCard: {
-      flexDirection: "row",
-      alignItems: "center",
-      justifyContent: "space-between",
-      backgroundColor: "#fff",
-      paddingHorizontal: 14,
-      paddingVertical: 10,
-      borderRadius: 12,
-      // 그림자
-      elevation: 3,
-      shadowColor: "#000",
-      shadowOpacity: 0.12,
-      shadowOffset: { width: 0, height: 2 },
-      shadowRadius: 4,
-      flex: 1,   // ← 레이블 옆에서 가능한 공간을 전부 차지함
-      marginLeft: 12,
-    },
-    filterLabel: {
-      fontSize: 14,
-      fontWeight: "bold",
-      color: "#777",
-      width: 65,   // ← 레이블 길이를 고정해야 줄바꿈 안 생김
-    },
-    filterIcon: {
-      alignItems: "center", 
-      justifyContent: "center",
-    },
-    filterValue: {
-      fontSize: 12,
-      color: "#000",
-      flex: 1,
-    },
-    filterEdit: {
-      fontSize: 10,
-      color: "#3478f6",
-      marginLeft: 12,
-    },
-    filterPanel: {
-      //borderTopWidth: 1,
-      //borderColor: '#eee',
-      //backgroundColor: '#fff',
-      paddingHorizontal: 0,
-      paddingTop: 0,
-      paddingBottom: 0,
-    },
-    filterRow: {
-      flexDirection: "row",
-      alignItems: "center",
-      justifyContent: "space-between",
-      marginBottom: 12,
-    },
-    filterTitle: {
-      fontSize: 12,
-      color: '#888',
-      width: 90,              // 왼쪽 제목 폭 고정해서 정렬
-    },
-    filterValueArea: {
-      flex: 1,
-      flexDirection: 'row',
-      alignItems: 'center',
-      justifyContent: 'space-between',
-    },
-    chip: {
-      flexDirection: 'row',
-      alignItems: 'center',
-      borderWidth: 1, borderColor: '#ccc', borderRadius: 20,
-      paddingHorizontal: 10, paddingVertical: 6, marginRight: 8,
-    },
+  chipTxt: { fontSize: 12, color: "#000" },
+  resetBtn: { marginLeft: "auto" },
+  resetTxt: { color: "#3478f6", fontWeight: "600" },
+  thumb: {
+    width: "24%",
+    aspectRatio: 1,
+    backgroundColor: "#ddd",
+    margin: "0.5%",
+    borderRadius: 6,
+  },
+  modalBackdrop: {
+    flex: 1,
+    justifyContent: "flex-end",
+    backgroundColor: "rgba(0,0,0,0.35)",
+  },
+  sheet: {
+    backgroundColor: "#fff",
+    borderTopLeftRadius: 16,
+    borderTopRightRadius: 16,
+    padding: 12,
+    maxHeight: "80%",
+  },
+  sheetHeader: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+  },
+  sheetTitle: { fontWeight: "600", fontSize: 15, color: "#000" },
+  link: { color: "#3478f6", fontWeight: "600" },
+  row: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+    marginTop: 8,
+    color: "#000",
+  },
+  section: { fontWeight: "600", color: "#000" },
+  pickerBox: {
+    width: "49%",
+    borderWidth: 1,
+    borderColor: "#eee",
+    borderRadius: 12,
+    ...Platform.select({
+      ios: { height: VISIBLE_HEIGHT }, // 3줄
+      android: {
+        // 안드로이드는 휠 자체가 더 커서 높이를 충분히 주고 잘라내지 않음
+        height: 130,
+      },
+    }),
+    overflow: "hidden",
+    position: "relative",
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: "#fff", // 모달 배경과 동일해야 덮개가 티 안남
+    color: "#000",
+    marginBottom: 0,
+  },
+  cover: {
+    position: "absolute",
+    left: 0,
+    right: 0,
+    backgroundColor: "#fff", // 모달 바탕색과 동일
+    zIndex: 10,
+  },
+  pickerBoxStack: { width: "100%", marginTop: 5 },
+  favs: { flexDirection: "row", flexWrap: "wrap", gap: 4, marginTop: 12 },
+  favBtn: {
+    backgroundColor: "#F3F4F6",
+    borderWidth: 1,
+    borderColor: "#F3F4F6",
+    borderRadius: 20,
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    marginRight: 0,
+    marginBottom: 0,
+  },
+  favTxt: { fontSize: 9, fontWeight: "800", color: "#FFF" },
 
-    chipTxt: { fontSize: 12, color: '#000', },
-    resetBtn: { marginLeft: 'auto' },
-    resetTxt: { color: '#3478f6', fontWeight: '600' },
-    thumb: { width: '24%', aspectRatio: 1, backgroundColor: '#ddd', margin: '0.5%', borderRadius: 6 },
-    modalBackdrop: { flex: 1, justifyContent: 'flex-end', backgroundColor: 'rgba(0,0,0,0.35)' },
-    sheet: { backgroundColor: '#fff', borderTopLeftRadius: 16, borderTopRightRadius: 16, padding: 12, maxHeight: '80%' },
-    sheetHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
-    sheetTitle: { fontWeight: '600', fontSize: 15, color: '#000', },
-    link: { color: '#3478f6', fontWeight: '600' },
-    row: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginTop: 8, color: '#000', },
-    section: { fontWeight: '600', color: '#000', },
-    pickerBox: {
-      width: '49%',
-      borderWidth: 1, borderColor: '#eee', borderRadius: 12,
-      ...Platform.select({
-        ios: { height: VISIBLE_HEIGHT }, // 3줄
-        android: { // 안드로이드는 휠 자체가 더 커서 높이를 충분히 주고 잘라내지 않음
-          height: 130,
-        },
-      }),
-      overflow: 'hidden',
-      position: 'relative',
-      alignItems: 'center',
-      justifyContent: 'center',
-      backgroundColor: '#fff',    // 모달 배경과 동일해야 덮개가 티 안남
-      color: '#000',
-      marginBottom: 0,
-    },
-    cover: {
-      position: 'absolute',
-      left: 0, right: 0,
-      backgroundColor: '#fff',    // 모달 바탕색과 동일
-      zIndex: 10,
-    },
-    pickerBoxStack: { width: '100%', marginTop: 5, },
-    favs: { flexDirection: 'row', flexWrap: 'wrap', gap: 4, marginTop: 12, },
-    favBtn: { backgroundColor: '#F3F4F6', borderWidth: 1, borderColor: '#F3F4F6', borderRadius: 20, paddingHorizontal: 10, paddingVertical: 5, marginRight: 0, marginBottom: 0 },
-    favTxt: { fontSize: 9, fontWeight: '800', color: '#FFF', },
-  
-    timePresetGrid: {
-      marginTop: 12,
-      flexDirection: 'row',
-      flexWrap: 'wrap',
-      justifyContent: 'space-between',
-    },
-    timePresetBtn: {
-      width: '49%',
-      //borderWidth: 1,
-      //borderColor: '#999',        
-      borderRadius: 10,
-      paddingVertical: 0,
-      marginBottom: 5,
-      alignItems: 'center',
-      justifyContent: 'center',
-    },
-    timePresetAny: {
-      width: '100%',
-      borderColor: '#999',
-      //paddingVertical: 12,
-    },
-    timePresetTxt: {
-      fontWeight: '600',
-      color: '#FFF',
-    },
+  timePresetGrid: {
+    marginTop: 12,
+    flexDirection: "row",
+    flexWrap: "wrap",
+    justifyContent: "space-between",
+  },
+  timePresetBtn: {
+    width: "49%",
+    //borderWidth: 1,
+    //borderColor: '#999',
+    borderRadius: 10,
+    paddingVertical: 0,
+    marginBottom: 5,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  timePresetAny: {
+    width: "100%",
+    borderColor: "#999",
+    //paddingVertical: 12,
+  },
+  timePresetTxt: {
+    fontWeight: "600",
+    color: "#FFF",
+  },
 
-    quickBtnGradient: {
-      paddingHorizontal: 14,
-      paddingVertical: 8,
-      borderRadius: 14,
-    },
-    
-    rangeBtnGradient: {
-      paddingVertical: 10,
-      paddingHorizontal: 12,
-      borderRadius: 12,
-      width: '100%',
-      justifyContent: 'center',
-      alignItems: 'center',
-    },
+  quickBtnGradient: {
+    paddingHorizontal: 14,
+    paddingVertical: 8,
+    borderRadius: 14,
+  },
 
-    datePresetGrid: {
-      marginTop: 12,
-      flexDirection: "row",
-      flexWrap: "wrap",
-      justifyContent: "space-between",
-      rowGap: 10,
-    },
-    
-    datePresetBtn: {
-      width: "49%",
-      borderRadius: 12,
-      overflow: "hidden",
-    },
-    
-    datePresetBtnFull: {
-      width: "100%",
-    },
-    
-    datePresetGradient: {
-      paddingVertical: 12,
-      alignItems: "center",
-      justifyContent: "center",
-      borderRadius: 12,
-    },
-    
-    datePresetTxt: {
-      color: "#fff",
-      fontWeight: "800",
-      fontSize: 14,
-    },
-    
-    
+  rangeBtnGradient: {
+    paddingVertical: 10,
+    paddingHorizontal: 12,
+    borderRadius: 12,
+    width: "100%",
+    justifyContent: "center",
+    alignItems: "center",
+  },
 
+  datePresetGrid: {
+    marginTop: 12,
+    flexDirection: "row",
+    flexWrap: "wrap",
+    justifyContent: "space-between",
+    rowGap: 10,
+  },
+
+  datePresetBtn: {
+    width: "49%",
+    borderRadius: 12,
+    overflow: "hidden",
+  },
+
+  datePresetBtnFull: {
+    width: "100%",
+  },
+
+  datePresetGradient: {
+    paddingVertical: 12,
+    alignItems: "center",
+    justifyContent: "center",
+    borderRadius: 12,
+  },
+
+  datePresetTxt: {
+    color: "#fff",
+    fontWeight: "800",
+    fontSize: 14,
+  },
 });
