@@ -1,6 +1,6 @@
 {
   "expo": {
-    "name": "photo-app-fe",
+    "name": "PicQly",
     "slug": "photo-app-fe",
     "version": "1.0.0",
     "orientation": "portrait",
@@ -25,9 +25,7 @@
         {
           "photosPermission": "Allow photo-app-fe to access your photos.",
           "savePhotosPermission": "Allow photo-app-fe to save photos to your device.",
-          "granularPermissions": [
-            "photo"
-          ]
+          "granularPermissions": ["photo"]
         }
       ],
       "react-native-localize"
@@ -39,12 +37,13 @@
         "NSPhotoLibraryAddUsageDescription": "Allow photo-app-fe to save photos to your device.",
         "ITSAppUsesNonExemptEncryption": false
       },
-      "bundleIdentifier": "com.photoapp.fe"
+      "bundleIdentifier": "com.photoapp.fe",
+      "icon": "./assets/images/ios-icon.png"
     },
     "android": {
       "adaptiveIcon": {
-        "foregroundImage": "./assets/images/adaptive-icon.png",
-        "backgroundColor": "#ffffff"
+        "foregroundImage": "./assets/images/android-foreground.png",
+        "backgroundImage": "./assets/images/android-background.png"
       },
       "edgeToEdgeEnabled": true,
       "package": "com.photoapp.fe",
