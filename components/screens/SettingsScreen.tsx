@@ -32,13 +32,13 @@ const SettingsScreen = () => {
 	
 	const [langOpen, setLangOpen] = useState(false);
 	const langItems = [
-		{ label: 'English', value: 'English' },
-		{ label: '한국어', value: 'Korean' },
-		{ label: '日本語', value: 'Japanese' },
-		{ label: '繁體中文', value: 'ChineseTraditional' },
-		{ label: '简体中文', value: 'ChineseSimplified' },
-		{ label: 'Français', value: 'French' },
-		{ label: 'Spanish', value: 'Spanish' },
+		{ label: 'English', value: 'en' },
+		{ label: '한국어', value: 'ko' },
+		{ label: '日本語', value: 'ja' },
+		{ label: '繁體中文', value: 'zh-Hant' },
+		{ label: '简体中文', value: 'zh-Hans' },
+		{ label: 'Français', value: 'fr' },
+		{ label: 'Spanish', value: 'es' },
 	];
 
 	const [inputValue, setInputValue] = useState((slideshowTime / 1000).toString());
@@ -194,7 +194,7 @@ const SettingsScreen = () => {
 };
 
 const styles = StyleSheet.create({
-	optionRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', height: 50, paddingHorizontal: 15 },
+	optionRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', height: 50, paddingHorizontal: 15, marginVertical: 4 },
 	optionText: { fontSize: 16 },
 	valueText: { fontSize: 16, color: '#555' },
 	themeButtonGroup: { flexDirection: 'row', gap: 8 },

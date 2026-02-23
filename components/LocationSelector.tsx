@@ -11,6 +11,9 @@ import {
   TouchableOpacity,
   View,
 } from "react-native";
+// 2026-02-10 언어 설정 추가 by Minji
+import { useLanguage } from "@/components/context/LanguageContext";
+import { TRANSLATIONS } from "@/constants/Translations";
 type Translations = {
   en: string;
   ko?: string;
@@ -50,6 +53,7 @@ const LocationSelector = forwardRef<LocationSelectorHandle, Props>(
     const [locationMap, setLocationMap] = useState<LocationMap>({});
     const [tempCountries, setTempCountries] = useState<string[]>([]);
     const [tempCities, setTempCities] = useState<string[]>([]);
+    const { language, setLanguage } = useLanguage(); // 2026-02-10 언어 설정 추가 by Minji
 
     useEffect(() => {
       // Fetch Translations from Google Sheets
@@ -266,7 +270,9 @@ const LocationSelector = forwardRef<LocationSelectorHandle, Props>(
                     justifyContent: "center",
                   }}
                 >
-                  <Text style={styles.tableTitle}>Country</Text>
+                  <Text style={styles.tableTitle}>
+                    {TRANSLATIONS[language].country}
+                  </Text>
                   <FlatList
                     data={getCurrentItems("country")}
                     renderItem={({ item }) => {
@@ -290,7 +296,12 @@ const LocationSelector = forwardRef<LocationSelectorHandle, Props>(
                             },
                           ]}
                         >
-                          <Text style={styles.listItem}>{item}</Text>
+                          <Text style={styles.listItem}>
+                            {/* 2026-02-10 언어 설정 추가 by Minji */}
+                            {locationMap[item]?.country[language] ??
+                              locationMap[item]?.country.en ??
+                              item}
+                          </Text>
                         </Pressable>
                       );
                     }}
@@ -302,7 +313,9 @@ const LocationSelector = forwardRef<LocationSelectorHandle, Props>(
                     flex: 1,
                   }}
                 >
-                  <Text style={styles.tableTitle}>City</Text>
+                  <Text style={styles.tableTitle}>
+                    {TRANSLATIONS[language].city}
+                  </Text>
                   {tempCountries && (
                     <FlatList
                       data={getCurrentItems("city")}

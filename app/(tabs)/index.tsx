@@ -26,6 +26,7 @@ import {
 } from "react-native";
 import ImageViewing from 'react-native-image-viewing';
 import { Edges, SafeAreaView } from 'react-native-safe-area-context';
+import Share from 'react-native-share'; // 2026-02-10 사진 공유 라이브러리 추가 by Minji
 
 import { useLanguage } from '@/components/context/LanguageContext';
 import { useSlideshowTime } from '@/components/context/SlideshowTimeContext';
@@ -36,6 +37,7 @@ import ShowonmapIcon from "@/assets/icons/showonmap.svg";
 import SlideshowIcon from "@/assets/icons/slideshow.svg";
 import { AMPLITUDE_API_KEY } from '@/constants/env';
 import * as amplitude from '@amplitude/analytics-react-native';
+import { TRANSLATIONS } from '@/constants/Translations';  // 2026-02-10 언어 설정에 따른 라벨 변경 추가 by Minji
 
 
 // Responsive image grid calculations
@@ -734,7 +736,8 @@ export default function HomeScreen() {
                 style={styles.primaryButton}
               >
                 <SlideshowIcon width={16} height={16} style={{ marginRight: 8 }}/>
-                <Text style={styles.primaryButtonText}>Play</Text>
+							{/* 2026-02-10 언어 설정 추가 by Minji */}
+							<Text style={styles.primaryButtonText}>{TRANSLATIONS[language].play}</Text>
               </LinearGradient>
             </TouchableOpacity>
     
@@ -948,6 +951,8 @@ export default function HomeScreen() {
         backgroundColor="rgba(0,0,0,0.98)"
         swipeToCloseEnabled={false} // ← 스와이프 제스처가 터치 선점하는 것 방지
         doubleTapToZoomEnabled
+				// 2026-02-10 하단 추가 by Minji
+				FooterComponent={Footer}
       />
 
       <Modal visible={slideshowVisible} animationType="fade">
@@ -1123,7 +1128,7 @@ const styles = StyleSheet.create({
     right: 16,
     flexDirection: "row",
     alignItems: "center",
-    justifyContent: "space-between",
+    justifyContent: "flex-end", // 2026-02-10 닫기 버튼 오른쪽으로 정렬 by Minji
   },
   counter: { color: "#fff", fontSize: 16, fontWeight: "600" },
   metaTxt: { color: "#fff", fontSize: 14, fontWeight: "600" },
@@ -1144,18 +1149,18 @@ const styles = StyleSheet.create({
 		flexShrink: 1, // 긴 텍스트도 잘림
 		marginHorizontal: 8,
 	},
-	footer: {
-		// flexDirection: "row",
-		// justifyContent: "space-between",
-		// alignItems: "center",
-		// paddingHorizontal: 16,
-		// paddingVertical: 10,
-		// backgroundColor: "rgba(0,0,0,0.6)",
-		// position: "absolute",
-		// bottom: 0,
-		// width: "100%",
-		// zIndex: 20, // zIndex 높여서 이미지 위로
-		// minHeight: 60, // 충분한 높이 지정
+	footer: { // 2026-02-10 footer 스타일 원복 by Minji
+		 flexDirection: "row",
+		 justifyContent: "space-between",
+		 alignItems: "center",
+		 paddingHorizontal: 16,
+		 paddingVertical: 10,
+		 backgroundColor: "rgba(0,0,0,0.6)",
+		 position: "absolute",
+		 bottom: 0,
+		 width: "100%",
+		 zIndex: 20, // zIndex 높여서 이미지 위로
+		 minHeight: 60, // 충분한 높이 지정
 	},
   thumbnailCard: {
     backgroundColor: '#FFFFFF',   // 내부 흰색
