@@ -5,7 +5,7 @@ import ScreenWrapper from '@/components/screens/ScreenWrapper';
 import { useTheme } from '@/components/context/ThemeContext';
 
 const OpenSourceInfoScreen: React.FC = () => {
-	const { colors } = useTheme();
+	const { colors, isDarkTheme } = useTheme();
 	
 	const STAT_OPTIONS = [
 		{ id: '1', title: '@amplitude/analytics-react-native', value: '1.5.16' },
@@ -58,16 +58,16 @@ const OpenSourceInfoScreen: React.FC = () => {
 				data={STAT_OPTIONS}
 				keyExtractor={(item) => item.id}
 				renderItem={renderItem}
-					ItemSeparatorComponent={() => <View style={[styles.separator, { backgroundColor: colors.secondary }]} />}
+					ItemSeparatorComponent={() => <View style={[styles.separator, { backgroundColor: isDarkTheme ? 'rgba(255,255,255,0.2)' : '#D1D5DB' }]} />}
 			/>
 		</ScreenWrapper>
 	);
 };
 
 const styles = StyleSheet.create({
-	optionRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', height: 50, paddingHorizontal: 15 },
+	optionRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingVertical: 15, paddingHorizontal: 15, marginVertical: 4 },
 	optionText: { fontSize: 16 },
-	valueText: { fontSize: 16 },
+	valueText: { fontSize: 14 },
 	separator: { height: 1 },
 });
 

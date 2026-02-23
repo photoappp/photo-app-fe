@@ -11,7 +11,7 @@ import { useUserData } from '@/components/context/UserDataContext';
 const UserDataScreen: React.FC = () => {
 	const { userData } = useUserData();
 	
-	const { colors } = useTheme();
+	const { colors, isDarkTheme } = useTheme();
 	const { language } = useLanguage();
 	
 	const formatDateOnly = (isoString?: string) => {
@@ -41,14 +41,14 @@ const UserDataScreen: React.FC = () => {
 				data={STAT_OPTIONS}
 				keyExtractor={(item) => item.id}
 				renderItem={renderItem}
-				ItemSeparatorComponent={() => <View style={[styles.separator, { backgroundColor: colors.secondary }]} />}
+					ItemSeparatorComponent={() => <View style={[styles.separator, { backgroundColor: isDarkTheme ? 'rgba(255,255,255,0.2)' : '#D1D5DB' }]} />}
 			/>
 		</ScreenWrapper>
 	);
 };
 
 const styles = StyleSheet.create({
-	optionRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', height: 50, paddingHorizontal: 15 },
+	optionRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingVertical: 15, paddingHorizontal: 15, marginVertical: 4 },
 	optionText: { fontSize: 16 },
 	valueText: { fontSize: 16 },
 	separator: { height: 1 },

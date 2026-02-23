@@ -1,6 +1,6 @@
 //  Translations.ts
 export const TRANSLATIONS: Record<string, Record<string, string>> = {
-	English: {
+	en: {
 		settings: 'Settings',
 		userData: 'User Data',
 		startDate: 'Start Date',
@@ -32,14 +32,14 @@ export const TRANSLATIONS: Record<string, Record<string, string>> = {
 		picqlyPro: 'PicQly Pro',
 		adDescription: 'Watch one ad and enjoy all PicQly Pro features ad-free for 12 hours!',
 		watchAd: 'Watch Ad',
-		oneYearAgo: 'One Year Ago',
+		one_year_ago: 'One Year Ago',
 		oneMonthAgo: 'One Month Ago',
 		oneWeekAgo: 'One Week Ago',
 		past12Months: 'Past 12 Months',
 		past30Days: 'Past 30 Days',
 		past7Days: 'Past 7 Days'
 	},
-	Korean: {
+	ko: {
 		settings: '설정',
 		userData: '사용자 데이터',
 		startDate: '시작일',
@@ -71,14 +71,14 @@ export const TRANSLATIONS: Record<string, Record<string, string>> = {
 		picqlyPro: '픽클리 프로',
 		adDescription: '광고 1회를 시청하면 12시간 동안 PicQly Pro의 모든 기능을 동영상 광고없이 이용 가능!',
 		watchAd: '광고보기',
-		oneYearAgo: '1년 전',
+		one_year_ago: '1년 전',
 		oneMonthAgo: '1개월 전',
 		oneWeekAgo: '1주일 전',
 		past12Months: '지난 일 년',
 		past30Days: '지난 한 달',
 		past7Days: '지난 일주일'
 	},
-	Japanese: {
+	ja: {
 		settings: '設定',
 		userData: 'ユーザーデータ',
 		startDate: '開始日',
@@ -110,14 +110,14 @@ export const TRANSLATIONS: Record<string, Record<string, string>> = {
 		picqlyPro: 'ピクリー・プロ',
 		adDescription: '広告を1回視聴すると、12時間PicQly Proのすべての機能を動画広告なしでご利用いただけます。',
 		watchAd: '広告を見る',
-		oneYearAgo: '1年前',
+		one_year_ago: '1年前',
 		oneMonthAgo: '1か月前',
 		oneWeekAgo: '1週間前',
 		past12Months: '過去1年',
 		past30Days: '過去1か月',
 		past7Days: '過去1週間'
 	},
-	ChineseTraditional: {
+	'zh-Hant': { // 기존 ChineseTraditional
 		settings: '設定',
 		userData: '用戶資訊',
 		startDate: '開始日期',
@@ -149,14 +149,14 @@ export const TRANSLATIONS: Record<string, Record<string, string>> = {
 		picqlyPro: 'PicQly Pro',
 		adDescription: '觀看一次廣告，即可在 12 小時內無影片廣告使用 PicQly Pro 的所有功能！',
 		watchAd: '觀看廣告',
-		oneYearAgo: '1年前',
+		one_year_ago: '1年前',
 		oneMonthAgo: '1個月前',
 		oneWeekAgo: '1週前',
 		past12Months: '過去一年',
 		past30Days: '過去一個月',
 		past7Days: '過去一週'
 	},
-	ChineseSimplified: {
+	'zh-Hans': { // 기존 ChineseSimplified
 		settings: '设置',
 		userData: '用户数据',
 		startDate: '开始日期',
@@ -188,14 +188,14 @@ export const TRANSLATIONS: Record<string, Record<string, string>> = {
 		picqlyPro: 'PicQly Pro',
 		adDescription: '观看一次广告，即可在12小时内无视频广告使用 PicQly Pro 的全部功能！',
 		watchAd: '观看广告',
-		oneYearAgo: '1年前',
+		one_year_ago: '1年前',
 		oneMonthAgo: '1个月前',
 		oneWeekAgo: '1周前',
 		past12Months: '过去一年',
 		past30Days: '过去一个月',
 		past7Days: '过去一周'
 	},
-	French: {
+	fr: {
 		settings: 'Settings',
 		userData: 'User Data',
 		startDate: 'Start Date',
@@ -227,14 +227,14 @@ export const TRANSLATIONS: Record<string, Record<string, string>> = {
 		picqlyPro: 'PicQly Pro',
 		adDescription: 'Regardez une publicité et profitez de toutes les fonctionnalités de PicQly Pro pendant 12 heures, sans publicité vidéo.',
 		watchAd: 'Voir la publicité',
-		oneYearAgo: 'Il y a 1 an',
+		one_year_ago: 'Il y a 1 an',
 		oneMonthAgo: 'Il y a 1 mois',
 		oneWeekAgo: 'Il y a 1 semaine',
 		past12Months: '12 derniers mois',
 		past30Days: '30 derniers jours',
 		past7Days: '7 derniers jours'
 	},
-	Spanish: {
+	es: {
 		settings: 'Settings',
 		userData: 'Données utilisateur',
 		startDate: 'Date de début',
@@ -266,7 +266,7 @@ export const TRANSLATIONS: Record<string, Record<string, string>> = {
 		picqlyPro: 'PicQly Pro',
 		adDescription: 'Mira un anuncio y disfruta de todas las funciones de PicQly Pro durante 12 horas, sin anuncios de video.',
 		watchAd: 'Ver anuncio',
-		oneYearAgo: 'Hace 1 año',
+		one_year_ago: 'Hace 1 año',
 		oneMonthAgo: 'Hace 1 mes',
 		oneWeekAgo: 'Hace 1 semana',
 		past12Months: 'Últimos 12 meses',

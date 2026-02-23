@@ -10,7 +10,7 @@ interface LanguageContextType {
 const LanguageContext = createContext<LanguageContextType | undefined>(undefined);
 
 export const LanguageProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
-	const [language, setLanguage] = useState('English');
+	const [language, setLanguage] = useState('en');
 
 	useEffect(() => {
 			const locales = RNLocalize.getLocales();
@@ -19,27 +19,29 @@ export const LanguageProvider: React.FC<{ children: React.ReactNode }> = ({ chil
 
 				switch (deviceLang) {
 					case 'ko':
-						setLanguage('Korean');
+						setLanguage('ko');
 						break;
 					case 'en':
-						setLanguage('English');
+						setLanguage('en');
 						break;
 					case 'ja':
-						setLanguage('Japanese');
+						setLanguage('ja');
 						break;
 					case 'zh':
 						// 중국어는 region 구분
-						if (locales[0].countryCode === 'TW') setLanguage('ChineseTraditional');
-						else setLanguage('ChineseSimplified');
+						if (countryCode === 'TW' || countryCode === 'HK' || countryCode === 'MO')
+							setLanguage('zh-Hant'); // 번체
+						else
+							setLanguage('zh-Hans'); // 간체
 						break;
 					case 'fr':
-						setLanguage('French');
+						setLanguage('fr');
 						break;
 					case 'es':
-						setLanguage('Spanish');
+						setLanguage('es');
 						break;
 					default:
-						setLanguage('English'); // 그 외 언어는 English
+						setLanguage('en'); // 그 외 언어는 English
 				}
 			}
 		}, []);
