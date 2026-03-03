@@ -27,8 +27,8 @@ import ICON_DATE from "@/assets/icons/ic_date.svg";
 import ICON_LOCATION from "@/assets/icons/ic_location.svg";
 import ICON_RESET from "@/assets/icons/ic_reset.svg";
 import ICON_TIME from "@/assets/icons/ic_time.svg";
+import { clampToToday, shiftMonthsClamped } from "@/components/dateUtil";
 import * as amplitude from "@amplitude/analytics-react-native";
-import { shiftMonthsClamped, clampToToday } from "@/components/dateUtil";
 
 
 
@@ -266,7 +266,21 @@ export default function DateTimeFilter({
     setDateEnd(nd);
     if (nd < dateStart) setDateStart(nd);
   };
+
+  const openDateSheet = () => {
+    amplitude.track("tap_date_filter", { screen_name: "home" });
+    setDateModalVisible(true);
+  };
   
+  const openTimeSheet = () => {
+    amplitude.track("tap_time_filter", { screen_name: "home" });
+    setTimeModalVisible(true);
+  };
+  
+  const openLocationSheet = () => {
+    amplitude.track("tap_location_filter", { screen_name: "home" });
+    setLocationModalVisible(true);
+  };
 
   useEffect(() => {
     if (!onChange) return;
@@ -327,6 +341,7 @@ export default function DateTimeFilter({
     flushPendingChange();
   };
   
+  /*
   // ---- 즐겨찾기 ----
   const favOneYearAgo = () => {
     amplitude.track("tap_date_favorite", {
@@ -370,7 +385,7 @@ export default function DateTimeFilter({
     const e = new Date(now.getFullYear(), now.getMonth(), now.getDate() - 1);
     setDateStart(s);
     setDateEnd(e);
-  };
+  }; */
 
   // ---- Time 수정 유틸 (시/분을 분단위로) ----
   const setTimeHM = (which: string, hours: number, minutes: number) => {
@@ -437,14 +452,16 @@ export default function DateTimeFilter({
       <View style={styles.filterPanel}>
         {/* Date row */}
         <View style={styles.filterRow}>
-          <View style={styles.filterIcon}>
-            <ICON_DATE width={50} height={50} />
-          </View>          
           <TouchableOpacity
-            onPress={() => {
-              amplitude.track("tap_date_filter", { screen_name: "home" });
-              setDateModalVisible(true);
-            }}
+            style={styles.filterIcon}
+            activeOpacity={0.8}
+            onPress={openDateSheet}
+            hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+          >
+            <ICON_DATE width={50} height={50} />
+          </TouchableOpacity>       
+          <TouchableOpacity
+            onPress={openDateSheet}
             activeOpacity={0.8}
             style={styles.filterCard}
           >
@@ -465,14 +482,16 @@ export default function DateTimeFilter({
   
         {/* Time row */}
         <View style={styles.filterRow}>
-          <View style={styles.filterIcon}>
-            <ICON_TIME width={50} height={50} />
-          </View>    
           <TouchableOpacity
-            onPress={() => {
-              amplitude.track("tap_time_filter", { screen_name: "home" });
-              setTimeModalVisible(true);
-            }}
+            style={styles.filterIcon}
+            activeOpacity={0.8}
+            onPress={openTimeSheet}
+            hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+          >
+            <ICON_TIME width={50} height={50} />
+          </TouchableOpacity>
+          <TouchableOpacity
+            onPress={openTimeSheet}
             activeOpacity={0.8}
             style={styles.filterCard}
           >
@@ -494,14 +513,17 @@ export default function DateTimeFilter({
   
         {/* Location row */}
         <View style={styles.filterRow}>
-          <View style={styles.filterIcon}>
-            <ICON_LOCATION width={50} height={50} />
-          </View>    
+          {/* 2026.03.03 아이콘 버튼 클릭 시에도 바텀시트 표출되도록 수정 June */}
           <TouchableOpacity
-            onPress={() => {
-              amplitude.track("tap_location_filter", { screen_name: "home" });
-              setLocationModalVisible(true);
-            }}
+            style={styles.filterIcon}
+            activeOpacity={0.8}
+            onPress={openLocationSheet}
+            hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+          >
+            <ICON_LOCATION width={50} height={50} />
+          </TouchableOpacity>
+          <TouchableOpacity
+            onPress={openLocationSheet}
             activeOpacity={0.8}
             style={styles.filterCard}
           >
@@ -556,21 +578,21 @@ export default function DateTimeFilter({
               <Fav label="Past Week" onPress={favPastWeek} />
             </View> */}
             {/* Favorite */}
-            <View style={styles.datePresetGrid}>
+            <View style={styles.presetGrid}>
               {DATE_PRESETS.map((p) => (
                 <TouchableOpacity
                   key={p.key}
                   activeOpacity={0.9}
-                  style={[styles.datePresetBtn, p.fullWidth && styles.datePresetBtnFull]}
+                  style={[styles.presetBtn, p.fullWidth && styles.presetBtnFull]}
                   onPress={() => applyDatePreset(p.key)}
                 >
                   <LinearGradient
                     colors={["#2B7FFF", "#AD46FF"]}
                     start={{ x: 0, y: 0 }}
                     end={{ x: 1, y: 0 }}
-                    style={styles.datePresetGradient}
+                    style={styles.rangeBtnGradient}
                   >
-                    <Text style={styles.datePresetTxt}>{p.label}</Text>
+                    <Text style={styles.presetTxt}>{p.label}</Text>
                   </LinearGradient>
                 </TouchableOpacity>
               ))}
@@ -633,11 +655,11 @@ export default function DateTimeFilter({
             </View>
   
             {/* 프리셋 4개 */}
-            <View style={styles.timePresetGrid}>
+            <View style={styles.presetGrid}>
               {PRESETS.map((p) => (
                 <TouchableOpacity
                   key={p.label}
-                  style={styles.timePresetBtn}
+                  style={styles.presetBtn}
                   activeOpacity={0.8}
                   onPress={() => {
                     amplitude.track("tap_time_favorite", {
@@ -655,7 +677,7 @@ export default function DateTimeFilter({
                     end={{ x: 1, y: 0 }}
                     style={styles.rangeBtnGradient}
                   >
-                    <Text style={styles.timePresetTxt}>{p.label}</Text>
+                    <Text style={styles.presetTxt}>{p.label}</Text>
                   </LinearGradient>
                 </TouchableOpacity>
               ))}
@@ -663,7 +685,7 @@ export default function DateTimeFilter({
   
             {/* all_day */}
             <TouchableOpacity
-              style={[styles.timePresetBtn, styles.timePresetAny]}
+              style={[styles.presetBtn, styles.presetBtnFull]}
               activeOpacity={0.8}
               onPress={() => {
                 amplitude.track("tap_time_favorite", {
@@ -681,7 +703,7 @@ export default function DateTimeFilter({
                 end={{ x: 1, y: 0 }}
                 style={styles.rangeBtnGradient}
               >
-                <Text style={styles.timePresetTxt}>All day</Text>
+                <Text style={styles.presetTxt}>All day</Text>
               </LinearGradient>
             </TouchableOpacity>
           </View>
@@ -711,20 +733,22 @@ type ChipProps = {
   onReset: () => void;
 };
 
-const Chip = ({ label, onPress, onReset }: ChipProps) => (
-  <TouchableOpacity onPress={onPress} style={styles.chip}>
-    <Text style={styles.chipTxt}>{label}</Text>
-    {/* <TouchableOpacity onPress={onReset} style={{ marginLeft: 6 }}>
-        <Text style={{ fontWeight: '700' }}>Reset</Text>
-      </TouchableOpacity> */}
-  </TouchableOpacity>
-);
+
+// const Chip = ({ label, onPress, onReset }: ChipProps) => (
+//   <TouchableOpacity onPress={onPress} style={styles.chip}>
+//     <Text style={styles.chipTxt}>{label}</Text>
+//     {/* <TouchableOpacity onPress={onReset} style={{ marginLeft: 6 }}>
+//         <Text style={{ fontWeight: '700' }}>Reset</Text>
+//       </TouchableOpacity> */}
+//   </TouchableOpacity>
+// );
 
 type FavProps = {
   label: string;
   onPress: () => void;
 };
 
+/*
 const Fav = ({ label, onPress }: FavProps) => (
   <TouchableOpacity onPress={onPress}>
     <LinearGradient
@@ -736,7 +760,7 @@ const Fav = ({ label, onPress }: FavProps) => (
       <Text style={styles.favTxt}>{label}</Text>
     </LinearGradient>
   </TouchableOpacity>
-);
+);*/
 
 /* ---------------- 스타일 ---------------- */
 const styles = StyleSheet.create({
@@ -849,13 +873,13 @@ const styles = StyleSheet.create({
     favBtn: { backgroundColor: '#F3F4F6', borderWidth: 1, borderColor: '#F3F4F6', borderRadius: 20, paddingHorizontal: 10, paddingVertical: 5, marginRight: 0, marginBottom: 0 },
     favTxt: { fontSize: 9, fontWeight: '800', color: '#FFF', },
   
-    timePresetGrid: {
+    presetGrid: {
       marginTop: 12,
       flexDirection: 'row',
       flexWrap: 'wrap',
       justifyContent: 'space-between',
     },
-    timePresetBtn: {
+    presetBtn: {
       width: '49%',
       //borderWidth: 1,
       //borderColor: '#999',        
@@ -865,12 +889,12 @@ const styles = StyleSheet.create({
       alignItems: 'center',
       justifyContent: 'center',
     },
-    timePresetAny: {
+    presetBtnFull: {
       width: '100%',
       borderColor: '#999',
       //paddingVertical: 12,
     },
-    timePresetTxt: {
+    presetTxt: {
       fontWeight: '600',
       color: '#FFF',
     },
@@ -889,38 +913,5 @@ const styles = StyleSheet.create({
       justifyContent: 'center',
       alignItems: 'center',
     },
-
-    datePresetGrid: {
-      marginTop: 12,
-      flexDirection: "row",
-      flexWrap: "wrap",
-      justifyContent: "space-between",
-      rowGap: 10,
-    },
-    
-    datePresetBtn: {
-      width: "49%",
-      borderRadius: 12,
-      overflow: "hidden",
-    },
-    
-    datePresetBtnFull: {
-      width: "100%",
-    },
-    
-    datePresetGradient: {
-      paddingVertical: 12,
-      alignItems: "center",
-      justifyContent: "center",
-      borderRadius: 12,
-    },
-    
-    datePresetTxt: {
-      color: "#fff",
-      fontWeight: "800",
-      fontSize: 14,
-    },
-    
-    
 
 });
