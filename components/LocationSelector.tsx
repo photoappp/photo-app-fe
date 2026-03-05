@@ -1,3 +1,5 @@
+// 2026-03-04 change to close icon by yen
+import ICON_CLOSE from "@/assets/icons/ic_close.svg";
 import { Colors } from "@/constants/Colors";
 import { Photo } from "@/types/Photo";
 import { LinearGradient } from "expo-linear-gradient";
@@ -232,9 +234,6 @@ const LocationSelector = forwardRef<LocationSelectorHandle, Props>(
                     gap: 10,
                   }}
                 >
-                  <TouchableOpacity onPress={handleReset}>
-                    <Text style={styles.button}>Reset</Text>
-                  </TouchableOpacity>
                   <TouchableOpacity
                     onPress={() => {
                       setSelectedCountries(tempCountries);
@@ -253,7 +252,8 @@ const LocationSelector = forwardRef<LocationSelectorHandle, Props>(
                       onClose();
                     }}
                   >
-                    <Text style={styles.button}>Close</Text>
+                    {/* 2026-03-04 change to close icon by yen */}
+                    <ICON_CLOSE width={20} height={20} />
                   </TouchableOpacity>
                 </View>
               </View>
