@@ -1,35 +1,9 @@
-<svg width="68" height="68" viewBox="0 0 68 68" fill="none" xmlns="http://www.w3.org/2000/svg">
-<g filter="url(#filter0_ddi_453_5863)">
-<path d="M9.59961 14.3995C9.59961 7.33032 15.3303 1.59961 22.3995 1.59961H44.7997C51.8689 1.59961 57.5996 7.33032 57.5996 14.3995V36.7997C57.5996 43.8689 51.8689 49.5996 44.7997 49.5996H22.3995C15.3303 49.5996 9.59961 43.8689 9.59961 36.7997V14.3995Z" fill="url(#paint0_linear_453_5863)" shape-rendering="crispEdges"/>
-<path d="M41.0661 23.7333C41.0661 28.3934 35.8964 33.2467 34.1604 34.7457C33.9987 34.8673 33.8018 34.933 33.5995 34.933C33.3971 34.933 33.2003 34.8673 33.0385 34.7457C31.3025 33.2467 26.1328 28.3934 26.1328 23.7333C26.1328 21.753 26.9195 19.8538 28.3197 18.4535C29.72 17.0533 31.6192 16.2666 33.5995 16.2666C35.5798 16.2666 37.4789 17.0533 38.8792 18.4535C40.2795 19.8538 41.0661 21.753 41.0661 23.7333Z" stroke="white" stroke-width="1.86665" stroke-linecap="round" stroke-linejoin="round"/>
-<path d="M33.5988 26.5336C35.1452 26.5336 36.3988 25.28 36.3988 23.7336C36.3988 22.1872 35.1452 20.9336 33.5988 20.9336C32.0524 20.9336 30.7988 22.1872 30.7988 23.7336C30.7988 25.28 32.0524 26.5336 33.5988 26.5336Z" stroke="white" stroke-width="1.86665" stroke-linecap="round" stroke-linejoin="round"/>
-</g>
+<svg width="65" height="65" viewBox="0 0 65 65" fill="none" xmlns="http://www.w3.org/2000/svg">
+<path d="M0 17.3333C0 7.7604 7.7604 0 17.3333 0H47.6667C57.2396 0 65 7.7604 65 17.3333V47.6667C65 57.2396 57.2396 65 47.6667 65H17.3333C7.7604 65 0 57.2396 0 47.6667V17.3333Z" fill="url(#paint0_linear_680_3161)"/>
+<path d="M42.6109 29.9724C42.6109 36.283 35.6102 42.8553 33.2594 44.8851C33.0404 45.0497 32.7738 45.1388 32.4998 45.1388C32.2258 45.1388 31.9592 45.0497 31.7402 44.8851C29.3894 42.8553 22.3887 36.283 22.3887 29.9724C22.3887 27.2908 23.4539 24.719 25.3501 22.8228C27.2463 20.9266 29.8181 19.8613 32.4998 19.8613C35.1814 19.8613 37.7532 20.9266 39.6494 22.8228C41.5456 24.719 42.6109 27.2908 42.6109 29.9724Z" stroke="white" stroke-width="2.52778" stroke-linecap="round" stroke-linejoin="round"/>
+<path d="M32.4999 33.764C34.594 33.764 36.2916 32.0664 36.2916 29.9723C36.2916 27.8783 34.594 26.1807 32.4999 26.1807C30.4058 26.1807 28.7083 27.8783 28.7083 29.9723C28.7083 32.0664 30.4058 33.764 32.4999 33.764Z" stroke="white" stroke-width="2.52778" stroke-linecap="round" stroke-linejoin="round"/>
 <defs>
-<filter id="filter0_ddi_453_5863" x="-0.000308275" y="-0.000377417" width="67.1998" height="67.1998" filterUnits="userSpaceOnUse" color-interpolation-filters="sRGB">
-<feFlood flood-opacity="0" result="BackgroundImageFix"/>
-<feColorMatrix in="SourceAlpha" type="matrix" values="0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 127 0" result="hardAlpha"/>
-<feMorphology radius="3.19997" operator="erode" in="SourceAlpha" result="effect1_dropShadow_453_5863"/>
-<feOffset dy="3.19997"/>
-<feGaussianBlur stdDeviation="2.39998"/>
-<feComposite in2="hardAlpha" operator="out"/>
-<feColorMatrix type="matrix" values="0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0.1 0"/>
-<feBlend mode="normal" in2="BackgroundImageFix" result="effect1_dropShadow_453_5863"/>
-<feColorMatrix in="SourceAlpha" type="matrix" values="0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 127 0" result="hardAlpha"/>
-<feMorphology radius="2.39998" operator="erode" in="SourceAlpha" result="effect2_dropShadow_453_5863"/>
-<feOffset dy="7.99993"/>
-<feGaussianBlur stdDeviation="5.99995"/>
-<feComposite in2="hardAlpha" operator="out"/>
-<feColorMatrix type="matrix" values="0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0.1 0"/>
-<feBlend mode="normal" in2="effect1_dropShadow_453_5863" result="effect2_dropShadow_453_5863"/>
-<feBlend mode="normal" in="SourceGraphic" in2="effect2_dropShadow_453_5863" result="shape"/>
-<feColorMatrix in="SourceAlpha" type="matrix" values="0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 127 0" result="hardAlpha"/>
-<feOffset dy="2.50848"/>
-<feGaussianBlur stdDeviation="1.25424"/>
-<feComposite in2="hardAlpha" operator="arithmetic" k2="-1" k3="1"/>
-<feColorMatrix type="matrix" values="0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0.25 0"/>
-<feBlend mode="normal" in2="shape" result="effect3_innerShadow_453_5863"/>
-</filter>
-<linearGradient id="paint0_linear_453_5863" x1="33.5996" y1="1.59961" x2="33.5996" y2="49.5996" gradientUnits="userSpaceOnUse">
+<linearGradient id="paint0_linear_680_3161" x1="32.5" y1="0" x2="32.5" y2="65" gradientUnits="userSpaceOnUse">
 <stop stop-color="#2B7FFF"/>
 <stop offset="1" stop-color="#D946FF"/>
 </linearGradient>
