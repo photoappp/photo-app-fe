@@ -11,6 +11,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   ActivityIndicator,
   Alert,
+  AppState, /** 2026.03.03 Add by June */
   Button,
   Dimensions,
   FlatList,
@@ -517,6 +518,49 @@ export default function HomeScreen() {
     [loading, hasNextPage, endCursor, filter]
   );
 
+  /** 2026.03.03 사진 삭제 등으로 데이터 갱신 발생 시 새로고침 관련 추가 By June START */
+  const [refreshing, setRefreshing] = useState(false); 
+  const lastResumeReloadRef = useRef(0);
+
+  const reloadPhotos = useCallback(async () => {
+    // reset + 첫 페이지부터 다시 로드
+    setEndCursor(null);
+    setHasNextPage(true);
+    await loadPhotos({ reset: true });
+  }, [loadPhotos]);
+
+  useEffect(() => {
+    const sub = AppState.addEventListener("change", (state) => {
+      if (state !== "active") return;
+  
+      const now = Date.now();
+      // iOS에서 active 이벤트가 연달아 튀는 경우가 있어 쿨다운
+      if (now - lastResumeReloadRef.current < 1500) return;
+      lastResumeReloadRef.current = now;
+  
+      reloadPhotos();
+    });
+  
+    return () => sub.remove();
+  }, [reloadPhotos]);
+
+  const onRefresh = useCallback(async () => {
+    setRefreshing(true);
+    try {
+      await reloadPhotos();
+    } finally {
+      setRefreshing(false);
+    }
+  }, [reloadPhotos]);
+  /** 2026.03.03 사진 삭제 등으로 데이터 갱신 발생 시 새로고침 관련 추가 By June END */
+
+	// 전체 사진 수 Context 저장
+	useEffect(() => {
+		if (!loading && photosAll.length > 0) {
+			//updateUserData({ totalPhotos: photosAll.length }); --- 2026.01.21 문제 코드 주석처리
+		}
+	}, [photosAll.length, loading]);
+	
   useEffect(() => {
 		// 필터 변경 시 사용 횟수 증가
 		const usedDate = !!filter.dateStart || !!filter.dateEnd;
@@ -761,6 +805,8 @@ export default function HomeScreen() {
               numColumns={numColumns}
               keyExtractor={(_, i) => i.toString()}
               renderItem={renderItem}
+              refreshing={refreshing} // 2026.03.03 June 추가
+              onRefresh={onRefresh}   // 2026.03.03 June 추가
               contentContainerStyle={{
                 paddingHorizontal: horizontalPadding,
                 padding: 8,
