@@ -11,6 +11,16 @@ export const APPS_LIST = [
 		url: "https://wmt.onelink.me/YPN9/m428wgpq",
 	},
 	{
+		name: "World Book Ranking",
+		image: require('@/assets/images/world_book_ranking.png'),
+		url: "https://worldbookranking.onelink.me/so3H/gftf32rq",
+	},
+	{
+		name: "Simply Multi Timer",
+		image: require('@/assets/images/simply_multi_timer.png'),
+		url: "https://simplymultitimer.onelink.me/6kU2/v7i9ke1m",
+	},
+	{
 		name: "Wisdom Qclock",
 		image: require('@/assets/images/wisdom_qclock.png'),
 		url: "https://wisdomqclock.onelink.me/SVr2/b7gs4og1",

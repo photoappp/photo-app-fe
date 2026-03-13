@@ -16,7 +16,7 @@ interface UserDataContextType {
 	incrementDateFilter: () => void;
 	incrementTimeFilter: () => void;
 	incrementLocationFilter: () => void;
-	updateTotalPhotos: () => void;
+	updateTotalPhotos: (count: number) => void;
 }
 
 const defaultUserData: UserData = {

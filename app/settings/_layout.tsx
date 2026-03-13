@@ -9,6 +9,13 @@ export default function SettingsLayout() {
 	const { isDarkTheme, colors } = useTheme();
 	const { language } = useLanguage();
 	
+	// 공통 Back 버튼
+		const BackButton = () => (
+			<Pressable onPress={() => router.back()}>
+				<Text style={{ marginLeft: 10, color: colors.text }}>‹ Back</Text>
+			</Pressable>
+		);
+
 	return (
 		<Stack
 					screenOptions={{
@@ -18,17 +25,14 @@ export default function SettingsLayout() {
 									backgroundColor: isDarkTheme ? '#121212' : '#fff',
 							},
 							headerTintColor: isDarkTheme ? '#fff' : '#000',
+							// 모든 화면에 공통 Back 버튼 적용
+							headerLeft: BackButton,
 					}}
 		>
 			<Stack.Screen
 				name="index"
 				options={{
 						title: TRANSLATIONS[language].settings,
-						headerLeft: () => (
-							<Pressable onPress={() => router.back()}>
-								<Text style={{ marginLeft: 10, color: colors.text }}>‹ Back</Text>
-							</Pressable>
-						),
 					}}
 			/>
 

@@ -408,6 +408,8 @@ export default function HomeScreen() {
           sortBy: [MediaLibrary.SortBy.creationTime],
         });
   
+				updateTotalPhotos(result.totalCount ?? 0); // 2026-03-11 userData 수집을 위한 상태값 추가 by Minji
+				console.log("PHOTO COUNT:", photosAll.length);
         const assets = result.assets ?? [];
 
         // 4) 날짜/시간 필터
@@ -515,13 +517,6 @@ export default function HomeScreen() {
     [loading, hasNextPage, endCursor, filter]
   );
 
-	// 전체 사진 수 Context 저장
-	useEffect(() => {
-		if (!loading && photosAll.length > 0) {
-			//updateUserData({ totalPhotos: photosAll.length }); --- 2026.01.21 문제 코드 주석처리
-		}
-	}, [photosAll.length, loading]);
-	
   useEffect(() => {
 		// 필터 변경 시 사용 횟수 증가
 		const usedDate = !!filter.dateStart || !!filter.dateEnd;
