@@ -47,8 +47,12 @@ const OpenSourceInfoScreen: React.FC = () => {
 
 	const renderItem = ({ item }: { item: any }) => (
 		<View style={styles.optionRow}>
-			<Text style={[styles.optionText, { color: colors.text }]}>{item.title}</Text>
-			<Text style={[styles.valueText, { color: colors.secondary }]}>{item.value}</Text>
+			<Text style={[styles.optionText, { color: colors.text }]}
+			 numberOfLines={2}
+			 ellipsizeMode="tail">{item.title}</Text>
+			<Text style={[styles.valueText, { color: colors.secondary }]}
+			 numberOfLines={1}
+			 ellipsizeMode="tail">{item.value}</Text>
 		</View>
 	);
 
@@ -65,9 +69,21 @@ const OpenSourceInfoScreen: React.FC = () => {
 };
 
 const styles = StyleSheet.create({
-	optionRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingVertical: 15, paddingHorizontal: 15, marginVertical: 4 },
-	optionText: { fontSize: 16 },
-	valueText: { fontSize: 14 },
+	optionRow: {
+		flexDirection: 'row',
+		justifyContent: 'space-between',
+		alignItems: 'flex-start',
+		alignItems: 'center',
+		paddingVertical: 15,
+		paddingHorizontal: 15,
+		marginVertical: 4
+	},
+	optionText: {
+		fontSize: 16,
+		flex: 1,
+		marginRight: 10
+	},
+	valueText: { fontSize: 14, flexShrink: 0 },
 	separator: { height: 1 },
 });
 
