@@ -18,7 +18,7 @@ import {
   View,
 } from "react-native";
 import DateTimePicker from "./DateTimePicker";
-// 2026-03-03 추가: LocationSelector 컴포넌트 import by yen
+// 2026-03-03 추가: LocationSelectorHandle 컴포넌트 import by yen
 import LocationSelector, { LocationSelectorHandle } from "./LocationSelector";
 
 import { useLanguage } from "@/components/context/LanguageContext";
