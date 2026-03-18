@@ -34,11 +34,12 @@ import { useSlideshowTime } from '@/components/context/SlideshowTimeContext';
 import { useTheme } from '@/components/context/ThemeContext';
 import { useUserData } from '@/components/context/UserDataContext';
 
-import ShowonmapIcon from "@/assets/icons/showonmap.svg";
-import SlideshowIcon from "@/assets/icons/slideshow.svg";
+import IconPlay from "@/assets/icons/ic_play.svg";
+
 import { AMPLITUDE_API_KEY } from '@/constants/env';
 import * as amplitude from '@amplitude/analytics-react-native';
-import { TRANSLATIONS } from '@/constants/Translations';  // 2026-02-10 언어 설정에 따른 라벨 변경 추가 by Minji
+
+
 
 
 // Responsive image grid calculations
@@ -761,10 +762,10 @@ export default function HomeScreen() {
         <View style={styles.topArea}>
 
           {/* 상단버튼영역 START */}
-          <View style={styles.topButtonsRow}>
+          {/* <View style={styles.topButtonsRow}>
 
-            {/* 슬라이드쇼 버튼 (파란 그라디언트) */}
-            <TouchableOpacity
+            슬라이드쇼 버튼 (파란 그라디언트) */}
+            {/* <TouchableOpacity
               onPress={() => (slideshowOn ? closeSlideshow() : handleSlideshow())}
               activeOpacity={0.9}
             >
@@ -774,28 +775,78 @@ export default function HomeScreen() {
                 end={{ x: 1, y: 0 }}
                 style={styles.primaryButton}
               >
-                <SlideshowIcon width={16} height={16} style={{ marginRight: 8 }}/>
+                <SlideshowIcon width={16} height={16} style={{ marginRight: 8 }}/> */}
 							{/* 2026-02-10 언어 설정 추가 by Minji */}
-							<Text style={styles.primaryButtonText}>{TRANSLATIONS[language].play}</Text>
+						{/* <Text style={styles.primaryButtonText}>{TRANSLATIONS[language].play}</Text> 
               </LinearGradient>
-            </TouchableOpacity>
-    
+            </TouchableOpacity> */}
+
             {/* Show on map 버튼 (화이트 카드) */}
-            <View style={styles.secondaryButton}>
+            {/* <View style={styles.secondaryButton}>
               <ShowonmapIcon width={16} height={16} style={{ marginRight: 8 }}/>
               <ShowOnMap images={photos} />
             </View>
 
+            <TouchableOpacity style={styles.croppedButtonWrap}
+              onPress={() => (slideshowOn ? closeSlideshow() : handleSlideshow())}
+              activeOpacity={0.9}
+            >
+              <BtnMap width={120}/>
+            </TouchableOpacity> */}
+
             {/* 설정 아이콘 버튼 */}
-            <TouchableOpacity
+            {/* <TouchableOpacity
               onPress={() => router.push('/settings')}
               activeOpacity={0.7}
               style={styles.iconButton}
             >
               <Ionicons name="settings-outline" size={20} color="#374151" />
             </TouchableOpacity>
-          </View>
+          </View>*/}
           {/* 상단버튼영역 END */}
+
+          {/* 상단버튼영역 수정 2026.03.18 by June START */}
+          <View style={styles.topButtonsRow}>
+            {/* 왼쪽 여백 */}
+            <View style={styles.topLeftSpace} />
+
+            {/* 오른쪽 버튼 그룹 */}
+            <View style={styles.topButtonsGroup}>
+              {/* Play 버튼 */}
+              <TouchableOpacity
+                style={styles.playButtonSlot}
+                onPress={() => (slideshowOn ? closeSlideshow() : handleSlideshow())}
+                activeOpacity={0.9}
+              >
+                <LinearGradient
+                  colors={['#2B7FFF', '#AD46FF']}
+                  start={{ x: 0, y: 0 }}
+                  end={{ x: 1, y: 0 }}
+                  style={styles.playButtonBg}
+                >
+                  <IconPlay width={18} height={18} />
+                </LinearGradient>
+              </TouchableOpacity>
+
+              {/* Map 버튼 */}
+              <TouchableOpacity
+                style={styles.mapButtonSlot}
+                activeOpacity={0.9}
+              >
+                <ShowOnMap images={photos} />
+              </TouchableOpacity>
+
+              {/* Settings 버튼 */}
+              <TouchableOpacity
+                onPress={() => router.push('/settings')}
+                activeOpacity={0.7}
+                style={styles.settingsButtonSlot}
+              >
+                <Ionicons name="settings-outline" size={20} color="#374151" />
+              </TouchableOpacity>
+            </View>
+          </View>
+          {/* 상단버튼영역 수정 2026.03.18 by June END */}
             
           {/* 썸네일 그리드 START */}
           <View style={styles.gridWrap}>
@@ -1039,7 +1090,7 @@ const styles = StyleSheet.create({
     flex: 1,
     paddingHorizontal: 20,
     ...Platform.select({
-      ios: { paddingTop: 20 },
+      // ios: { paddingTop: 20 },
       android: { paddingTop: 50 },
     }),
   },
@@ -1061,17 +1112,20 @@ const styles = StyleSheet.create({
     }),
     paddingTop: 8,
   },
-  topButtonsRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'flex-start',
-    columnGap: 8, // 간격 보장
-    marginBottom: 16,
+  // topButtonsRow: {
+  //   flexDirection: 'row',
+  //   alignItems: 'center',
+  //   justifyContent: 'flex-start',
+  //   marginBottom: 16,
+  //   paddingLeft: 20,
+  // },
+  topButtonsLeftSpacer: {
+    width: 50, // TOBE 보면서 24~40 사이로 미세조정
   },
   iconButton: {
-    width: 44,
-    height: 44,
-    borderRadius: 14,
+    width: 40,
+    height: 40,
+    borderRadius: 16,
     backgroundColor: "#FFFFFF",
     alignItems: "center",
     justifyContent: "center",
@@ -1079,22 +1133,23 @@ const styles = StyleSheet.create({
     shadowOpacity: 0.12,
     shadowRadius: 16,
     shadowOffset: { width: 0, height: 8 },
-    elevation: 6,
+    //elevation: 6,
   },
 
   // 메인 파란 버튼
   primaryButton: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "center",
-    paddingHorizontal: 20,
-    height: 40,
-    borderRadius: 14,
-    shadowColor: "#2563EB",
-    shadowOpacity: 0.25,
-    shadowRadius: 10,
-    shadowOffset: { width: 0, height: 6 },
-    elevation: 4,
+    // width: 128,
+    // height: 44,
+    // marginRight: 5,
+    // flexDirection: "row",
+    // alignItems: "center",
+    // justifyContent: "center",
+    //borderRadius: 16,
+    //shadowColor: "#2563EB",
+    //shadowOpacity: 0.25,
+    //shadowRadius: 10,
+    //shadowOffset: { width: 0, height: 6 },
+    //elevation: 4,
   },
   primaryButtonText: {
     color: "#FFFFFF",
@@ -1103,19 +1158,19 @@ const styles = StyleSheet.create({
   },
   // 흰색 보조 버튼
   secondaryButton: {
-    flex: 1, // 남는 공간을 먹고
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    paddingHorizontal: 24,
-    height: 44,
-    borderRadius: 14,
-    backgroundColor: "#FFFFFF",
-    shadowColor: "#000",
-    shadowOpacity: 0.1,
-    shadowRadius: 16,
-    shadowOffset: { width: 0, height: 8 },
-    elevation: 6,
+    // width: 168,
+    // height: 44,
+    // marginRight: 5,
+    // flexDirection: 'row',
+    // alignItems: 'center',
+    // justifyContent: 'center',
+    // borderRadius: 16,
+    // backgroundColor: "#FFFFFF",
+    // shadowColor: "#000",
+    // shadowOpacity: 0.1,
+    // shadowRadius: 16,
+    // shadowOffset: { width: 0, height: 8 },
+    // elevation: 6,
   },
 
   secondaryButtonText: {
@@ -1264,5 +1319,84 @@ const styles = StyleSheet.create({
   },
   emptyTitle: { fontSize: 16, fontWeight: "700", color: "#111", marginBottom: 6 },
   emptyDesc: { fontSize: 13, color: "#666", textAlign: "center", lineHeight: 18 },
+
+  croppedButtonWrap: {
+    //width: 128,
+    height: 60,
+    overflow: 'hidden',
+    //borderRadius: 16,
+    //marginRight: 10,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  croppedButtonImage: {
+    width: '100%',
+    height: 56,          // 원본보다 더 크게 잡고
+    transform: [{ translateY: -6 }], // 아래 여백 잘라내기
+  },
+
+  /** 2026.03.18 Add by June */
+  topButtonsRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 16,
+    width: '100%',
+  },
+  
+  topLeftSpace: {
+    flex: 3, // 30%
+  },
+  
+  topButtonsGroup: {
+    flex: 7, // 70%
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+  },
+  
+  playButtonSlot: {
+    flex: 3, // 30
+    height: 38,
+    marginRight: 5,
+    justifyContent: 'center',
+  },
+  
+  mapButtonSlot: {
+    flex: 3, // 30
+    height: 38,
+    marginLeft: 0,
+    marginRight: 5,
+    justifyContent: 'center',
+  },
+  
+  settingsButtonSlot: {
+    flex: 1, // 10
+    height: 36,
+    borderRadius: 12,
+    backgroundColor: "#FFFFFF",
+    alignItems: "center",
+    justifyContent: "center",
+    shadowColor: "#000",
+    shadowOpacity: 0.12,
+    shadowRadius: 16,
+    shadowOffset: { width: 0, height: 8 },
+  },
+
+  buttonImage: {
+    width: "100%",
+    height: "100%",
+  },
+
+  playButtonBg: {
+    width: '100%',
+    height: '100%',
+    borderRadius: 16,
+    alignItems: 'center',
+    justifyContent: 'center',
+    shadowColor: "#2563EB",
+    shadowOpacity: 0.25,
+    shadowRadius: 10,
+    shadowOffset: { width: 0, height: 6 },
+  },
 
 });
