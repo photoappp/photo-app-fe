@@ -34,7 +34,7 @@ import { useSlideshowTime } from '@/components/context/SlideshowTimeContext';
 import { useTheme } from '@/components/context/ThemeContext';
 import { useUserData } from '@/components/context/UserDataContext';
 
-import IconPlay from "@/assets/icons/ic_play.svg";
+import IconPlay from "@/assets/icons/ic_play.svg"; //2026.03.18 Change button UI by June
 
 import { AMPLITUDE_API_KEY } from '@/constants/env';
 import * as amplitude from '@amplitude/analytics-react-native';
@@ -761,50 +761,6 @@ export default function HomeScreen() {
       <View style={{ flex: 1 }}>
         <View style={styles.topArea}>
 
-          {/* 상단버튼영역 START */}
-          {/* <View style={styles.topButtonsRow}>
-
-            슬라이드쇼 버튼 (파란 그라디언트) */}
-            {/* <TouchableOpacity
-              onPress={() => (slideshowOn ? closeSlideshow() : handleSlideshow())}
-              activeOpacity={0.9}
-            >
-              <LinearGradient
-                colors={['#2B7FFF', '#AD46FF']}
-                start={{ x: 0, y: 0 }}
-                end={{ x: 1, y: 0 }}
-                style={styles.primaryButton}
-              >
-                <SlideshowIcon width={16} height={16} style={{ marginRight: 8 }}/> */}
-							{/* 2026-02-10 언어 설정 추가 by Minji */}
-						{/* <Text style={styles.primaryButtonText}>{TRANSLATIONS[language].play}</Text> 
-              </LinearGradient>
-            </TouchableOpacity> */}
-
-            {/* Show on map 버튼 (화이트 카드) */}
-            {/* <View style={styles.secondaryButton}>
-              <ShowonmapIcon width={16} height={16} style={{ marginRight: 8 }}/>
-              <ShowOnMap images={photos} />
-            </View>
-
-            <TouchableOpacity style={styles.croppedButtonWrap}
-              onPress={() => (slideshowOn ? closeSlideshow() : handleSlideshow())}
-              activeOpacity={0.9}
-            >
-              <BtnMap width={120}/>
-            </TouchableOpacity> */}
-
-            {/* 설정 아이콘 버튼 */}
-            {/* <TouchableOpacity
-              onPress={() => router.push('/settings')}
-              activeOpacity={0.7}
-              style={styles.iconButton}
-            >
-              <Ionicons name="settings-outline" size={20} color="#374151" />
-            </TouchableOpacity>
-          </View>*/}
-          {/* 상단버튼영역 END */}
-
           {/* 상단버튼영역 수정 2026.03.18 by June START */}
           <View style={styles.topButtonsRow}>
             {/* 왼쪽 여백 */}
@@ -1398,5 +1354,5 @@ const styles = StyleSheet.create({
     shadowRadius: 10,
     shadowOffset: { width: 0, height: 6 },
   },
-
+  /** 2026.03.18 Add by June */ 
 });
