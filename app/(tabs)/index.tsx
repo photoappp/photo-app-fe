@@ -365,8 +365,6 @@ export default function HomeScreen() {
     return updated;
   }
 
-
-
   const PAGE_SIZE = 50;
   const { dateStart, dateEnd, timeStart, timeEnd, countries, cities } = filter;
 
@@ -411,6 +409,8 @@ export default function HomeScreen() {
           sortBy: [MediaLibrary.SortBy.creationTime],
         });
   
+				updateTotalPhotos(result.totalCount ?? 0); // 2026-03-11 userData 수집을 위한 상태값 추가 by Minji
+				console.log("PHOTO COUNT:", photosAll.length);
         const assets = result.assets ?? [];
 
         // 4) 날짜/시간 필터

@@ -19,13 +19,19 @@ const CreditsScreen: React.FC = () => {
 	];
 	
 	const renderItem = ({ item }: { item: any }) => {
+		// specialThanks만 왼쪽 정렬
+		const isSpecialThanks = item.id === 'specialThanks';
 		if (item.multiline) { // 2026.02.10 value가 긴 경우 multi line 처리 by Minji
 			return (
 						<View style={styles.optionColumn}>
 							<Text style={[styles.optionText, { color: colors.text }]}>
 								{item.title}
 							</Text>
-							<Text style={[styles.valueText, styles.multilineValue, { color: colors.secondary }]}>
+							<Text style={[styles.valueText, styles.multilineValue,
+														{
+															color: colors.secondary,
+															textAlign: isSpecialThanks ? 'left' : 'right',
+														}]}>
 								{item.value}
 							</Text>
 						</View>
@@ -54,7 +60,7 @@ const CreditsScreen: React.FC = () => {
 const styles = StyleSheet.create({
 	optionRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingVertical: 15, paddingHorizontal: 15, marginVertical: 4 },
 	optionColumn: { flexDirection: 'column', paddingVertical: 12, paddingHorizontal: 15, marginVertical: 4 },
-	multilineValue: { marginTop: 12, lineHeight: 20 }, // textAlign: 'right', alignSelf: 'stretch' - 오른쪽 정렬 적용 시
+	multilineValue: { marginTop: 12, lineHeight: 20, alignSelf: 'stretch' }, // textAlign: 'right', alignSelf: 'stretch' - 오른쪽 정렬 적용 시
 	optionText: { fontSize: 16 },
 	valueText: { fontSize: 16 },
 	separator: { height: 1 },

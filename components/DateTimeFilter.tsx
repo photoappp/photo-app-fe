@@ -31,6 +31,16 @@ import ICON_TIME from "@/assets/icons/ic_time.svg";
 import { clampToToday, shiftMonthsClamped } from "@/components/dateUtil";
 import * as amplitude from "@amplitude/analytics-react-native";
 
+// 2026-03-12 언어 설정 추가 by Minji
+import { TRANSLATIONS } from "@/constants/Translations";
+type Translations = {
+	en: string;
+	ko?: string;
+	ja?: string;
+	"zh-Hans"?: string;
+	"zh-Hant"?: string;
+};
+
 type DatePickersResponsiveProps = {
   dateStart: Date;
   dateEnd: Date;
@@ -552,7 +562,8 @@ export default function DateTimeFilter({
           <View style={styles.sheet}>
             {/* 헤더 */}
             <View style={styles.sheetHeader}>
-              <Text style={styles.sheetTitle}>Select Date</Text>
+							{/* 2026-03-18 다국어 라벨 출력 추가 by Minji */}
+							<Text style={styles.sheetTitle}>{TRANSLATIONS[language].selectDate}</Text>
               <View style={{ flexDirection: "row" }}>
                 <TouchableOpacity
                   onPress={() => {
@@ -596,7 +607,8 @@ export default function DateTimeFilter({
                     end={{ x: 1, y: 0 }}
                     style={styles.rangeBtnGradient}
                   >
-                    <Text style={styles.presetTxt}>{p.label}</Text>
+									  {/* 2026-03-13 다국어 라벨 출력 추가 by Minji */}
+										<Text style={styles.presetTxt}>{TRANSLATIONS[language][p.key] ?? p.key}</Text>
                   </LinearGradient>
                 </TouchableOpacity>
               ))}
@@ -617,7 +629,8 @@ export default function DateTimeFilter({
           <View style={styles.sheet}>
             {/* 헤더 */}
             <View style={styles.sheetHeader}>
-              <Text style={styles.sheetTitle}>Select Time</Text>
+						{/* 2026-03-18 다국어 라벨 출력 추가 by Minji */}
+						<Text style={styles.sheetTitle}>{TRANSLATIONS[language].selectTime}</Text>
               <View style={{ flexDirection: "row" }}>
                 <TouchableOpacity
                   onPress={() => {
@@ -713,7 +726,8 @@ export default function DateTimeFilter({
                 end={{ x: 1, y: 0 }}
                 style={styles.rangeBtnGradient}
               >
-                <Text style={styles.presetTxt}>All day</Text>
+								{/* 2026-03-13 다국어 라벨 출력 추가 by Minji */}
+								<Text style={styles.presetTxt}>{TRANSLATIONS[language]?.all_day ?? TRANSLATIONS.en.all_day}</Text>
               </LinearGradient>
             </TouchableOpacity>
           </View>
