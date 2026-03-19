@@ -115,6 +115,7 @@ export default function MapView({ images }: Props) {
                 width: 1px;
                 height: 30px;
                 background: #a855f7;
+                margin: 0 auto !important;
               }
               .target-container {
                 position: relative; /* CRITICAL: Creates positioning context */
@@ -200,7 +201,6 @@ export default function MapView({ images }: Props) {
                 '<img src="' + c.uri + '">' +
               '</div>' +
               '<div class="connector-line"></div>' +
-              // '<div class="target-circle"></div>' +
               '<div class="target-container">' +
                 '<div class="line horizontal"></div>' +
                 '<div class="line vertical"></div>' +
@@ -215,12 +215,19 @@ export default function MapView({ images }: Props) {
             '</div>';
             const customIcon = L.divIcon({
               html: iconHtml, // This passes the concatenated string
-              className: 'my-custom-marker',
+              className: 'custom-marker',
               iconSize: [80, 120],
               iconAnchor: [40, 120]
             });
-            L.marker([c.latitude, c.longitude], { icon: customIcon })
-              .addTo(map);
+          L.marker([c.latitude, c.longitude], { icon: customIcon })
+              .addTo(map)
+              .on('click', () => {
+                // Send message to React Native
+                window.ReactNativeWebView.postMessage(JSON.stringify({
+                  type: 'marker_click',
+                  city: c.city
+                }));
+              });
           });
 
           // Fit all markers
