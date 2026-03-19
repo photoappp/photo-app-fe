@@ -1,4 +1,7 @@
-import { useState } from "react";
+import { useLanguage } from "@/components/context/LanguageContext";
+import { TRANSLATIONS } from "@/constants/Translations";
+import * as amplitude from "@amplitude/analytics-react-native";
+import { useEffect, useState } from "react";
 import {
   Dimensions,
   Modal,
@@ -8,20 +11,9 @@ import {
   View,
 } from "react-native";
 import { WebView } from "react-native-webview";
-import * as amplitude from '@amplitude/analytics-react-native';
-import { TRANSLATIONS } from '@/constants/Translations';
-import { useLanguage } from '@/components/context/LanguageContext';
+// 2026-03-18 get proper coordinates by yen
+import * as FileSystem from "expo-file-system/legacy";
 
-/* 타입 일치를 위해 Photo로 병합
-type Image = {
-  localUri: string;
-  city?: string;
-  country?: string;
-  location?: {
-    latitude: string | number;
-    longitude: string | number;
-  };
-};*/
 type Photo = {
   uri: string;
   takenAt?: number | null; // 있으면 쓰고, 아니면 빼도 됨
@@ -40,18 +32,43 @@ type Props = {
 };
 
 export default function MapView({ images }: Props) {
-	const { language } = useLanguage();
+  const { language } = useLanguage();
   const [visible, setVisible] = useState(false);
-  // Collect coordinates from images
-  const coordinates = images
-    .filter((image) => image.location)
-    .map((image) => ({
-      latitude: Number(image.location!.latitude),
-      longitude: Number(image.location!.longitude),
-      city: image.city,
-      country: image.country,
-    }));
+  // 2026-03-18 get proper coordinates by yen
+  const [coordinates, setCoordinates] = useState<any[]>([]); // store base64 coords
+  const [loading, setLoading] = useState(true);
 
+  useEffect(() => {
+    const loadCoordinates = async () => {
+      try {
+        const coords = await Promise.all(
+          images
+            .filter((img) => img.location)
+            .map(async (img) => {
+              const base64 = await FileSystem.readAsStringAsync(img.uri, {
+                encoding: "base64",
+              });
+
+              return {
+                uri: `data:image/jpeg;base64,${base64}`,
+                latitude: Number(img.location!.latitude),
+                longitude: Number(img.location!.longitude),
+                city: img.city,
+                country: img.country,
+              };
+            }),
+        );
+
+        setCoordinates(coords.filter(Boolean));
+      } catch (e) {
+        console.error("Failed to load images as base64", e);
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    loadCoordinates();
+  }, [images]);
   // Pass coordinates to WebView as JSON
   const coordJSON = JSON.stringify(coordinates);
 
@@ -69,6 +86,93 @@ export default function MapView({ images }: Props) {
             top: 4%;
             left: 2%;
         }
+            // 2026-03-18 custom marker style by yen
+            .custom-marker {
+              display: flex !important;
+                  flex-direction: column !important;
+                  align-items: center !important;
+                  width: 80px !important;
+                  height: 140px !important;
+                  background: transparent !important;
+              }
+              .custom-marker .photo-frame {
+              width: 80px !important;
+                  height: 80px !important;
+                  background: linear-gradient(135deg, #4facfe, #a855f7) !important;
+                  padding: 6px !important;
+                  border-radius: 20px !important;
+                  box-sizing: border-box !important;
+                  overflow: hidden !important;
+              }
+              .custom-marker .photo-frame img {
+              width: 100% !important;
+                  height: 100% !important;
+                  object-fit: cover !important;
+                  border-radius: 15px !important;
+                  display: block !important;
+              }
+              .connector-line {
+                width: 1px;
+                height: 30px;
+                background: #a855f7;
+              }
+              .target-container {
+                position: relative; /* CRITICAL: Creates positioning context */
+                width: 40px;        /* Total width including white ring */
+                height: 40px;       /* Total height */
+                margin: 0 auto;    /* Centers it horizontally if needed */
+                display: flex;
+                align-items: center;
+                justify-content: center;
+                
+                /* Slight drop shadow to pop from the background */
+                box-shadow: 0 4px 10px rgba(0,0,0,0.1); 
+                border-radius: 50%;
+              }
+              /* 2. The crosshair lines (transparent purple, overlapping) */
+              .line {
+                position: absolute;
+                background-color: #8a2be2;
+                opacity: 0.5; /* Transparent purple */
+                z-index: 10;
+              }
+              .horizontal {
+                width: 100%; /* Spans the container */
+                height: 1px;  /* Thin lines */
+              }
+              .vertical {
+                width: 1px;
+                height: 100%; /* Spans the container */
+              }
+              /* 3. The nested circles (The Target) */
+              .circle {
+                border-radius: 50%;
+                display: flex;
+                align-items: center;
+                justify-content: center;
+              }
+              .outer {
+                width: 32px; /* Inner circle size (white) */
+                height: 32px;
+                background-color: white;
+                z-index: 1; /* Puts target above the lines */
+              }
+              .middle-gradient {
+                width: 22px; /* Middle ring (main purple) */
+                height: 22px;
+                background: linear-gradient(135deg, #4facfe 0%, #8a2be2 100%);
+              }
+              .middle-white {
+                width: 16px; /* Middle ring (white) */
+                height: 16px;
+                background-color: white;
+              }
+              .inner {
+                width: 8px; /* Inner point (white) */
+                height: 8px;
+                background: linear-gradient(135deg, #4facfe 0%, #8a2be2 100%);
+              }
+        
         </style>
       </head>
       <body>
@@ -90,19 +194,33 @@ export default function MapView({ images }: Props) {
 
           // Add markers
           coordinates.forEach((c, i) => {
-            L.marker([c.latitude, c.longitude])
-              .addTo(map)
-              .bindPopup(c.city + ', ' +c.country || i);
-		
-							// 마커 클릭 시 React Native로 메시지 전달
-							marker.on('click', () => {
-								window.ReactNativeWebView.postMessage(JSON.stringify({
-									type: 'marker_click',
-									uri: c.uri,
-									city: c.city,
-									country: c.country
-								}));
-							});
+          // 2026-03-18 custom marker HTML by yen
+            const iconHtml = '<div class="custom-marker">' +
+              '<div class="photo-frame">' +
+                '<img src="' + c.uri + '">' +
+              '</div>' +
+              '<div class="connector-line"></div>' +
+              // '<div class="target-circle"></div>' +
+              '<div class="target-container">' +
+                '<div class="line horizontal"></div>' +
+                '<div class="line vertical"></div>' +
+                '<div class="circle outer">' +
+                  '<div class="circle middle-gradient">' +
+                    '<div class="circle middle-white">' +
+                    '<div class="circle inner"></div>' +
+                  '</div>'+
+                  '</div>'+
+                '</div>'+
+              '</div>'+
+            '</div>';
+            const customIcon = L.divIcon({
+              html: iconHtml, // This passes the concatenated string
+              className: 'my-custom-marker',
+              iconSize: [80, 120],
+              iconAnchor: [40, 120]
+            });
+            L.marker([c.latitude, c.longitude], { icon: customIcon })
+              .addTo(map);
           });
 
           // Fit all markers
@@ -114,27 +232,27 @@ export default function MapView({ images }: Props) {
       </body>
       </html>
     `;
-	
-	// 웹뷰에서 메시지 받기, Amplitude 이벤트
-	const handleMessage = (event: WebViewMessageEvent) => {
-		try {
-			const data = JSON.parse(event.nativeEvent.data);
-			if (data.type === 'marker_click') {
-				amplitude.track('Location_Clicked', {
-					uri: data.uri,
-					city: data.city,
-					country: data.country,
-				});
-			}
-		} catch (e) {
-			console.error('WebView message parse error', e);
-		}
-	};
-	
+
+  // 웹뷰에서 메시지 받기, Amplitude 이벤트
+  const handleMessage = (event: WebViewMessageEvent) => {
+    try {
+      const data = JSON.parse(event.nativeEvent.data);
+      if (data.type === "marker_click") {
+        amplitude.track("Location_Clicked", {
+          uri: data.uri,
+          city: data.city,
+          country: data.country,
+        });
+      }
+    } catch (e) {
+      console.error("WebView message parse error", e);
+    }
+  };
+
   return (
     <View>
       <TouchableOpacity onPress={() => setVisible(true)} activeOpacity={0.8}>
-					<Text style={styles.buttonText}>{TRANSLATIONS[language].map}</Text>
+        <Text style={styles.buttonText}>{TRANSLATIONS[language].map}</Text>
       </TouchableOpacity>
       <Modal visible={visible} animationType="slide">
         <View style={styles.container}>
@@ -142,7 +260,7 @@ export default function MapView({ images }: Props) {
             originWhitelist={["*"]}
             source={{ html }}
             style={styles.webview}
-						onMessage={handleMessage}
+            onMessage={handleMessage}
           />
           <View style={styles.closeButton}>
             <TouchableOpacity
