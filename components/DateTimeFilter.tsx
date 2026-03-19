@@ -479,7 +479,7 @@ export default function DateTimeFilter({
                 setDateModalVisible(false);
               }}
             >
-              <ICON_RESET width={20} height={20} />
+              <ICON_RESET width={50} height={20} />
             </TouchableOpacity>
           </TouchableOpacity>
         </View>
@@ -509,7 +509,7 @@ export default function DateTimeFilter({
                 setTimeModalVisible(false);
               }}
             >
-              <ICON_RESET width={20} height={20} />
+              <ICON_RESET width={50} height={20} />
             </TouchableOpacity>
           </TouchableOpacity>
         </View>
@@ -543,7 +543,7 @@ export default function DateTimeFilter({
                 }}
               >
                 <View style={styles.filterIcon}>
-                  <ICON_RESET width={20} height={20} />
+                  <ICON_RESET width={50} height={20} />
                 </View>
               </TouchableOpacity>
             </View>
