@@ -48,7 +48,6 @@ export default function MapView({ images }: Props) {
               const base64 = await FileSystem.readAsStringAsync(img.uri, {
                 encoding: "base64",
               });
-
               return {
                 uri: `data:image/jpeg;base64,${base64}`,
                 latitude: Number(img.location!.latitude),
@@ -58,7 +57,6 @@ export default function MapView({ images }: Props) {
               };
             }),
         );
-
         setCoordinates(coords.filter(Boolean));
       } catch (e) {
         console.error("Failed to load images as base64", e);
@@ -187,10 +185,11 @@ export default function MapView({ images }: Props) {
             coordinates[0] ? 5 : 2
           );
 
-          // OSM tiles
-          L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
+          // 2026-03-18 CartoDB Voyager tiles (more colorful, works on both iOS and Android)
+          L.tileLayer('https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png', {
             maxZoom: 19,
-            attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
+            attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors &copy; <a href="https://carto.com/attributions">CARTO</a>',
+            subdomains: 'abcd'
           }).addTo(map);
 
           // Add markers
@@ -214,7 +213,7 @@ export default function MapView({ images }: Props) {
               '</div>'+
             '</div>';
             const customIcon = L.divIcon({
-              html: iconHtml, // This passes the concatenated string
+              html: iconHtml,
               className: 'custom-marker',
               iconSize: [80, 120],
               iconAnchor: [40, 120]
