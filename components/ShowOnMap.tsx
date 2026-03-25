@@ -2,6 +2,7 @@ import { useLanguage } from "@/components/context/LanguageContext";
 import { TRANSLATIONS } from "@/constants/Translations";
 import * as amplitude from "@amplitude/analytics-react-native";
 import { useEffect, useState } from "react";
+import IconMapPin from "@/assets/icons/ic_map_pin.svg";
 import {
   Dimensions,
   Modal,
@@ -258,7 +259,10 @@ export default function MapView({ images }: Props) {
   return (
     <View>
       <TouchableOpacity onPress={() => setVisible(true)} activeOpacity={0.8}>
-        <Text style={styles.buttonText}>{TRANSLATIONS[language].map}</Text>
+          {/* Map button 변경 2026.03.18 by June */}
+          <View style={styles.mapButtonBg}>
+            <IconMapPin width={18} height={18} />
+          </View>
       </TouchableOpacity>
       <Modal visible={visible} animationType="slide">
         <View style={styles.container}>
@@ -318,5 +322,18 @@ const styles = StyleSheet.create({
     top: "5%",
     right: "4%",
     zIndex: 10,
+  },
+  /* Map button 변경에 따른 CSS 추가 2026.03.18 by June */
+  mapButtonBg: {
+    width: '100%',
+    height: '100%',
+    borderRadius: 16,
+    backgroundColor: "#FFFFFF",
+    alignItems: 'center',
+    justifyContent: 'center',
+    shadowColor: "#000",
+    shadowOpacity: 0.10,
+    shadowRadius: 16,
+    shadowOffset: { width: 0, height: 8 },
   },
 });
