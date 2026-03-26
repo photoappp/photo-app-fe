@@ -11,15 +11,17 @@ import {
   Modal,
   Platform,
   Pressable,
+  ScrollView,
   StyleSheet,
   Text,
   //Button, FlatList, PermissionsAndroid,
   TouchableOpacity,
   useWindowDimensions,
-  View
+  View,
 } from "react-native";
 import DateTimePicker from "./DateTimePicker";
 // 2026-03-03 추가: LocationSelector 컴포넌트 import by yen
+import { useSafeAreaInsets } from "react-native-safe-area-context";
 import LocationSelector, { LocationSelectorHandle } from "./LocationSelector";
 
 import { useLanguage } from "@/components/context/LanguageContext";
@@ -435,6 +437,8 @@ export default function DateTimeFilter({
     onChange?.(payload);
   };
 
+  const insets = useSafeAreaInsets();
+
   // close 눌렀을시
   function flushPendingChange() {
     if (debounceTimerRef.current) {
@@ -570,60 +574,70 @@ export default function DateTimeFilter({
             flushPendingChange();
           }}
         >
-          <View style={styles.sheet}>
-            {/* 헤더 */}
-            <View style={styles.sheetHeader}>
-							{/* 2026-03-18 다국어 라벨 출력 추가 by Minji */}
-							<Text style={styles.sheetTitle}>{TRANSLATIONS[language].selectDate}</Text>
-              <View style={{ flexDirection: "row" }}>
-                <TouchableOpacity
-                  onPress={() => {
-                    setDateModalVisible(false);
-                    flushPendingChange();
-                  }}
-                  style={{ marginLeft: 16 }}
-                >
-                  <ICON_CLOSE width={20} height={20} />
-                </TouchableOpacity>
-              </View>
-            </View>
-            <DatePickersResponsive
-              dateStart={dateStart}
-              dateEnd={dateEnd}
-              onChangeStart={onChangeStartSafe}
-              onChangeEnd={onChangeEndSafe}
-            />
-            {/* 즐겨찾기 */}
-            {/* <View style={styles.favs}>
-              <Fav label="One Year Ago" onPress={favOneYearAgo} />
-              <Fav label="One Month Ago" onPress={favOneMonthAgo} />
-              <Fav label="Past Month" onPress={favPastMonth} />
-              <Fav label="Past Week" onPress={favPastWeek} />
-            </View> */}
-            {/* Favorite */}
-            <View style={styles.presetGrid}>
-              {DATE_PRESETS.map((p) => (
-                <TouchableOpacity
-                  key={p.key}
-                  activeOpacity={0.9}
-                  style={[
-                    styles.presetBtn,
-                    p.fullWidth && styles.presetBtnFull,
-                  ]}
-                  onPress={() => applyDatePreset(p.key)}
-                >
-                  <LinearGradient
-                    colors={["#2B7FFF", "#AD46FF"]}
-                    start={{ x: 0, y: 0 }}
-                    end={{ x: 1, y: 0 }}
-                    style={styles.rangeBtnGradient}
+          <View
+            style={[
+              styles.sheet,
+              { paddingBottom: 12 + Math.max(insets.bottom, Platform.OS === "android" ? 16 : 0) },
+            ]}
+          >
+            <ScrollView
+              bounces={false}
+              showsVerticalScrollIndicator={false}
+            >
+              {/* 헤더 */}
+              <View style={styles.sheetHeader}>
+                {/* 2026-03-18 다국어 라벨 출력 추가 by Minji */}
+                <Text style={styles.sheetTitle}>{TRANSLATIONS[language].selectDate}</Text>
+                <View style={{ flexDirection: "row" }}>
+                  <TouchableOpacity
+                    onPress={() => {
+                      setDateModalVisible(false);
+                      flushPendingChange();
+                    }}
+                    style={{ marginLeft: 16 }}
                   >
-									  {/* 2026-03-13 다국어 라벨 출력 추가 by Minji */}
-										<Text style={styles.presetTxt}>{TRANSLATIONS[language][p.key] ?? p.key}</Text>
-                  </LinearGradient>
-                </TouchableOpacity>
-              ))}
-            </View>
+                    <ICON_CLOSE width={20} height={20} />
+                  </TouchableOpacity>
+                </View>
+              </View>
+              <DatePickersResponsive
+                dateStart={dateStart}
+                dateEnd={dateEnd}
+                onChangeStart={onChangeStartSafe}
+                onChangeEnd={onChangeEndSafe}
+              />
+              {/* 즐겨찾기 */}
+              {/* <View style={styles.favs}>
+                <Fav label="One Year Ago" onPress={favOneYearAgo} />
+                <Fav label="One Month Ago" onPress={favOneMonthAgo} />
+                <Fav label="Past Month" onPress={favPastMonth} />
+                <Fav label="Past Week" onPress={favPastWeek} />
+              </View> */}
+              {/* Favorite */}
+              <View style={styles.presetGrid}>
+                {DATE_PRESETS.map((p) => (
+                  <TouchableOpacity
+                    key={p.key}
+                    activeOpacity={0.9}
+                    style={[
+                      styles.presetBtn,
+                      p.fullWidth && styles.presetBtnFull,
+                    ]}
+                    onPress={() => applyDatePreset(p.key)}
+                  >
+                    <LinearGradient
+                      colors={["#2B7FFF", "#AD46FF"]}
+                      start={{ x: 0, y: 0 }}
+                      end={{ x: 1, y: 0 }}
+                      style={styles.rangeBtnGradient}
+                    >
+                      {/* 2026-03-13 다국어 라벨 출력 추가 by Minji */}
+                      <Text style={styles.presetTxt}>{TRANSLATIONS[language][p.key] ?? p.key}</Text>
+                    </LinearGradient>
+                  </TouchableOpacity>
+                ))}
+              </View>
+            </ScrollView>
           </View>
         </Pressable>
       </Modal>
@@ -643,110 +657,120 @@ export default function DateTimeFilter({
             flushPendingChange();
           }}
         >
-          <View style={styles.sheet}>
-            {/* 헤더 */}
-            <View style={styles.sheetHeader}>
-						{/* 2026-03-18 다국어 라벨 출력 추가 by Minji */}
-						<Text style={styles.sheetTitle}>{TRANSLATIONS[language].selectTime}</Text>
-              <View style={{ flexDirection: "row" }}>
-                <TouchableOpacity
-                  onPress={() => {
-                    setTimeModalVisible(false);
-                    flushPendingChange();
-                  }}
-                  style={{ marginLeft: 16 }}
-                >
-                  <ICON_CLOSE width={20} height={20} />
-                </TouchableOpacity>
-              </View>
-            </View>
-
-            {/* 2개 피커 */}
-            <View style={styles.row}>
-              <View style={styles.pickerBox}>
-                <DateTimePicker
-                  mode="time"
-                  value={
-                    new Date(
-                      2000,
-                      0,
-                      1,
-                      Math.floor(timeStart / 60),
-                      timeStart % 60,
-                    )
-                  }
-                  onChange={(d) =>
-                    setTimeHM("start", d.getHours(), d.getMinutes())
-                  }
-                />
-              </View>
-
-              <View style={styles.pickerBox}>
-                <DateTimePicker
-                  mode="time"
-                  value={
-                    new Date(2000, 0, 1, Math.floor(timeEnd / 60), timeEnd % 60)
-                  }
-                  onChange={(d) =>
-                    setTimeHM("end", d.getHours(), d.getMinutes())
-                  }
-                />
-              </View>
-            </View>
-
-            {/* 프리셋 4개 */}
-            <View style={styles.presetGrid}>
-              {PRESETS.map((p) => (
-                <TouchableOpacity
-                  key={p.label}
-                  style={styles.presetBtn}
-                  activeOpacity={0.8}
-                  onPress={() => {
-                    amplitude.track("tap_time_favorite", {
-                      screen_name: "home",
-                      preset_label: p.label,
-                      time_start_min: p.s,
-                      time_end_min: p.e,
-                    });
-                    applyTimePreset(p.s, p.e);
-                  }}
-                >
-                  <LinearGradient
-                    colors={["#2B7FFF", "#AD46FF"]}
-                    start={{ x: 0, y: 0 }}
-                    end={{ x: 1, y: 0 }}
-                    style={styles.rangeBtnGradient}
-                  >
-                    <Text style={styles.presetTxt}>{p.label}</Text>
-                  </LinearGradient>
-                </TouchableOpacity>
-              ))}
-            </View>
-
-            {/* all_day */}
-            <TouchableOpacity
-              style={[styles.presetBtn, styles.presetBtnFull]}
-              activeOpacity={0.8}
-              onPress={() => {
-                amplitude.track("tap_time_favorite", {
-                  screen_name: "home",
-                  preset_label: "all_day",
-                  time_start_min: 0,
-                  time_end_min: 1439,
-                });
-                applyTimePreset(0, 1439);
-              }}
+          <View
+            style={[
+              styles.sheet,
+              { paddingBottom: 12 + Math.max(insets.bottom, Platform.OS === "android" ? 16 : 0) },
+            ]}
+          >
+            <ScrollView
+              bounces={false}
+              showsVerticalScrollIndicator={false}
             >
-              <LinearGradient
-                colors={["#2B7FFF", "#AD46FF"]}
-                start={{ x: 0, y: 0 }}
-                end={{ x: 1, y: 0 }}
-                style={styles.rangeBtnGradient}
+              {/* 헤더 */}
+              <View style={styles.sheetHeader}>
+              {/* 2026-03-18 다국어 라벨 출력 추가 by Minji */}
+              <Text style={styles.sheetTitle}>{TRANSLATIONS[language].selectTime}</Text>
+                <View style={{ flexDirection: "row" }}>
+                  <TouchableOpacity
+                    onPress={() => {
+                      setTimeModalVisible(false);
+                      flushPendingChange();
+                    }}
+                    style={{ marginLeft: 16 }}
+                  >
+                    <ICON_CLOSE width={20} height={20} />
+                  </TouchableOpacity>
+                </View>
+              </View>
+
+              {/* 2개 피커 */}
+              <View style={styles.row}>
+                <View style={styles.pickerBox}>
+                  <DateTimePicker
+                    mode="time"
+                    value={
+                      new Date(
+                        2000,
+                        0,
+                        1,
+                        Math.floor(timeStart / 60),
+                        timeStart % 60,
+                      )
+                    }
+                    onChange={(d) =>
+                      setTimeHM("start", d.getHours(), d.getMinutes())
+                    }
+                  />
+                </View>
+
+                <View style={styles.pickerBox}>
+                  <DateTimePicker
+                    mode="time"
+                    value={
+                      new Date(2000, 0, 1, Math.floor(timeEnd / 60), timeEnd % 60)
+                    }
+                    onChange={(d) =>
+                      setTimeHM("end", d.getHours(), d.getMinutes())
+                    }
+                  />
+                </View>
+              </View>
+
+              {/* 프리셋 4개 */}
+              <View style={styles.presetGrid}>
+                {PRESETS.map((p) => (
+                  <TouchableOpacity
+                    key={p.label}
+                    style={styles.presetBtn}
+                    activeOpacity={0.8}
+                    onPress={() => {
+                      amplitude.track("tap_time_favorite", {
+                        screen_name: "home",
+                        preset_label: p.label,
+                        time_start_min: p.s,
+                        time_end_min: p.e,
+                      });
+                      applyTimePreset(p.s, p.e);
+                    }}
+                  >
+                    <LinearGradient
+                      colors={["#2B7FFF", "#AD46FF"]}
+                      start={{ x: 0, y: 0 }}
+                      end={{ x: 1, y: 0 }}
+                      style={styles.rangeBtnGradient}
+                    >
+                      <Text style={styles.presetTxt}>{p.label}</Text>
+                    </LinearGradient>
+                  </TouchableOpacity>
+                ))}
+              </View>
+
+              {/* all_day */}
+              <TouchableOpacity
+                style={[styles.presetBtn, styles.presetBtnFull]}
+                activeOpacity={0.8}
+                onPress={() => {
+                  amplitude.track("tap_time_favorite", {
+                    screen_name: "home",
+                    preset_label: "all_day",
+                    time_start_min: 0,
+                    time_end_min: 1439,
+                  });
+                  applyTimePreset(0, 1439);
+                }}
               >
-								{/* 2026-03-13 다국어 라벨 출력 추가 by Minji */}
-								<Text style={styles.presetTxt}>{TRANSLATIONS[language]?.all_day ?? TRANSLATIONS.en.all_day}</Text>
-              </LinearGradient>
-            </TouchableOpacity>
+                <LinearGradient
+                  colors={["#2B7FFF", "#AD46FF"]}
+                  start={{ x: 0, y: 0 }}
+                  end={{ x: 1, y: 0 }}
+                  style={styles.rangeBtnGradient}
+                >
+                  {/* 2026-03-13 다국어 라벨 출력 추가 by Minji */}
+                  <Text style={styles.presetTxt}>{TRANSLATIONS[language]?.all_day ?? TRANSLATIONS.en.all_day}</Text>
+                </LinearGradient>
+              </TouchableOpacity>
+            </ScrollView>
           </View>
         </Pressable>
       </Modal>
