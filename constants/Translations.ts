@@ -22,8 +22,8 @@ export const TRANSLATIONS: Record<string, Record<string, string>> = {
 		date: 'Date',
 		time: 'Time',
 		location: 'Location',
-		all_day: 'All Dates',
-		all_times: 'All Times',
+		all_day: 'All Times',   // 2026.03.25 by June - 00:00~23:59를 칭하는 기획이 기존에는 All Day였는데 All Times 로 바뀜.
+		all_times: 'All Dates', // 2026.03.25 by June - 1970년 1월 1일부터 오늘까지를 칭하는 개념이 All Times였는데 All Dates 로 바뀜.
 		allLocations: 'All Locations',
 		play: 'Play',
 		map: 'Map',
