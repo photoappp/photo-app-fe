@@ -10,12 +10,13 @@ import {
 import {
   Modal,
   Platform,
+  Pressable,
   StyleSheet,
   Text,
   //Button, FlatList, PermissionsAndroid,
   TouchableOpacity,
   useWindowDimensions,
-  View,
+  View
 } from "react-native";
 import DateTimePicker from "./DateTimePicker";
 // 2026-03-03 추가: LocationSelector 컴포넌트 import by yen
@@ -117,7 +118,7 @@ const oneYearAgo = new Date(
 type DateTimeFilterValue = {
   dateStart: Date;
   dateEnd: Date;
-  timeStart: number; // 0~1440
+  timeStart: number; // 0~1439
   timeEnd: number;
 };
 
@@ -133,8 +134,8 @@ type DateTimeFilterProps = {
 
 type TimePreset = {
   label: string;
-  s: number; // start minute (0~1440)
-  e: number; // end minute (0~1440)
+  s: number; // start minute (0~1439)
+  e: number; // end minute (0~1439)
 };
 
 const PRESETS: TimePreset[] = [
@@ -236,9 +237,9 @@ export default function DateTimeFilter({
   const [dateStart, setDateStart] = useState(oneYearAgo);
   const [dateEnd, setDateEnd] = useState(today);
 
-  // 시간은 분 단위 (0~1440; 1440=24:00 허용)
+  // 시간은 분 단위 (0~1439; 1439=24:00 허용)
   const [timeStart, setTimeStart] = useState(0);
-  const [timeEnd, setTimeEnd] = useState(1440);
+  const [timeEnd, setTimeEnd] = useState(1439);
 
   // ---- 모달 표시 상태 ----
   const [dateModalVisible, setDateModalVisible] = useState(false);
@@ -323,7 +324,7 @@ export default function DateTimeFilter({
   const applyDatePreset = (key: DatePreset["key"]) => {
     const preset = DATE_PRESETS.find((p) => p.key === key);
     if (!preset) return;
-
+  
     const now = new Date();
     const { start, end } = preset.getRange(now);
 
@@ -333,7 +334,7 @@ export default function DateTimeFilter({
       start_ms: start.getTime(),
       end_ms: end.getTime(),
     });
-
+  
     bypassDebounceRef.current = true;
     setDateStart(start);
     setDateEnd(end);
@@ -479,7 +480,7 @@ export default function DateTimeFilter({
                 setDateModalVisible(false);
               }}
             >
-              <ICON_RESET width={50} height={20} />
+              <ICON_RESET width={70} />
             </TouchableOpacity>
           </TouchableOpacity>
         </View>
@@ -509,7 +510,7 @@ export default function DateTimeFilter({
                 setTimeModalVisible(false);
               }}
             >
-              <ICON_RESET width={50} height={20} />
+              <ICON_RESET width={70} />
             </TouchableOpacity>
           </TouchableOpacity>
         </View>
@@ -543,7 +544,7 @@ export default function DateTimeFilter({
                 }}
               >
                 <View style={styles.filterIcon}>
-                  <ICON_RESET width={50} height={20} />
+                  <ICON_RESET width={70} />
                 </View>
               </TouchableOpacity>
             </View>
@@ -556,9 +557,19 @@ export default function DateTimeFilter({
         visible={dateModalVisible}
         transparent
         animationType="slide"
-        onRequestClose={() => setDateModalVisible(false)}
+        onRequestClose={() => {
+          flushPendingChange(); 
+          setDateModalVisible(false)
+        }
+      }
       >
-        <View style={styles.modalBackdrop}>
+        <Pressable
+          style={styles.modalBackdrop}
+          onPress={() => {
+            setDateModalVisible(false);
+            flushPendingChange();
+          }}
+        >
           <View style={styles.sheet}>
             {/* 헤더 */}
             <View style={styles.sheetHeader}>
@@ -614,7 +625,7 @@ export default function DateTimeFilter({
               ))}
             </View>
           </View>
-        </View>
+        </Pressable>
       </Modal>
       {/* Date Bottom Sheet END */}
 
@@ -625,7 +636,13 @@ export default function DateTimeFilter({
         animationType="slide"
         onRequestClose={() => setTimeModalVisible(false)}
       >
-        <View style={styles.modalBackdrop}>
+        <Pressable
+          style={styles.modalBackdrop}
+          onPress={() => {
+            setTimeModalVisible(false);
+            flushPendingChange();
+          }}
+        >
           <View style={styles.sheet}>
             {/* 헤더 */}
             <View style={styles.sheetHeader}>
@@ -731,7 +748,7 @@ export default function DateTimeFilter({
               </LinearGradient>
             </TouchableOpacity>
           </View>
-        </View>
+        </Pressable>
       </Modal>
       {
         <LocationSelector
@@ -794,7 +811,8 @@ const styles = StyleSheet.create({
     justifyContent: "space-between",
     backgroundColor: "#fff",
     paddingHorizontal: 14,
-    paddingVertical: 10,
+    //paddingVertical: 10,
+    height: 50,
     borderRadius: 12,
     // 그림자
     elevation: 3,

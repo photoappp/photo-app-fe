@@ -163,11 +163,27 @@ export default function HomeScreen() {
     today.getDate()
   );
 
+  const sortPhotosByTakenAtAsc = (items: Photo[]) => {
+    return [...items].sort((a, b) => {
+      const aTime =
+        typeof a.takenAt === "number" && Number.isFinite(a.takenAt)
+          ? a.takenAt
+          : Number.MAX_SAFE_INTEGER;
+  
+      const bTime =
+        typeof b.takenAt === "number" && Number.isFinite(b.takenAt)
+          ? b.takenAt
+          : Number.MAX_SAFE_INTEGER;
+  
+      return aTime - bTime;
+    });
+  };
+
   const [filter, setFilter] = useState<FilterState>({
     dateStart: oneMonthAgo,
     dateEnd: new Date(),
     timeStart: 0,
-    timeEnd: 1440,
+    timeEnd: 1439,
     countries: [],
     cities: [],
   });
@@ -504,9 +520,13 @@ export default function HomeScreen() {
           return countries.includes(photo.country ?? "");
         });
         // 7) 상태 업데이트
-        setPhotos((prev) =>
-          reset ? filteredWithLocation : [...prev, ...filteredWithLocation]
-        );
+        setPhotos((prev) => {
+          const merged = reset
+            ? filteredWithLocation
+            : [...prev, ...filteredWithLocation];
+        
+          return sortPhotosByTakenAtAsc(merged);
+        });
         setEndCursor(result.endCursor ?? null);
         setHasNextPage(result.hasNextPage);
       } catch (err) {
@@ -565,7 +585,7 @@ export default function HomeScreen() {
   useEffect(() => {
 		// 필터 변경 시 사용 횟수 증가
 		const usedDate = !!filter.dateStart || !!filter.dateEnd;
-		const usedTime = filter.timeStart !== 0 || filter.timeEnd !== 1440;
+		const usedTime = filter.timeStart !== 0 || filter.timeEnd !== 1439;
 		const usedLocation = filter.countries.length > 0 || filter.cities.length > 0;
 		
 		if (usedDate) incrementDateFilter();
@@ -609,7 +629,7 @@ export default function HomeScreen() {
     );
   };
 
-  // 시각(분) 윈도우 판정: timeStart~timeEnd(분), 1440=24:00 처리 포함
+  // 시각(분) 윈도우 판정: timeStart~timeEnd(분), 1439=23:59 처리 포함
   const inTimeWindow = (
     tsMs: string | number | Date,
     timeStart: number,
@@ -617,7 +637,7 @@ export default function HomeScreen() {
   ) => {
     const local = new Date(tsMs);
     const mins = local.getHours() * 60 + local.getMinutes();
-    if (timeEnd === 1440) return mins >= timeStart && mins <= 1439; // 24:00은 하루 끝까지
+    if (timeEnd === 1439) return mins >= timeStart && mins <= 1439; // 24:00은 하루 끝까지
     if (timeEnd >= timeStart) return mins >= timeStart && mins <= timeEnd;
     // (필요시) 밤을 가르는 구간도 지원하려면 아래처럼:
     // return mins >= timeStart || mins <= timeEnd;
@@ -1019,11 +1039,17 @@ export default function HomeScreen() {
               index,
             })}
             renderItem={({ item }) => (
-              <Image
-                source={{ uri: item.uri }}
+              <TouchableOpacity
+                activeOpacity={1}
+                onPress={closeSlideshow}
                 style={{ width: screenWidth, height: "100%" }}
-                resizeMode="contain"
-              />
+              >
+                <Image
+                  source={{ uri: item.uri }}
+                  style={{ width: screenWidth, height: "100%" }}
+                  resizeMode="contain"
+                />
+              </TouchableOpacity>
             )}
           />
 
