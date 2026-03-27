@@ -16,6 +16,7 @@ import {
   Dimensions,
   FlatList,
   Image,
+  Linking,
   ListRenderItem,
   Modal,
   Platform,
@@ -23,7 +24,7 @@ import {
   Text,
   TouchableOpacity,
   useColorScheme,
-  View,
+  View
 } from "react-native";
 import ImageViewing from 'react-native-image-viewing';
 import { Edges, SafeAreaView } from 'react-native-safe-area-context';
@@ -118,6 +119,15 @@ export default function HomeScreen() {
   const [viewerVisible, setViewerVisible] = useState(false);
   const [viewerIndex, setViewerIndex] = useState(0);
 
+  /** 2026.03.26 By June - 사진 목록/페이지네이션 관련 */
+  const [initialLoading, setInitialLoading] = useState(false);
+  const [backgroundLoading, setBackgroundLoading] = useState(false);
+  const [emptyMessage, setEmptyMessage] = useState<string | null>(null);
+  const [didInitialLoad, setDidInitialLoad] = useState(false);
+  const requestInFlightRef = useRef(false);
+  const didKickoffBackgroundRef = useRef(false);
+  /** 2026.03.26 By June */
+
   // ImageViewing 에 넘길 images 배열 (형식: { uri: string }[])
   const viewerImages = useMemo(
     () => photos.map((p) => ({ uri: p.uri })),
@@ -145,24 +155,38 @@ export default function HomeScreen() {
   // 날짜,시간 필터링 관련 ===> 컴포넌트로 분리하기!!
   const dayStartMs = (d: Date) =>
     new Date(d.getFullYear(), d.getMonth(), d.getDate(), 0, 0, 0, 0).getTime();
-  const dayEndNextMs = (d: Date) =>
-    new Date(
-      d.getFullYear(),
-      d.getMonth(),
-      d.getDate() + 1,
-      0,
-      0,
-      0,
-      0
-    ).getTime();
+  const dayEndNextMs = (d: Date) => new Date(
+    d.getFullYear(),
+    d.getMonth(),
+    d.getDate() + 1,
+    0,
+    0,
+    0,
+    0
+  ).getTime();
 
+  /** 2026.03.26 by June Edit Start */  
   const today = new Date();
-  const oneMonthAgo = new Date(
-    today.getFullYear(),
-    today.getMonth() - 1,
+  const oneYearAgo = new Date(
+    today.getFullYear() - 1,
+    today.getMonth(),
     today.getDate()
   );
-
+  const threeYearsAgo = new Date(
+    today.getFullYear() - 3,
+    today.getMonth(),
+    today.getDate()
+  );
+  
+  const INITIAL_TARGET_COUNT = 30;
+  const FILTER_RESET_TARGET_COUNT = 50;
+  const APPEND_TARGET_COUNT = 50;
+  const FETCH_PAGE_SIZE = 100;
+  
+  const EMPTY_RECENT_3Y_MESSAGE = "최근 3년 내 사진이 없습니다.";
+  const EMPTY_DEFAULT_MESSAGE = "No photos found";
+  const EMPTY_DEFAULT_DESC = "Try expanding the filters.";
+ 
   const sortPhotosByTakenAtAsc = (items: Photo[]) => {
     return [...items].sort((a, b) => {
       const aTime =
@@ -180,13 +204,14 @@ export default function HomeScreen() {
   };
 
   const [filter, setFilter] = useState<FilterState>({
-    dateStart: oneMonthAgo,
+    dateStart: oneYearAgo,
     dateEnd: new Date(),
     timeStart: 0,
     timeEnd: 1439,
     countries: [],
     cities: [],
   });
+   /** 2026.03.26 by June Edit End */  
 
   // 슬라이드쇼 관련
   const SLIDESHOW_MS = 2000;
@@ -382,6 +407,372 @@ export default function HomeScreen() {
     return updated;
   }
 
+  /** 2026.03.26 By June START - 사진 로드 및 날짜 필터 변경시 액션관련 함수 모듈화 작업 */
+  /** timestamp 추출 */
+  const getAssetTimestampMs = (asset: MediaLibrary.Asset) => {
+    const created =
+      asset.creationTime && asset.creationTime > 0 ? asset.creationTime : null;
+  
+    const modified =
+      asset.modificationTime && asset.modificationTime > 0
+        ? asset.modificationTime
+        : null;
+  
+    return created ?? modified;
+  };
+
+  /** 날짜/시간 필터 검사 */
+  const matchesDateTimeFilter = (
+    asset: MediaLibrary.Asset,
+    currentFilter: FilterState
+  ) => {
+    const tsMs = getAssetTimestampMs(asset);
+  
+    // timestamp 없는 사진도 포함
+    if (!tsMs) return true;
+  
+    if (
+      tsMs < dayStartMs(currentFilter.dateStart) ||
+      tsMs >= dayEndNextMs(currentFilter.dateEnd)
+    ) {
+      return false;
+    }
+  
+    return inTimeWindow(tsMs, currentFilter.timeStart, currentFilter.timeEnd);
+  };
+
+  /** 페이지 1번 fetch */
+  const fetchAssetsPage = async (params?: { after?: string | null; first?: number }) => {
+    const result = await MediaLibrary.getAssetsAsync({
+      first: params?.first ?? FETCH_PAGE_SIZE,
+      mediaType: MediaLibrary.MediaType.photo,
+      after: params?.after ?? undefined,
+      sortBy: [MediaLibrary.SortBy.creationTime],
+    });
+
+    updateTotalPhotos(result.totalCount ?? 0);
+
+    return result;
+  };
+
+  /** asset → Photo 정규화 */
+  const hydrateAssetsToPhotos = (assets: MediaLibrary.Asset[]): Photo[] => {
+    return assets.map((asset) => ({
+      uri: asset.uri,
+      takenAt:
+        asset.creationTime && asset.creationTime > 0
+          ? asset.creationTime
+          : asset.modificationTime && asset.modificationTime > 0
+          ? asset.modificationTime
+          : null,
+      location: null,
+    }));
+  };
+
+  /** 위치 필터 */
+  const applyLocationFilter = (items: Photo[], currentFilter: FilterState) => {
+    const { countries, cities } = currentFilter;
+  
+    if (countries.length === 0 && cities.length === 0) {
+      return items;
+    }
+  
+    if (cities.length > 0) {
+      return items.filter((photo) => cities.includes(photo.city ?? ""));
+    }
+  
+    return items.filter((photo) => countries.includes(photo.country ?? ""));
+  };
+
+  /** geocoding 필요 여부 판별 */
+  const shouldUseGeocoding = (
+    currentFilter: FilterState,
+    mode: "initial" | "background" | "append" | "filter-reset"
+  ) => {
+    const hasLocationFilter =
+      currentFilter.countries.length > 0 || currentFilter.cities.length > 0;
+  
+    if (hasLocationFilter) return true;
+    if (mode === "initial") return false;
+    return true;
+  };
+
+  /** 사진 정렬 처리: 오래된 순 + timestamp 없는 사진 최하단 표출 */
+  const sortPhotosForDisplay = (items: Photo[]) => {
+    return [...items].sort((a, b) => {
+      const aHasTs = typeof a.takenAt === "number" && Number.isFinite(a.takenAt);
+      const bHasTs = typeof b.takenAt === "number" && Number.isFinite(b.takenAt);
+  
+      if (aHasTs && bHasTs) {
+        return (a.takenAt as number) - (b.takenAt as number);
+      }
+  
+      if (aHasTs && !bHasTs) return -1;
+      if (!aHasTs && bHasTs) return 1;
+  
+      return 0;
+    });
+  };
+
+  /** 중복 제거 함수 - append 때 같은 사진이 두 번 붙는 것 방지 */
+  const dedupePhotosByUri = (items: Photo[]) => {
+    const seen = new Set<string>();
+    const out: Photo[] = [];
+  
+    for (const item of items) {
+      if (seen.has(item.uri)) continue;
+      seen.add(item.uri);
+      out.push(item);
+    }
+  
+    return out;
+  };
+
+  /** 사진 접근 권한 처리 */
+  const ensurePhotoPermission = async () => {
+    const { status, canAskAgain } = await MediaLibrary.getPermissionsAsync();
+  
+    let hasPerm = status === "granted";
+  
+    if (!hasPerm && canAskAgain) {
+      const req = await MediaLibrary.requestPermissionsAsync(false);
+      hasPerm = req.status === "granted";
+    }
+  
+    if (hasPerm) return true;
+  
+    if (!canAskAgain) {
+      Alert.alert(
+        "권한 필요",
+        "사진을 표시하려면 사진 접근 권한을 허용해야 합니다. 설정에서 권한을 켜주세요.",
+        [
+          { text: "취소", style: "cancel" },
+          {
+            text: "설정으로 이동",
+            onPress: () => {
+              Linking.openSettings().catch(() => {
+                console.log("openSettings failed");
+              });
+            },
+          },
+        ]
+      );
+    } else {
+      Alert.alert("권한 필요", "사진 접근 권한이 필요합니다.");
+    }
+  
+    return false;
+  };
+
+  /** 목표 개수 확보까지 반복 fetch 처리 */
+  const collectPhotosForTarget = async ({
+    currentFilter,
+    targetCount,
+    startCursor = null,
+    mode,
+  }: {
+    currentFilter: FilterState;
+    targetCount: number;
+    startCursor?: string | null;
+    mode: "initial" | "background" | "append" | "filter-reset";
+  }) => {
+    let cursor: string | null = startCursor;
+    let nextPage = true;
+    let totalCount = 0;
+    const collected: Photo[] = [];
+  
+    let pageCount = 0;
+    const MAX_PAGES = 5;
+
+    while (nextPage && collected.length < targetCount && pageCount < MAX_PAGES) {
+      pageCount += 1;
+      const result = await fetchAssetsPage({
+        after: cursor,
+        first: FETCH_PAGE_SIZE,
+      });
+  
+      totalCount = result.totalCount ?? totalCount;
+  
+      const assets = result.assets ?? [];
+      const dateTimeMatched = assets.filter((asset) =>
+        matchesDateTimeFilter(asset, currentFilter)
+      );
+  
+      let photosChunk = await hydrateAssetsToPhotos(dateTimeMatched);
+  
+      if (shouldUseGeocoding(currentFilter, mode)) {
+        photosChunk = await imagesWithLocation(photosChunk, {
+          maxLookups: 60,
+          precision: 2,
+          delayMs: 150,
+        });
+      }
+  
+      const locationMatched = applyLocationFilter(photosChunk, currentFilter);
+  
+      collected.push(...locationMatched);
+  
+      cursor = result.endCursor ?? null;
+      nextPage = result.hasNextPage;
+    }
+  
+    return {
+      photos: collected,
+      endCursor: cursor,
+      hasNextPage: nextPage,
+      totalCount,
+    };
+  };
+
+  /** 앱 기동 후 초기 진입 시 사진 로드 빠르게 처리 */
+  const loadInitialPhotos = useCallback(async () => {
+    if (requestInFlightRef.current) return;
+  
+    const ok = await ensurePhotoPermission();
+    if (!ok) return;
+  
+    requestInFlightRef.current = true;
+    setInitialLoading(true);
+    setEmptyMessage(null);
+  
+    try {
+      // 1. 딱 1페이지만 가져온다
+      const result = await fetchAssetsPage({
+        after: null,
+        first: 50, // 여기서 절대 늘리지 마세요
+      });
+  
+      const assets = result.assets ?? [];
+  
+      // 2. 빠른 변환 (assetInfo 없음)
+      let photosFast = hydrateAssetsToPhotos(assets);
+  
+      // 3. 날짜 필터만 간단 적용
+      photosFast = photosFast.filter((p) => {
+        if (!p.takenAt) return true;
+  
+        return (
+          p.takenAt >= dayStartMs(oneYearAgo) &&
+          p.takenAt < dayEndNextMs(new Date())
+        );
+      });
+  
+      // 4. 최대 30장만 잘라서 즉시 보여줌
+      const initial = sortPhotosForDisplay(
+        dedupePhotosByUri(photosFast).slice(0, INITIAL_TARGET_COUNT)
+      );
+  
+      setPhotos(initial);
+      setPhotosAll(initial);
+      setEndCursor(result.endCursor ?? null);
+      setHasNextPage(result.hasNextPage);
+      setDidInitialLoad(true);
+  
+      // 5. 즉시 백그라운드 로딩 시작
+      setTimeout(() => {
+        loadMorePhotos({ mode: "background" });
+      }, 0);
+  
+    } catch (err) {
+      console.log("initial load error:", err);
+    } finally {
+      setInitialLoading(false);
+      requestInFlightRef.current = false;
+    }
+  }, [filter]);
+
+  /** 날짜 필터 변경 처리 - 유저가 날짜 변경 시 해당 날짜 조건에 맞는 결과를 찾을 때까지 다시 탐색 */
+  const reloadPhotosForFilter = useCallback(async () => {
+    if (requestInFlightRef.current) return;
+  
+    const ok = await ensurePhotoPermission();
+    if (!ok) return;
+  
+    requestInFlightRef.current = true;
+    setLoading(true);
+    setEmptyMessage(null);
+    didKickoffBackgroundRef.current = false;
+  
+    try {
+      const result = await collectPhotosForTarget({
+        currentFilter: filter,
+        targetCount: FILTER_RESET_TARGET_COUNT,
+        startCursor: null,
+        mode: "filter-reset",
+      });
+  
+      const sorted = sortPhotosForDisplay(
+        dedupePhotosByUri(result.photos)
+      );
+  
+      setPhotos(sorted);
+      setPhotosAll(sorted);
+      setEndCursor(result.endCursor);
+      setHasNextPage(result.hasNextPage);
+  
+      if (sorted.length === 0) {
+        setEmptyMessage(EMPTY_DEFAULT_MESSAGE);
+      } else {
+        setEmptyMessage(null);
+        didKickoffBackgroundRef.current = true;
+        void loadMorePhotos({ mode: "background" });
+      }
+    } catch (err) {
+      console.log("reload error:", err);
+      Alert.alert("오류", "사진을 다시 불러오는 중 문제가 발생했습니다.");
+    } finally {
+      setLoading(false);
+      requestInFlightRef.current = false;
+    }
+  }, [filter]);
+
+  /** append/background 공용 로드 처리 */
+  const loadMorePhotos = useCallback(
+    async ({ mode }: { mode: "background" | "append" }) => {
+      if (requestInFlightRef.current) return;
+      if (!hasNextPage) return;
+  
+      const ok = await ensurePhotoPermission();
+      if (!ok) return;
+  
+      requestInFlightRef.current = true;
+  
+      if (mode === "append") {
+        setLoading(true);
+      } else {
+        setBackgroundLoading(true);
+      }
+  
+      try {
+        const result = await collectPhotosForTarget({
+          currentFilter: filter,
+          targetCount: APPEND_TARGET_COUNT,
+          startCursor: endCursor,
+          mode,
+        });
+  
+        const merged = dedupePhotosByUri([...photosRef.current, ...result.photos]);
+        const sorted = sortPhotosForDisplay(merged);
+  
+        setPhotos(sorted);
+        setPhotosAll(sorted);
+        setEndCursor(result.endCursor);
+        setHasNextPage(result.hasNextPage);
+      } catch (err) {
+        console.log("load more error:", err);
+      } finally {
+        if (mode === "append") {
+          setLoading(false);
+        } else {
+          setBackgroundLoading(false);
+        }
+        requestInFlightRef.current = false;
+      }
+    },
+    [filter, endCursor, hasNextPage]
+  );
+  /** 2026.03.26 By June END */
+
   const PAGE_SIZE = 50;
   const { dateStart, dateEnd, timeStart, timeEnd, countries, cities } = filter;
 
@@ -539,16 +930,162 @@ export default function HomeScreen() {
     [loading, hasNextPage, endCursor, filter]
   );
 
+  /** 2026.03.26 by June */
+  const loadPhotosForFilterReset = useCallback(async () => {
+    if (loading) return;
+  
+    const { status, canAskAgain } = await MediaLibrary.getPermissionsAsync();
+  
+    let hasPerm = status === "granted";
+  
+    if (!hasPerm && canAskAgain) {
+      const req = await MediaLibrary.requestPermissionsAsync(false);
+      hasPerm = req.status === "granted";
+    }
+  
+    if (!hasPerm) {
+      Alert.alert("권한 필요", "사진 접근 권한이 필요합니다.");
+      return;
+    }
+  
+    setLoading(true);
+  
+    try {
+      let cursor: string | undefined = undefined;
+      let nextPage = true;
+      let collected: Photo[] = [];
+  
+      while (nextPage && collected.length < 50) {
+        const result = await MediaLibrary.getAssetsAsync({
+          first: 50,
+          mediaType: MediaLibrary.MediaType.photo,
+          after: cursor,
+          sortBy: [MediaLibrary.SortBy.creationTime],
+        });
+  
+        updateTotalPhotos(result.totalCount ?? 0);
+  
+        const assets = result.assets ?? [];
+  
+        const filtered = assets.filter((a) => {
+          const created =
+            a.creationTime && a.creationTime > 0 ? a.creationTime : null;
+  
+          const modified =
+            a.modificationTime && a.modificationTime > 0
+              ? a.modificationTime
+              : null;
+  
+          const tsMs = created ?? modified;
+  
+          if (!tsMs) {
+            return true;
+          }
+  
+          if (tsMs < dayStartMs(dateStart) || tsMs >= dayEndNextMs(dateEnd)) {
+            return false;
+          }
+  
+          return inTimeWindow(tsMs, timeStart, timeEnd);
+        });
+  
+        const baseInfos: Photo[] = await Promise.all(
+          filtered.map(async (a) => {
+            try {
+              const info = await MediaLibrary.getAssetInfoAsync(a.id);
+              const uri = info.localUri ?? info.uri;
+  
+              return {
+                uri,
+                takenAt: info.creationTime ?? a.creationTime ?? null,
+                location: info.location
+                  ? {
+                      latitude: Number(info.location.latitude),
+                      longitude: Number(info.location.longitude),
+                    }
+                  : null,
+              };
+            } catch {
+              return {
+                uri: a.uri,
+                takenAt: a.creationTime ?? null,
+                location: null,
+              };
+            }
+          })
+        );
+  
+        const withPlaces = await imagesWithLocation(baseInfos, {
+          maxLookups: 60,
+          precision: 2,
+          delayMs: 150,
+        });
+  
+        const filteredWithLocation = withPlaces.filter((photo) => {
+          if (countries.length === 0 && cities.length === 0) {
+            return true;
+          }
+          if (cities.length > 0) {
+            return cities.includes(photo.city ?? "");
+          }
+          return countries.includes(photo.country ?? "");
+        });
+  
+        collected = [...collected, ...filteredWithLocation];
+  
+        cursor = result.endCursor ?? undefined;
+        nextPage = result.hasNextPage;
+      }
+  
+      const deduped = Array.from(
+        new Map(collected.map((photo) => [photo.uri, photo])).values()
+      );
+  
+      deduped.sort((a, b) => {
+        const aHas = typeof a.takenAt === "number" && Number.isFinite(a.takenAt);
+        const bHas = typeof b.takenAt === "number" && Number.isFinite(b.takenAt);
+  
+        if (aHas && bHas) return (a.takenAt as number) - (b.takenAt as number);
+        if (aHas && !bHas) return -1;
+        if (!aHas && bHas) return 1;
+        return 0;
+      });
+  
+      setPhotos(deduped);
+      setEndCursor(cursor ?? null);
+      setHasNextPage(nextPage);
+    } catch (err) {
+      console.log("MediaLibrary filter reset error:", err);
+      Alert.alert("오류", "사진을 다시 불러오는 중 문제가 발생했습니다.");
+    } finally {
+      setLoading(false);
+    }
+  }, [
+    loading,
+    dateStart,
+    dateEnd,
+    timeStart,
+    timeEnd,
+    countries,
+    cities,
+  ]);
+
   /** 2026.03.03 사진 삭제 등으로 데이터 갱신 발생 시 새로고침 관련 추가 By June START */
   const [refreshing, setRefreshing] = useState(false); 
   const lastResumeReloadRef = useRef(0);
 
+  /** 2026.03.26 수정 By June */
   const reloadPhotos = useCallback(async () => {
-    // reset + 첫 페이지부터 다시 로드
     setEndCursor(null);
     setHasNextPage(true);
-    await loadPhotos({ reset: true });
-  }, [loadPhotos]);
+    await loadPhotosForFilterReset();
+  }, [loadPhotosForFilterReset]);
+
+  /** 초기 진입 이펙트 추가 2026.03.26 By June */
+  useEffect(() => {
+    if (didInitialLoad) return;
+    void loadInitialPhotos();
+  }, [didInitialLoad, loadInitialPhotos]);
 
   useEffect(() => {
     const sub = AppState.addEventListener("change", (state) => {
@@ -582,21 +1119,28 @@ export default function HomeScreen() {
 		}
 	}, [photosAll.length, loading]);
 	
-  useEffect(() => {
-		// 필터 변경 시 사용 횟수 증가
-		const usedDate = !!filter.dateStart || !!filter.dateEnd;
-		const usedTime = filter.timeStart !== 0 || filter.timeEnd !== 1439;
-		const usedLocation = filter.countries.length > 0 || filter.cities.length > 0;
-		
-		if (usedDate) incrementDateFilter();
-		if (usedTime) incrementTimeFilter();
-		if (usedLocation) incrementLocationFilter();
+  /** 2026.03.26 By June */
+  const didMountFilterEffectRef = useRef(false);
 
-    // 필터 바뀌면 페이지네이션 리셋 후 처음부터 다시 로드
+  useEffect(() => {
+    if (!didMountFilterEffectRef.current) {
+      didMountFilterEffectRef.current = true;
+      return;
+    }
+  
+    const usedDate = !!filter.dateStart || !!filter.dateEnd;
+    const usedTime = filter.timeStart !== 0 || filter.timeEnd !== 1439;
+    const usedLocation = filter.countries.length > 0 || filter.cities.length > 0;
+  
+    if (usedDate) incrementDateFilter();
+    if (usedTime) incrementTimeFilter();
+    if (usedLocation) incrementLocationFilter();
+  
     setEndCursor(null);
     setHasNextPage(true);
-    loadPhotos({ reset: true });
-  }, [filter]);
+    loadPhotosForFilterReset();
+  }, [filter, reloadPhotosForFilter]);
+  /** 2026.03.26 By June */
 
   // 썸네일 그리드에 사진 데이터 렌더링
   const renderItem: ListRenderItem<Photo> = ({ item, index }) => {
@@ -644,9 +1188,13 @@ export default function HomeScreen() {
     return mins >= timeStart && mins <= timeEnd; // 기본: 정상 구간
   };
 
+  /** 2026.03.26 By June */
   const fmtDateTime = (ms: string | number | Date | null | undefined) => {
-    if (!ms) return "Unknown";
+    if (!ms) return "날짜 정보 없음";
+  
     const d = new Date(ms);
+    if (Number.isNaN(d.getTime())) return "날짜 정보 없음";
+  
     const yyyy = d.getFullYear();
     const MM = `${d.getMonth() + 1}`.padStart(2, "0");
     const DD = `${d.getDate()}`.padStart(2, "0");
@@ -841,13 +1389,15 @@ export default function HomeScreen() {
                 backgroundColor: "#FFF",
                 borderRadius: 10,
               }}
-              ListEmptyComponent={ /** 데이타 0건인 경우 */
-                (!loading && !isScanning && !error) ? (
+              ListEmptyComponent={
+                (!loading && !initialLoading && !isScanning && !error) ? (
                   <View style={styles.emptyWrap}>
-                    <Text style={styles.emptyTitle}>No photos found</Text>
-                    <Text style={styles.emptyDesc}>
-                      Try expanding the filters.
+                    <Text style={styles.emptyTitle}>
+                      {emptyMessage ?? EMPTY_DEFAULT_MESSAGE}
                     </Text>
+                    {emptyMessage !== EMPTY_RECENT_3Y_MESSAGE ? (
+                      <Text style={styles.emptyDesc}>{EMPTY_DEFAULT_DESC}</Text>
+                    ) : null}
                   </View>
                 ) : null
               }
@@ -867,8 +1417,8 @@ export default function HomeScreen() {
                 if (!userScrolled) return;
                 // 2) 모멘텀 중 첫 호출만 허용
                 if (onEndDuringMomentumRef.current) return;
-                // 3) 이미 로딩 중/락이면 무시
-                if (loading || onEndLockRef.current) return;
+                // 3) 이미 로딩 중/락이면 무시 - 2026.03.26 Edit By June
+                if (loading || backgroundLoading || onEndLockRef.current) return;
                 // 4) 더 불러올 페이지 없으면 무시
                 if (!hasNextPage) return;
                 // ---- 페이지네이션 시작 ----
@@ -876,7 +1426,8 @@ export default function HomeScreen() {
                 onEndDuringMomentumRef.current = true; // 이번 모멘텀 사이클에서는 한 번만
                 isPaginatingRef.current = true;
 
-                loadPhotos({ reset: false }).finally(() => {
+                /** 2026.03.26 Edit By June */
+                loadMorePhotos({ mode: "append" }).finally(() => {
                   onEndLockRef.current = false;
                   isPaginatingRef.current = false;
                 });
