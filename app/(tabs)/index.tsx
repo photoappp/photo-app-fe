@@ -1,21 +1,22 @@
 import DateTimeFilter from "@/components/DateTimeFilter";
 import ShowOnMap from "@/components/ShowOnMap";
 import { Photo } from "@/types/Photo";
-import { Ionicons } from "@expo/vector-icons";
+import { Ionicons } from '@expo/vector-icons';
 // import { useNavigation } from '@react-navigation/native';
-import { LinearGradient } from "expo-linear-gradient";
+import { LinearGradient } from 'expo-linear-gradient';
 import * as Location from "expo-location";
 import * as MediaLibrary from "expo-media-library";
-import { useNavigation, useRouter } from "expo-router";
+import { useNavigation, useRouter } from 'expo-router';
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   ActivityIndicator,
   Alert,
-  AppState /** 2026.03.03 Add by June */,
+  AppState, /** 2026.03.03 Add by June */
   Button,
   Dimensions,
   FlatList,
   Image,
+  Linking,
   ListRenderItem,
   Modal,
   Platform,
@@ -23,21 +24,24 @@ import {
   Text,
   TouchableOpacity,
   useColorScheme,
-  View,
+  View
 } from "react-native";
-import ImageViewing from "react-native-image-viewing";
-import { Edges, SafeAreaView } from "react-native-safe-area-context";
-import Share from "react-native-share"; // 2026-02-10 사진 공유 라이브러리 추가 by Minji
+import ImageViewing from 'react-native-image-viewing';
+import { Edges, SafeAreaView } from 'react-native-safe-area-context';
+import Share from 'react-native-share'; // 2026-02-10 사진 공유 라이브러리 추가 by Minji
 
-import { useLanguage } from "@/components/context/LanguageContext";
-import { useSlideshowTime } from "@/components/context/SlideshowTimeContext";
-import { useTheme } from "@/components/context/ThemeContext";
-import { useUserData } from "@/components/context/UserDataContext";
+import { useLanguage } from '@/components/context/LanguageContext';
+import { useSlideshowTime } from '@/components/context/SlideshowTimeContext';
+import { useTheme } from '@/components/context/ThemeContext';
+import { useUserData } from '@/components/context/UserDataContext';
 
 import IconPlay from "@/assets/icons/ic_play.svg"; //2026.03.18 Change button UI by June
 
-import { AMPLITUDE_API_KEY } from "@/constants/env";
-import * as amplitude from "@amplitude/analytics-react-native";
+import { AMPLITUDE_API_KEY } from '@/constants/env';
+import * as amplitude from '@amplitude/analytics-react-native';
+
+
+
 
 // Responsive image grid calculations
 const screenWidth = Dimensions.get("window").width;
@@ -49,7 +53,7 @@ const numColumns = 5;
 const usableWidth = screenWidth - (24 + horizontalPadding) * 2;
 // 이 usableWidth 기준으로 5등분 + margin
 const imageWidth = Math.floor(
-  (usableWidth - numColumns * imageMargin * 2) / numColumns,
+  (usableWidth - numColumns * imageMargin * 2) / numColumns
 );
 
 type DateTimeFilterState = {
@@ -68,24 +72,20 @@ type FilterState = DateTimeFilterState & LocationFilterState;
 
 /** ---------- HomeScreen ---------- */
 export default function HomeScreen() {
-  const router = useRouter();
-  const navigation = useNavigation();
-  const { isDarkTheme, colors } = useTheme();
-  const { language } = useLanguage();
-  //	const { userData, updateUserData } = useUserData();
+	const router = useRouter();
+	const navigation = useNavigation();
+	const { isDarkTheme, colors } = useTheme();
+	const { language } = useLanguage();
+//	const { userData, updateUserData } = useUserData();
 
-  const {
-    incrementDateFilter,
-    incrementTimeFilter,
-    incrementLocationFilter,
-    updateTotalPhotos,
-  } = useUserData();
+	const { incrementDateFilter, incrementTimeFilter, incrementLocationFilter, updateTotalPhotos } = useUserData();
 
-  useEffect(() => {
-    navigation.setOptions({ headerShown: false });
-  }, [navigation]);
+	useEffect(() => {
+			navigation.setOptions({ headerShown: false });
+		}, [navigation]);
 
   const [images, setImages] = useState<any[]>([]);
+
 
   const handleOpenSettings = () => {
     //navigation.navigate('Settings'); // 실제 설정 스크린 이름으로 바꿔 사용
@@ -109,7 +109,7 @@ export default function HomeScreen() {
 
   // ---- 사진 목록/페이지네이션 ----
   const [photos, setPhotos] = useState<Photo[]>([]); // 화면에 뿌릴 가공된 데이터 (필터 적용 후)
-  const [photosAll, setPhotosAll] = useState<Photo[]>([]); // 필터 적용 전 전체 사진
+	const [photosAll, setPhotosAll] = useState<Photo[]>([]); // 필터 적용 전 전체 사진
   const [endCursor, setEndCursor] = useState<string | null>(null); // MediaLibrary가 돌려주는 다음 페이지 커서 문자열
   const [hasNextPage, setHasNextPage] = useState<boolean>(true); // 다음 페이지 있는지 여부
   const [loading, setLoading] = useState<boolean>(false);
@@ -119,10 +119,19 @@ export default function HomeScreen() {
   const [viewerVisible, setViewerVisible] = useState(false);
   const [viewerIndex, setViewerIndex] = useState(0);
 
+  /** 2026.03.26 By June - 사진 목록/페이지네이션 관련 */
+  const [initialLoading, setInitialLoading] = useState(false);
+  const [backgroundLoading, setBackgroundLoading] = useState(false);
+  const [emptyMessage, setEmptyMessage] = useState<string | null>(null);
+  const [didInitialLoad, setDidInitialLoad] = useState(false);
+  const requestInFlightRef = useRef(false);
+  const didKickoffBackgroundRef = useRef(false);
+  /** 2026.03.26 By June */
+
   // ImageViewing 에 넘길 images 배열 (형식: { uri: string }[])
   const viewerImages = useMemo(
     () => photos.map((p) => ({ uri: p.uri })),
-    [photos],
+    [photos]
   );
 
   const photosRef = useRef<Photo[]>(photos);
@@ -146,24 +155,38 @@ export default function HomeScreen() {
   // 날짜,시간 필터링 관련 ===> 컴포넌트로 분리하기!!
   const dayStartMs = (d: Date) =>
     new Date(d.getFullYear(), d.getMonth(), d.getDate(), 0, 0, 0, 0).getTime();
-  const dayEndNextMs = (d: Date) =>
-    new Date(
-      d.getFullYear(),
-      d.getMonth(),
-      d.getDate() + 1,
-      0,
-      0,
-      0,
-      0,
-    ).getTime();
+  const dayEndNextMs = (d: Date) => new Date(
+    d.getFullYear(),
+    d.getMonth(),
+    d.getDate() + 1,
+    0,
+    0,
+    0,
+    0
+  ).getTime();
 
+  /** 2026.03.26 by June Edit Start */  
   const today = new Date();
-  const oneMonthAgo = new Date(
-    today.getFullYear(),
-    today.getMonth() - 1,
-    today.getDate(),
+  const oneYearAgo = new Date(
+    today.getFullYear() - 1,
+    today.getMonth(),
+    today.getDate()
   );
-
+  const threeYearsAgo = new Date(
+    today.getFullYear() - 3,
+    today.getMonth(),
+    today.getDate()
+  );
+  
+  const INITIAL_TARGET_COUNT = 30;
+  const FILTER_RESET_TARGET_COUNT = 50;
+  const APPEND_TARGET_COUNT = 50;
+  const FETCH_PAGE_SIZE = 100;
+  
+  const EMPTY_RECENT_3Y_MESSAGE = "최근 3년 내 사진이 없습니다.";
+  const EMPTY_DEFAULT_MESSAGE = "No photos found";
+  const EMPTY_DEFAULT_DESC = "Try expanding the filters.";
+ 
   const sortPhotosByTakenAtAsc = (items: Photo[]) => {
     return [...items].sort((a, b) => {
       const aTime =
@@ -181,18 +204,18 @@ export default function HomeScreen() {
   };
 
   const [filter, setFilter] = useState<FilterState>({
-    dateStart: oneMonthAgo,
+    dateStart: oneYearAgo,
     dateEnd: new Date(),
     timeStart: 0,
     timeEnd: 1439,
     countries: [],
     cities: [],
   });
+   /** 2026.03.26 by June Edit End */  
 
   // 슬라이드쇼 관련
-  // 2026-04-15: 슬라이드쇼 시간 설정 Context에서 값 받아오도록 변경 by yen
-  const { slideshowTime } = useSlideshowTime();
-  const SLIDESHOW_MS = slideshowTime;
+  const SLIDESHOW_MS = 2000;
+	const { slideshowTime } = useSlideshowTime();
   const [slideshowOn, setSlideshowOn] = useState(false);
   const slideshowTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const closingRef = useRef(false);
@@ -223,31 +246,33 @@ export default function HomeScreen() {
       setSlideshowOn(true);
       setViewerIndex(startIndex);
       setSlideshowVisible(true);
-
+  
       slideshowTimerRef.current = setInterval(() => {
+
         if (closingRef.current) return; // 닫는 중이면 업데이트 금지
 
         const len = photosRef.current.length;
         if (!len) return;
-
+      
         setViewerIndex((prev) => {
           const next = prev + 1;
-
+      
           if (next >= len) {
             closeSlideshow();
             return prev;
           }
-
+      
           slideshowListRef.current?.scrollToIndex({
             index: next,
             animated: true,
           });
-
+      
           return next;
         });
-      }, SLIDESHOW_MS);
+      }, SLIDESHOW_MS);      
+      
     },
-    [stopSlideshow, slideshowTime],
+    [stopSlideshow, slideshowTime]
   );
 
   useEffect(() => {
@@ -255,11 +280,11 @@ export default function HomeScreen() {
       console.warn("amplitude_api_key_missing");
       return;
     }
-
+  
     // init은 보통 1회만 하는 게 정석이지만,
     // 동일 API key로 중복 init이 문제되면 아래도 guard 걸면 됨.
     amplitude.init(AMPLITUDE_API_KEY);
-
+  
     if (!app_launched_tracked) {
       app_launched_tracked = true;
       amplitude.track("app_launched", {
@@ -271,7 +296,7 @@ export default function HomeScreen() {
 
   useEffect(() => {
     home_view_start_ms_ref.current = Date.now();
-
+  
     amplitude.track("screen_home_viewed", {
       screen_name: "home",
     });
@@ -327,10 +352,10 @@ export default function HomeScreen() {
       photo_count: photosRef.current.length,
     });
   };
-
+  
   async function imagesWithLocation(
     images: any[],
-    opts?: { maxLookups?: number; precision?: number; delayMs?: number },
+    opts?: { maxLookups?: number; precision?: number; delayMs?: number }
   ) {
     const maxLookups = opts?.maxLookups ?? 60; // 한 번 로드에서 지오코딩 최대 호출 수
     const precision = opts?.precision ?? 2; // 좌표 라운딩 자릿수(2 ≈ ~1km)
@@ -382,12 +407,379 @@ export default function HomeScreen() {
     return updated;
   }
 
+  /** 2026.03.26 By June START - 사진 로드 및 날짜 필터 변경시 액션관련 함수 모듈화 작업 */
+  /** timestamp 추출 */
+  const getAssetTimestampMs = (asset: MediaLibrary.Asset) => {
+    const created =
+      asset.creationTime && asset.creationTime > 0 ? asset.creationTime : null;
+  
+    const modified =
+      asset.modificationTime && asset.modificationTime > 0
+        ? asset.modificationTime
+        : null;
+  
+    return created ?? modified;
+  };
+
+  /** 날짜/시간 필터 검사 */
+  const matchesDateTimeFilter = (
+    asset: MediaLibrary.Asset,
+    currentFilter: FilterState
+  ) => {
+    const tsMs = getAssetTimestampMs(asset);
+  
+    // timestamp 없는 사진도 포함
+    if (!tsMs) return true;
+  
+    if (
+      tsMs < dayStartMs(currentFilter.dateStart) ||
+      tsMs >= dayEndNextMs(currentFilter.dateEnd)
+    ) {
+      return false;
+    }
+  
+    return inTimeWindow(tsMs, currentFilter.timeStart, currentFilter.timeEnd);
+  };
+
+  /** 페이지 1번 fetch */
+  const fetchAssetsPage = async (params?: { after?: string | null; first?: number }) => {
+    const result = await MediaLibrary.getAssetsAsync({
+      first: params?.first ?? FETCH_PAGE_SIZE,
+      mediaType: MediaLibrary.MediaType.photo,
+      after: params?.after ?? undefined,
+      sortBy: [MediaLibrary.SortBy.creationTime],
+    });
+
+    updateTotalPhotos(result.totalCount ?? 0);
+
+    return result;
+  };
+
+  /** asset → Photo 정규화 */
+  const hydrateAssetsToPhotos = (assets: MediaLibrary.Asset[]): Photo[] => {
+    return assets.map((asset) => ({
+      uri: asset.uri,
+      takenAt:
+        asset.creationTime && asset.creationTime > 0
+          ? asset.creationTime
+          : asset.modificationTime && asset.modificationTime > 0
+          ? asset.modificationTime
+          : null,
+      location: null,
+    }));
+  };
+
+  /** 위치 필터 */
+  const applyLocationFilter = (items: Photo[], currentFilter: FilterState) => {
+    const { countries, cities } = currentFilter;
+  
+    if (countries.length === 0 && cities.length === 0) {
+      return items;
+    }
+  
+    if (cities.length > 0) {
+      return items.filter((photo) => cities.includes(photo.city ?? ""));
+    }
+  
+    return items.filter((photo) => countries.includes(photo.country ?? ""));
+  };
+
+  /** geocoding 필요 여부 판별 */
+  const shouldUseGeocoding = (
+    currentFilter: FilterState,
+    mode: "initial" | "background" | "append" | "filter-reset"
+  ) => {
+    const hasLocationFilter =
+      currentFilter.countries.length > 0 || currentFilter.cities.length > 0;
+  
+    if (hasLocationFilter) return true;
+    if (mode === "initial") return false;
+    return true;
+  };
+
+  /** 사진 정렬 처리: 오래된 순 + timestamp 없는 사진 최하단 표출 */
+  const sortPhotosForDisplay = (items: Photo[]) => {
+    return [...items].sort((a, b) => {
+      const aHasTs = typeof a.takenAt === "number" && Number.isFinite(a.takenAt);
+      const bHasTs = typeof b.takenAt === "number" && Number.isFinite(b.takenAt);
+  
+      if (aHasTs && bHasTs) {
+        return (a.takenAt as number) - (b.takenAt as number);
+      }
+  
+      if (aHasTs && !bHasTs) return -1;
+      if (!aHasTs && bHasTs) return 1;
+  
+      return 0;
+    });
+  };
+
+  /** 중복 제거 함수 - append 때 같은 사진이 두 번 붙는 것 방지 */
+  const dedupePhotosByUri = (items: Photo[]) => {
+    const seen = new Set<string>();
+    const out: Photo[] = [];
+  
+    for (const item of items) {
+      if (seen.has(item.uri)) continue;
+      seen.add(item.uri);
+      out.push(item);
+    }
+  
+    return out;
+  };
+
+  /** 사진 접근 권한 처리 */
+  const ensurePhotoPermission = async () => {
+    const { status, canAskAgain } = await MediaLibrary.getPermissionsAsync();
+  
+    let hasPerm = status === "granted";
+  
+    if (!hasPerm && canAskAgain) {
+      const req = await MediaLibrary.requestPermissionsAsync(false);
+      hasPerm = req.status === "granted";
+    }
+  
+    if (hasPerm) return true;
+  
+    if (!canAskAgain) {
+      Alert.alert(
+        "권한 필요",
+        "사진을 표시하려면 사진 접근 권한을 허용해야 합니다. 설정에서 권한을 켜주세요.",
+        [
+          { text: "취소", style: "cancel" },
+          {
+            text: "설정으로 이동",
+            onPress: () => {
+              Linking.openSettings().catch(() => {
+                console.log("openSettings failed");
+              });
+            },
+          },
+        ]
+      );
+    } else {
+      Alert.alert("권한 필요", "사진 접근 권한이 필요합니다.");
+    }
+  
+    return false;
+  };
+
+  /** 목표 개수 확보까지 반복 fetch 처리 */
+  const collectPhotosForTarget = async ({
+    currentFilter,
+    targetCount,
+    startCursor = null,
+    mode,
+  }: {
+    currentFilter: FilterState;
+    targetCount: number;
+    startCursor?: string | null;
+    mode: "initial" | "background" | "append" | "filter-reset";
+  }) => {
+    let cursor: string | null = startCursor;
+    let nextPage = true;
+    let totalCount = 0;
+    const collected: Photo[] = [];
+  
+    let pageCount = 0;
+    const MAX_PAGES = 5;
+
+    while (nextPage && collected.length < targetCount && pageCount < MAX_PAGES) {
+      pageCount += 1;
+      const result = await fetchAssetsPage({
+        after: cursor,
+        first: FETCH_PAGE_SIZE,
+      });
+  
+      totalCount = result.totalCount ?? totalCount;
+  
+      const assets = result.assets ?? [];
+      const dateTimeMatched = assets.filter((asset) =>
+        matchesDateTimeFilter(asset, currentFilter)
+      );
+  
+      let photosChunk = await hydrateAssetsToPhotos(dateTimeMatched);
+  
+      if (shouldUseGeocoding(currentFilter, mode)) {
+        photosChunk = await imagesWithLocation(photosChunk, {
+          maxLookups: 60,
+          precision: 2,
+          delayMs: 150,
+        });
+      }
+  
+      const locationMatched = applyLocationFilter(photosChunk, currentFilter);
+  
+      collected.push(...locationMatched);
+  
+      cursor = result.endCursor ?? null;
+      nextPage = result.hasNextPage;
+    }
+  
+    return {
+      photos: collected,
+      endCursor: cursor,
+      hasNextPage: nextPage,
+      totalCount,
+    };
+  };
+
+  /** 앱 기동 후 초기 진입 시 사진 로드 빠르게 처리 */
+  const loadInitialPhotos = useCallback(async () => {
+    if (requestInFlightRef.current) return;
+  
+    const ok = await ensurePhotoPermission();
+    if (!ok) return;
+  
+    requestInFlightRef.current = true;
+    setInitialLoading(true);
+    setEmptyMessage(null);
+  
+    try {
+      // 1. 딱 1페이지만 가져온다
+      const result = await fetchAssetsPage({
+        after: null,
+        first: 50, // 여기서 절대 늘리지 마세요
+      });
+  
+      const assets = result.assets ?? [];
+  
+      // 2. 빠른 변환 (assetInfo 없음)
+      let photosFast = hydrateAssetsToPhotos(assets);
+  
+      // 3. 날짜 필터만 간단 적용
+      photosFast = photosFast.filter((p) => {
+        if (!p.takenAt) return true;
+  
+        return (
+          p.takenAt >= dayStartMs(oneYearAgo) &&
+          p.takenAt < dayEndNextMs(new Date())
+        );
+      });
+  
+      // 4. 최대 30장만 잘라서 즉시 보여줌
+      const initial = sortPhotosForDisplay(
+        dedupePhotosByUri(photosFast).slice(0, INITIAL_TARGET_COUNT)
+      );
+  
+      setPhotos(initial);
+      setPhotosAll(initial);
+      setEndCursor(result.endCursor ?? null);
+      setHasNextPage(result.hasNextPage);
+      setDidInitialLoad(true);
+  
+      // 5. 즉시 백그라운드 로딩 시작
+      setTimeout(() => {
+        loadMorePhotos({ mode: "background" });
+      }, 0);
+  
+    } catch (err) {
+      console.log("initial load error:", err);
+    } finally {
+      setInitialLoading(false);
+      requestInFlightRef.current = false;
+    }
+  }, [filter]);
+
+  /** 날짜 필터 변경 처리 - 유저가 날짜 변경 시 해당 날짜 조건에 맞는 결과를 찾을 때까지 다시 탐색 */
+  const reloadPhotosForFilter = useCallback(async () => {
+    if (requestInFlightRef.current) return;
+  
+    const ok = await ensurePhotoPermission();
+    if (!ok) return;
+  
+    requestInFlightRef.current = true;
+    setLoading(true);
+    setEmptyMessage(null);
+    didKickoffBackgroundRef.current = false;
+  
+    try {
+      const result = await collectPhotosForTarget({
+        currentFilter: filter,
+        targetCount: FILTER_RESET_TARGET_COUNT,
+        startCursor: null,
+        mode: "filter-reset",
+      });
+  
+      const sorted = sortPhotosForDisplay(
+        dedupePhotosByUri(result.photos)
+      );
+  
+      setPhotos(sorted);
+      setPhotosAll(sorted);
+      setEndCursor(result.endCursor);
+      setHasNextPage(result.hasNextPage);
+  
+      if (sorted.length === 0) {
+        setEmptyMessage(EMPTY_DEFAULT_MESSAGE);
+      } else {
+        setEmptyMessage(null);
+        didKickoffBackgroundRef.current = true;
+        void loadMorePhotos({ mode: "background" });
+      }
+    } catch (err) {
+      console.log("reload error:", err);
+      Alert.alert("오류", "사진을 다시 불러오는 중 문제가 발생했습니다.");
+    } finally {
+      setLoading(false);
+      requestInFlightRef.current = false;
+    }
+  }, [filter]);
+
+  /** append/background 공용 로드 처리 */
+  const loadMorePhotos = useCallback(
+    async ({ mode }: { mode: "background" | "append" }) => {
+      if (requestInFlightRef.current) return;
+      if (!hasNextPage) return;
+  
+      const ok = await ensurePhotoPermission();
+      if (!ok) return;
+  
+      requestInFlightRef.current = true;
+  
+      if (mode === "append") {
+        setLoading(true);
+      } else {
+        setBackgroundLoading(true);
+      }
+  
+      try {
+        const result = await collectPhotosForTarget({
+          currentFilter: filter,
+          targetCount: APPEND_TARGET_COUNT,
+          startCursor: endCursor,
+          mode,
+        });
+  
+        const merged = dedupePhotosByUri([...photosRef.current, ...result.photos]);
+        const sorted = sortPhotosForDisplay(merged);
+  
+        setPhotos(sorted);
+        setPhotosAll(sorted);
+        setEndCursor(result.endCursor);
+        setHasNextPage(result.hasNextPage);
+      } catch (err) {
+        console.log("load more error:", err);
+      } finally {
+        if (mode === "append") {
+          setLoading(false);
+        } else {
+          setBackgroundLoading(false);
+        }
+        requestInFlightRef.current = false;
+      }
+    },
+    [filter, endCursor, hasNextPage]
+  );
+  /** 2026.03.26 By June END */
+
   const PAGE_SIZE = 50;
   const { dateStart, dateEnd, timeStart, timeEnd, countries, cities } = filter;
 
   const loadCountRef = useRef(0);
   const loadPhotos = useCallback(
     async ({ reset = false }: { reset?: boolean } = {}) => {
+
       // 딜레이 처리 제대로 되는지 테스트 START
       loadCountRef.current += 1;
       console.log(`[LOAD #${loadCountRef.current}]`, new Date().toISOString());
@@ -409,24 +801,24 @@ export default function HomeScreen() {
       } else {
         console.log("Access permit OK");
       }
-
+  
       // 2) 중복 호출 / 페이지 끝 체크
       if (loading) return;
       if (!reset && !hasNextPage) return;
-
+  
       setLoading(true);
-
+  
       try {
         // 3) 한 페이지 가져오기
         const result = await MediaLibrary.getAssetsAsync({
           first: PAGE_SIZE,
           mediaType: MediaLibrary.MediaType.photo,
-          after: reset ? undefined : (endCursor ?? undefined),
+          after: reset ? undefined : endCursor ?? undefined,
           sortBy: [MediaLibrary.SortBy.creationTime],
         });
-
-        updateTotalPhotos(result.totalCount ?? 0); // 2026-03-11 userData 수집을 위한 상태값 추가 by Minji
-        console.log("PHOTO COUNT:", photosAll.length);
+  
+				updateTotalPhotos(result.totalCount ?? 0); // 2026-03-11 userData 수집을 위한 상태값 추가 by Minji
+				console.log("PHOTO COUNT:", photosAll.length);
         const assets = result.assets ?? [];
 
         // 4) 날짜/시간 필터
@@ -447,7 +839,7 @@ export default function HomeScreen() {
             "mod:",
             a.modificationTime,
             "tsMs:",
-            tsMs,
+            tsMs
           );
 
           // 1) 진짜로 둘 다 없으면 어떻게 할지 정책
@@ -462,7 +854,7 @@ export default function HomeScreen() {
           if (tsMs < dayStartMs(dateStart) || tsMs >= dayEndNextMs(dateEnd)) {
             return false;
           }
-
+  
           return inTimeWindow(tsMs, timeStart, timeEnd);
         });
 
@@ -473,7 +865,7 @@ export default function HomeScreen() {
           filtered.map(async (a) => {
             try {
               const info = await MediaLibrary.getAssetInfoAsync(a.id);
-              const uri = true ? (info.localUri ?? info.uri) : info.uri;
+              const uri = true ? info.localUri ?? info.uri : info.uri;
 
               return {
                 uri,
@@ -498,7 +890,7 @@ export default function HomeScreen() {
                   : null,
               };
             }
-          }),
+          })
         );
 
         console.log("photos.length 1: ", photos.length);
@@ -535,32 +927,178 @@ export default function HomeScreen() {
         setLoading(false);
       }
     },
-    [loading, hasNextPage, endCursor, filter],
+    [loading, hasNextPage, endCursor, filter]
   );
 
+  /** 2026.03.26 by June */
+  const loadPhotosForFilterReset = useCallback(async () => {
+    if (loading) return;
+  
+    const { status, canAskAgain } = await MediaLibrary.getPermissionsAsync();
+  
+    let hasPerm = status === "granted";
+  
+    if (!hasPerm && canAskAgain) {
+      const req = await MediaLibrary.requestPermissionsAsync(false);
+      hasPerm = req.status === "granted";
+    }
+  
+    if (!hasPerm) {
+      Alert.alert("권한 필요", "사진 접근 권한이 필요합니다.");
+      return;
+    }
+  
+    setLoading(true);
+  
+    try {
+      let cursor: string | undefined = undefined;
+      let nextPage = true;
+      let collected: Photo[] = [];
+  
+      while (nextPage && collected.length < 50) {
+        const result = await MediaLibrary.getAssetsAsync({
+          first: 50,
+          mediaType: MediaLibrary.MediaType.photo,
+          after: cursor,
+          sortBy: [MediaLibrary.SortBy.creationTime],
+        });
+  
+        updateTotalPhotos(result.totalCount ?? 0);
+  
+        const assets = result.assets ?? [];
+  
+        const filtered = assets.filter((a) => {
+          const created =
+            a.creationTime && a.creationTime > 0 ? a.creationTime : null;
+  
+          const modified =
+            a.modificationTime && a.modificationTime > 0
+              ? a.modificationTime
+              : null;
+  
+          const tsMs = created ?? modified;
+  
+          if (!tsMs) {
+            return true;
+          }
+  
+          if (tsMs < dayStartMs(dateStart) || tsMs >= dayEndNextMs(dateEnd)) {
+            return false;
+          }
+  
+          return inTimeWindow(tsMs, timeStart, timeEnd);
+        });
+  
+        const baseInfos: Photo[] = await Promise.all(
+          filtered.map(async (a) => {
+            try {
+              const info = await MediaLibrary.getAssetInfoAsync(a.id);
+              const uri = info.localUri ?? info.uri;
+  
+              return {
+                uri,
+                takenAt: info.creationTime ?? a.creationTime ?? null,
+                location: info.location
+                  ? {
+                      latitude: Number(info.location.latitude),
+                      longitude: Number(info.location.longitude),
+                    }
+                  : null,
+              };
+            } catch {
+              return {
+                uri: a.uri,
+                takenAt: a.creationTime ?? null,
+                location: null,
+              };
+            }
+          })
+        );
+  
+        const withPlaces = await imagesWithLocation(baseInfos, {
+          maxLookups: 60,
+          precision: 2,
+          delayMs: 150,
+        });
+  
+        const filteredWithLocation = withPlaces.filter((photo) => {
+          if (countries.length === 0 && cities.length === 0) {
+            return true;
+          }
+          if (cities.length > 0) {
+            return cities.includes(photo.city ?? "");
+          }
+          return countries.includes(photo.country ?? "");
+        });
+  
+        collected = [...collected, ...filteredWithLocation];
+  
+        cursor = result.endCursor ?? undefined;
+        nextPage = result.hasNextPage;
+      }
+  
+      const deduped = Array.from(
+        new Map(collected.map((photo) => [photo.uri, photo])).values()
+      );
+  
+      deduped.sort((a, b) => {
+        const aHas = typeof a.takenAt === "number" && Number.isFinite(a.takenAt);
+        const bHas = typeof b.takenAt === "number" && Number.isFinite(b.takenAt);
+  
+        if (aHas && bHas) return (a.takenAt as number) - (b.takenAt as number);
+        if (aHas && !bHas) return -1;
+        if (!aHas && bHas) return 1;
+        return 0;
+      });
+  
+      setPhotos(deduped);
+      setEndCursor(cursor ?? null);
+      setHasNextPage(nextPage);
+    } catch (err) {
+      console.log("MediaLibrary filter reset error:", err);
+      Alert.alert("오류", "사진을 다시 불러오는 중 문제가 발생했습니다.");
+    } finally {
+      setLoading(false);
+    }
+  }, [
+    loading,
+    dateStart,
+    dateEnd,
+    timeStart,
+    timeEnd,
+    countries,
+    cities,
+  ]);
+
   /** 2026.03.03 사진 삭제 등으로 데이터 갱신 발생 시 새로고침 관련 추가 By June START */
-  const [refreshing, setRefreshing] = useState(false);
+  const [refreshing, setRefreshing] = useState(false); 
   const lastResumeReloadRef = useRef(0);
 
+  /** 2026.03.26 수정 By June */
   const reloadPhotos = useCallback(async () => {
-    // reset + 첫 페이지부터 다시 로드
     setEndCursor(null);
     setHasNextPage(true);
-    await loadPhotos({ reset: true });
-  }, [loadPhotos]);
+    await loadPhotosForFilterReset();
+  }, [loadPhotosForFilterReset]);
+
+  /** 초기 진입 이펙트 추가 2026.03.26 By June */
+  useEffect(() => {
+    if (didInitialLoad) return;
+    void loadInitialPhotos();
+  }, [didInitialLoad, loadInitialPhotos]);
 
   useEffect(() => {
     const sub = AppState.addEventListener("change", (state) => {
       if (state !== "active") return;
-
+  
       const now = Date.now();
       // iOS에서 active 이벤트가 연달아 튀는 경우가 있어 쿨다운
       if (now - lastResumeReloadRef.current < 1500) return;
       lastResumeReloadRef.current = now;
-
+  
       reloadPhotos();
     });
-
+  
     return () => sub.remove();
   }, [reloadPhotos]);
 
@@ -574,22 +1112,35 @@ export default function HomeScreen() {
   }, [reloadPhotos]);
   /** 2026.03.03 사진 삭제 등으로 데이터 갱신 발생 시 새로고침 관련 추가 By June END */
 
-  // 전체 사진 수 Context 저장
-  useEffect(() => {
-		// 필터 변경 시 사용 횟수 증가
-		const usedDate = !!filter.dateStart || !!filter.dateEnd;
-		const usedTime = filter.timeStart !== 0 || filter.timeEnd !== 1439;
-		const usedLocation = filter.countries.length > 0 || filter.cities.length > 0;
-		
-		if (usedDate) incrementDateFilter();
-		if (usedTime) incrementTimeFilter();
-		if (usedLocation) incrementLocationFilter();
+	// 전체 사진 수 Context 저장
+	useEffect(() => {
+		if (!loading && photosAll.length > 0) {
+			//updateUserData({ totalPhotos: photosAll.length }); --- 2026.01.21 문제 코드 주석처리
+		}
+	}, [photosAll.length, loading]);
+	
+  /** 2026.03.26 By June */
+  const didMountFilterEffectRef = useRef(false);
 
-    // 필터 바뀌면 페이지네이션 리셋 후 처음부터 다시 로드
+  useEffect(() => {
+    if (!didMountFilterEffectRef.current) {
+      didMountFilterEffectRef.current = true;
+      return;
+    }
+  
+    const usedDate = !!filter.dateStart || !!filter.dateEnd;
+    const usedTime = filter.timeStart !== 0 || filter.timeEnd !== 1439;
+    const usedLocation = filter.countries.length > 0 || filter.cities.length > 0;
+  
+    if (usedDate) incrementDateFilter();
+    if (usedTime) incrementTimeFilter();
+    if (usedLocation) incrementLocationFilter();
+  
     setEndCursor(null);
     setHasNextPage(true);
-    loadPhotos({ reset: true });
-  }, [filter]);
+    loadPhotosForFilterReset();
+  }, [filter, reloadPhotosForFilter]);
+  /** 2026.03.26 By June */
 
   // 썸네일 그리드에 사진 데이터 렌더링
   const renderItem: ListRenderItem<Photo> = ({ item, index }) => {
@@ -626,7 +1177,7 @@ export default function HomeScreen() {
   const inTimeWindow = (
     tsMs: string | number | Date,
     timeStart: number,
-    timeEnd: number,
+    timeEnd: number
   ) => {
     const local = new Date(tsMs);
     const mins = local.getHours() * 60 + local.getMinutes();
@@ -637,9 +1188,13 @@ export default function HomeScreen() {
     return mins >= timeStart && mins <= timeEnd; // 기본: 정상 구간
   };
 
+  /** 2026.03.26 By June */
   const fmtDateTime = (ms: string | number | Date | null | undefined) => {
-    if (!ms) return "Unknown";
+    if (!ms) return "날짜 정보 없음";
+  
     const d = new Date(ms);
+    if (Number.isNaN(d.getTime())) return "날짜 정보 없음";
+  
     const yyyy = d.getFullYear();
     const MM = `${d.getMonth() + 1}`.padStart(2, "0");
     const DD = `${d.getDate()}`.padStart(2, "0");
@@ -648,91 +1203,92 @@ export default function HomeScreen() {
     return `${yyyy}/${MM}/${DD} ${hh}:${mm}`;
   };
 
-  const Header = useCallback(() => {
-    return (
-      <View style={styles.header}>
-        <TouchableOpacity
-          onPress={() => setViewerVisible(false)}
-          style={styles.closeBtn}
-        >
-          <Text style={styles.closeTxt}>✕</Text>
-        </TouchableOpacity>
-      </View>
-    );
-  }, []);
+	const Header = useCallback(() => {
+		return (
+			<View style={styles.header}>
+				<TouchableOpacity
+					onPress={() => setViewerVisible(false)}
+					style={styles.closeBtn}
+				>
+					<Text style={styles.closeTxt}>✕</Text>
+				</TouchableOpacity>
+			</View>
+		);
+	}, []);
 
   const Footer = useCallback(() => {
     const current = photos[viewerIndex];
-    const locationText =
-      current?.city && current?.country
-        ? `${current.city}, ${current.country}`
-        : current?.country
-          ? current.country
-          : "";
+		const locationText = current?.city && current?.country
+				? `${current.city}, ${current.country}`
+				: current?.country
+				? current.country
+				: "";
+		
+		const handleShare = async (photoUri: string, message: string) => {
+			try {
+				const shareOptions: Share.ShareOptions = {
+					message,
+					url: Platform.OS === 'android' ? `file://${photoUri}` : photoUri,
+					type: 'image/jpeg',
+				};
+				await Share.open(shareOptions);
+			} catch (err) {
+				// 사용자가 공유하기 취소한 경우
+				if (err?.message === 'User did not share') {
+					return; // 아무것도 하지 않음
+				} 
 
-    const handleShare = async (photoUri: string, message: string) => {
-      try {
-        const shareOptions: Share.ShareOptions = {
-          message,
-          url: Platform.OS === "android" ? `file://${photoUri}` : photoUri,
-          type: "image/jpeg",
-        };
-        await Share.open(shareOptions);
-      } catch (err) {
-        // 사용자가 공유하기 취소한 경우
-        if (err?.message === "User did not share") {
-          return; // 아무것도 하지 않음
-        }
-
-        console.log(err);
-        Alert.alert("Error", "Failed to share the photo.");
-      }
-    };
-
-    const onPressShare = async () => {
-      if (!current?.uri) return;
-      const message = `Check out this photo! ${locationText}`;
-      await handleShare(current.uri, message);
-    };
-
-    const handleDelete = () => {
-      Alert.alert(
-        "Delete Photo",
-        "Are you sure you want to delete this photo?",
-        [
-          { text: "Cancel", style: "cancel" },
-          {
-            text: "Delete",
-            style: "destructive",
-            onPress: () => {
-              // photos 배열에서 제거
-              setPhotos((prev) => prev.filter((_, idx) => idx !== viewerIndex));
-              setViewerVisible(false);
-            },
-          },
-        ],
-      );
-    };
-
+				console.log(err);
+				Alert.alert("Error", "Failed to share the photo.");
+			}
+		};
+		
+		const onPressShare = async () => {
+			if (!current?.uri) return;
+			const message = `Check out this photo! ${locationText}`;
+			await handleShare(current.uri, message);
+		};
+		
+		const handleDelete = () => {
+				Alert.alert(
+					"Delete Photo",
+					"Are you sure you want to delete this photo?",
+					[
+						{ text: "Cancel", style: "cancel" },
+						{
+							text: "Delete",
+							style: "destructive",
+							onPress: () => {
+								// photos 배열에서 제거
+								setPhotos((prev) =>
+									prev.filter((_, idx) => idx !== viewerIndex)
+								);
+								setViewerVisible(false);
+							},
+						},
+					]
+				);
+			};
+		
     return (
       <View style={styles.footer}>
-        {/* 왼쪽: Share 버튼 */}
-        <TouchableOpacity onPress={onPressShare}>
-          <Ionicons name="share-outline" size={24} color="white" />
-        </TouchableOpacity>
-        {/* 중앙: 날짜/시간 + 장소 */}
-        <View style={styles.headerTextContainer}>
-          <Text style={styles.metaTxt}>
-            {current ? fmtDateTime(current.takenAt) : ""}
-          </Text>
-          {locationText ? (
-            <Text style={styles.locationTxt}>{locationText}</Text>
-          ) : null}
-        </View>
-        {/* 오른쪽: Delete 버튼 */}
-        <TouchableOpacity onPress={handleDelete}>
-          <Ionicons name="trash-outline" size={24} color="white" />
-        </TouchableOpacity>
+				{/* 왼쪽: Share 버튼 */}
+				<TouchableOpacity onPress={onPressShare}>
+					<Ionicons name="share-outline" size={24} color="white" />
+				</TouchableOpacity>
+				{/* 중앙: 날짜/시간 + 장소 */}
+				<View style={styles.headerTextContainer}>
+						<Text style={styles.metaTxt}>
+							{current ? fmtDateTime(current.takenAt) : ""}
+						</Text>
+						{locationText ? (
+							 <Text style={styles.locationTxt}>{locationText}</Text>
+						) : null}
+				</View>
+				{/* 오른쪽: Delete 버튼 */}
+				<TouchableOpacity onPress={handleDelete}>
+					<Ionicons name="trash-outline" size={24} color="white" />
+				</TouchableOpacity>
       </View>
     );
   }, [photos, viewerIndex]);
@@ -748,7 +1304,7 @@ export default function HomeScreen() {
         ...selections,
       }));
     },
-    [],
+    []
   );
 
   const handleShowOnMap = () => {
@@ -760,7 +1316,7 @@ export default function HomeScreen() {
 
   const edges = ["bottom", "left", "right"];
   if (Platform.OS === "ios") {
-    edges.push("top"); // iOS는 top 추가해야 UI 안깨짐
+    edges.push("top"); // iOS는 top 추가해야 UI 안깨짐 
   }
   const safeAreaEdges: Edges = edges as Edges;
 
@@ -769,276 +1325,295 @@ export default function HomeScreen() {
       colors={["#E8F2FF", "#F9F3FF"]} // 연한 하늘색 + 약간 보라 느낌
       style={styles.screen}
     >
-      <SafeAreaView style={{ flex: 1 }} edges={safeAreaEdges}>
-        <View style={{ flex: 1 }}>
-          <View style={styles.topArea}>
-            {/* 상단버튼영역 수정 2026.03.18 by June START */}
-            <View style={styles.topButtonsRow}>
-              {/* 왼쪽 여백 */}
-              <View style={styles.topLeftSpace} />
+    <SafeAreaView style={{ flex: 1 }} edges={safeAreaEdges}>
+      <View style={{ flex: 1 }}>
+        <View style={styles.topArea}>
 
-              {/* 오른쪽 버튼 그룹 */}
-              <View style={styles.topButtonsGroup}>
-                {/* Play 버튼 */}
-                <TouchableOpacity
-                  style={styles.playButtonSlot}
-                  onPress={() =>
-                    slideshowOn ? closeSlideshow() : handleSlideshow()
-                  }
-                  activeOpacity={0.9}
+          {/* 상단버튼영역 수정 2026.03.18 by June START */}
+          <View style={styles.topButtonsRow}>
+            {/* 왼쪽 여백 */}
+            <View style={styles.topLeftSpace} />
+
+            {/* 오른쪽 버튼 그룹 */}
+            <View style={styles.topButtonsGroup}>
+              {/* Play 버튼 */}
+              <TouchableOpacity
+                style={styles.playButtonSlot}
+                onPress={() => (slideshowOn ? closeSlideshow() : handleSlideshow())}
+                activeOpacity={0.9}
+              >
+                <LinearGradient
+                  colors={['#2B7FFF', '#AD46FF']}
+                  start={{ x: 0, y: 0 }}
+                  end={{ x: 1, y: 0 }}
+                  style={styles.playButtonBg}
                 >
-                  <LinearGradient
-                    colors={["#2B7FFF", "#AD46FF"]}
-                    start={{ x: 0, y: 0 }}
-                    end={{ x: 1, y: 0 }}
-                    style={styles.playButtonBg}
-                  >
-                    <IconPlay width={18} height={18} />
-                  </LinearGradient>
-                </TouchableOpacity>
+                  <IconPlay width={18} height={18} />
+                </LinearGradient>
+              </TouchableOpacity>
 
-                {/* Map 버튼 */}
-                <TouchableOpacity
-                  style={styles.mapButtonSlot}
-                  activeOpacity={0.9}
-                >
-                  <ShowOnMap images={photos} />
-                </TouchableOpacity>
+              {/* Map 버튼 */}
+              <TouchableOpacity
+                style={styles.mapButtonSlot}
+                activeOpacity={0.9}
+              >
+                <ShowOnMap images={photos} />
+              </TouchableOpacity>
 
-                {/* Settings 버튼 */}
-                <TouchableOpacity
-                  onPress={() => router.push("/settings")}
-                  activeOpacity={0.7}
-                  style={styles.settingsButtonSlot}
-                >
-                  <Ionicons name="settings-outline" size={20} color="#374151" />
-                </TouchableOpacity>
-              </View>
-            </View>
-            {/* 상단버튼영역 수정 2026.03.18 by June END */}
-
-            {/* 썸네일 그리드 START */}
-            <View style={styles.gridWrap}>
-              <FlatList<Photo>
-                style={{ flex: 1 }} // 리스트가 남은 세로 공간을 다 차지
-                data={photos}
-                numColumns={numColumns}
-                keyExtractor={(_, i) => i.toString()}
-                renderItem={renderItem}
-                refreshing={refreshing} // 2026.03.03 June 추가
-                onRefresh={onRefresh} // 2026.03.03 June 추가
-                contentContainerStyle={{
-                  paddingHorizontal: horizontalPadding,
-                  padding: 8,
-                  flexGrow: 1, // 아이템 0개여도 높이 채우기
-                  backgroundColor: "#FFF",
-                  borderRadius: 10,
-                }}
-                ListEmptyComponent={
-                  /** 데이타 0건인 경우 */
-                  !loading && !isScanning && !error ? (
-                    <View style={styles.emptyWrap}>
-                      <Text style={styles.emptyTitle}>No photos found</Text>
-                      <Text style={styles.emptyDesc}>
-                        Try expanding the filters.
-                      </Text>
-                    </View>
-                  ) : null
-                }
-                onScrollBeginDrag={() => {
-                  setUserScrolled(true);
-                }}
-                onMomentumScrollBegin={() => {
-                  setUserScrolled(true);
-                  onEndDuringMomentumRef.current = false;
-                }}
-                onMomentumScrollEnd={() => {
-                  onEndDuringMomentumRef.current = true;
-                }}
-                onEndReachedThreshold={0.4}
-                onEndReached={() => {
-                  // 1) 스크롤 시작 전이면 무시
-                  if (!userScrolled) return;
-                  // 2) 모멘텀 중 첫 호출만 허용
-                  if (onEndDuringMomentumRef.current) return;
-                  // 3) 이미 로딩 중/락이면 무시
-                  if (loading || onEndLockRef.current) return;
-                  // 4) 더 불러올 페이지 없으면 무시
-                  if (!hasNextPage) return;
-                  // ---- 페이지네이션 시작 ----
-                  onEndLockRef.current = true;
-                  onEndDuringMomentumRef.current = true; // 이번 모멘텀 사이클에서는 한 번만
-                  isPaginatingRef.current = true;
-
-                  loadPhotos({ reset: false }).finally(() => {
-                    onEndLockRef.current = false;
-                    isPaginatingRef.current = false;
-                  });
-                }}
-                ListFooterComponent={
-                  // 사용자가 스크롤해서 로딩하는 경우에만 표시(초기 자동 로딩 표시 억제)
-                  isPaginatingRef.current && loading ? (
-                    <ActivityIndicator style={{ marginVertical: 12 }} />
-                  ) : null
-                }
-                onLayout={({
-                  nativeEvent: {
-                    layout: { height: lh },
-                  },
-                }) => {
-                  // 높이는 onContentSizeChange에서 비교
-                }}
-                onContentSizeChange={(_, ch) => {
-                  // 화면보다 컨텐츠가 클 때만 다음 페이지 로딩 허용
-                  setListCanScroll(ch > 0);
-                }}
-              />
-              {/* 썸네일 그리드 END */}
-              {/** Progress bar START */}
-              {loading || isScanning ? (
-                <View style={styles.gridOverlay} pointerEvents="auto">
-                  <View style={styles.loadingBox}>
-                    <ActivityIndicator size="large" />
-                    <Text style={styles.loadingText}>
-                      Loading photos…
-                      {progress.total ? ` / ${progress.total}` : ""}
-                    </Text>
-                  </View>
-                  {progress.total ? (
-                    <View
-                      style={{
-                        width: 220,
-                        height: 6,
-                        backgroundColor: "#e5e7eb",
-                        marginTop: 8,
-                        borderRadius: 3,
-                      }}
-                    >
-                      <View
-                        style={{
-                          width: `${(progress.loaded / progress.total) * 100}%`,
-                          height: "100%",
-                          backgroundColor: "#9ca3af",
-                          borderRadius: 3,
-                        }}
-                      />
-                    </View>
-                  ) : null}
-                </View>
-              ) : error ? (
-                <View style={styles.centerContainer}>
-                  <Text style={styles.errorText}>{error}</Text>
-                </View>
-              ) : (
-                <>
-                  <Modal visible={!!selectedImage} animationType="slide">
-                    <Image
-                      source={{ uri: selectedImage || "" }}
-                      style={{
-                        flex: 1,
-                        width: "100%",
-                        height: "100%",
-                        resizeMode: "contain",
-                      }}
-                    />
-                    <View style={{ position: "absolute", top: 40, left: 20 }}>
-                      <Button
-                        title="Close"
-                        onPress={() => setSelectedImage(null)}
-                      />
-                    </View>
-                  </Modal>
-                </>
-              )}
-              {/** Progress bar END */}
+              {/* Settings 버튼 */}
+              <TouchableOpacity
+                onPress={() => router.push('/settings')}
+                activeOpacity={0.7}
+                style={styles.settingsButtonSlot}
+              >
+                <Ionicons name="settings-outline" size={20} color="#374151" />
+              </TouchableOpacity>
             </View>
           </View>
-          <View style={styles.bottomArea}>
+          {/* 상단버튼영역 수정 2026.03.18 by June END */}
+            
+          {/* 썸네일 그리드 START */}
+          <View style={styles.gridWrap}>
+            <FlatList<Photo>
+              style={{ flex: 1 }} // 리스트가 남은 세로 공간을 다 차지
+              data={photos}
+              numColumns={numColumns}
+              keyExtractor={(_, i) => i.toString()}
+              renderItem={renderItem}
+              refreshing={refreshing} // 2026.03.03 June 추가
+              onRefresh={onRefresh}   // 2026.03.03 June 추가
+              contentContainerStyle={{
+                paddingHorizontal: horizontalPadding,
+                padding: 8,
+                flexGrow: 1, // 아이템 0개여도 높이 채우기
+                backgroundColor: "#FFF",
+                borderRadius: 10,
+              }}
+              ListEmptyComponent={
+                (!loading && !initialLoading && !isScanning && !error) ? (
+                  <View style={styles.emptyWrap}>
+                    <Text style={styles.emptyTitle}>
+                      {emptyMessage ?? EMPTY_DEFAULT_MESSAGE}
+                    </Text>
+                    {emptyMessage !== EMPTY_RECENT_3Y_MESSAGE ? (
+                      <Text style={styles.emptyDesc}>{EMPTY_DEFAULT_DESC}</Text>
+                    ) : null}
+                  </View>
+                ) : null
+              }
+              onScrollBeginDrag={() => {
+                setUserScrolled(true);
+              }}
+              onMomentumScrollBegin={() => {
+                setUserScrolled(true);
+                onEndDuringMomentumRef.current = false;
+              }}
+              onMomentumScrollEnd={() => {
+                onEndDuringMomentumRef.current = true;
+              }}
+              onEndReachedThreshold={0.4}
+              onEndReached={() => {
+                // 1) 스크롤 시작 전이면 무시
+                if (!userScrolled) return;
+                // 2) 모멘텀 중 첫 호출만 허용
+                if (onEndDuringMomentumRef.current) return;
+                // 3) 이미 로딩 중/락이면 무시 - 2026.03.26 Edit By June
+                if (loading || backgroundLoading || onEndLockRef.current) return;
+                // 4) 더 불러올 페이지 없으면 무시
+                if (!hasNextPage) return;
+                // ---- 페이지네이션 시작 ----
+                onEndLockRef.current = true;
+                onEndDuringMomentumRef.current = true; // 이번 모멘텀 사이클에서는 한 번만
+                isPaginatingRef.current = true;
+
+                /** 2026.03.26 Edit By June */
+                loadMorePhotos({ mode: "append" }).finally(() => {
+                  onEndLockRef.current = false;
+                  isPaginatingRef.current = false;
+                });
+              }}
+              ListFooterComponent={
+                // 사용자가 스크롤해서 로딩하는 경우에만 표시(초기 자동 로딩 표시 억제)
+                isPaginatingRef.current && loading ? (
+                  <ActivityIndicator style={{ marginVertical: 12 }} />
+                ) : null
+              }
+              onLayout={({
+                nativeEvent: {
+                  layout: { height: lh },
+                },
+              }) => {
+                // 높이는 onContentSizeChange에서 비교
+              }}
+              onContentSizeChange={(_, ch) => {
+                // 화면보다 컨텐츠가 클 때만 다음 페이지 로딩 허용
+                setListCanScroll(ch > 0);
+              }}
+            />
+            {/* 썸네일 그리드 END */}
+            {/** Progress bar START */}
+            {loading || isScanning ? (
+              <View style={styles.gridOverlay} pointerEvents="auto">
+                <View style={styles.loadingBox}>
+                  <ActivityIndicator size="large" />
+                  <Text style={styles.loadingText}>
+                    Loading photos…
+                    {progress.total ? ` / ${progress.total}` : ""}
+                  </Text>
+                </View>
+                {progress.total ? (
+                  <View
+                    style={{
+                      width: 220,
+                      height: 6,
+                      backgroundColor: "#e5e7eb",
+                      marginTop: 8,
+                      borderRadius: 3,
+                    }}
+                  >
+                    <View
+                      style={{
+                        width: `${(progress.loaded / progress.total) * 100}%`,
+                        height: "100%",
+                        backgroundColor: "#9ca3af",
+                        borderRadius: 3,
+                      }}
+                    />
+                  </View>
+                ) : null}
+              </View>
+            ) : error ? (
+              <View style={styles.centerContainer}>
+                <Text style={styles.errorText}>{error}</Text>
+              </View>
+            ) : (
+              <>
+                <Modal visible={!!selectedImage} animationType="slide">
+                  <Image
+                    source={{ uri: selectedImage || "" }}
+                    style={{
+                      flex: 1,
+                      width: "100%",
+                      height: "100%",
+                      resizeMode: "contain",
+                    }}
+                  />
+                  <View style={{ position: "absolute", top: 40, left: 20 }}>
+                    <Button title="Close" onPress={() => setSelectedImage(null)} />
+                  </View>
+                </Modal>
+              </>
+            )}
+            {/** Progress bar END */}
+          </View>
+          
+        </View>
+        <View style={styles.bottomArea}>
             <DateTimeFilter
               onChange={handleDateTimeChange}
               photos={photos}
               onLocationChange={handleLocationChange}
             />
           </View>
-        </View>
+      </View>
+    
+      {/* 전체화면 이미지 뷰어 (핀치줌/스와이프)
+      <ImageViewing
+        //images={photos.map(p => ({ uri: p.uri }))}
+        onImageIndexChange={(i: number) => {
+          viewerIndexRef.current = i;  // 화면 재렌더 없이 최신 index만 기억
+        }}
+        images={viewerImages}
+        imageIndex={viewerIndex}
+        visible={viewerVisible}
+        onRequestClose={closeViewer}
+        //onImageIndexChange={(i: number) => setViewerIndex(i)} // ← 추가
+        // 선택: 상단 닫기버튼(간단한 헤더)
+        HeaderComponent={Header}
+        // 선택: 바닥 여백(제스처 충돌 완화)
+        backgroundColor="rgba(0,0,0,0.98)"
+        swipeToCloseEnabled={false} // ← 스와이프 제스처가 터치 선점하는 것 방지
+        doubleTapToZoomEnabled
+      /> */}
+      {/* 전체화면 이미지 뷰어 (핀치줌/스와이프) */}
+      <ImageViewing
+        //images={photos.map(p => ({ uri: p.uri }))}
+        onImageIndexChange={(i: number) => {
+          // 기존
+          viewerIndexRef.current = i;
+        
+          // swipe count 증가 (첫 진입은 0->선택 index로 이미 열리니, 변경 이벤트만 카운트)
+          swipe_count_ref.current += 1;
+        
+          if (!swipe_threshold_fired_ref.current && swipe_count_ref.current >= SWIPE_THRESHOLD) {
+            swipe_threshold_fired_ref.current = true;
+        
+            const dwell_ms = Date.now() - home_view_start_ms_ref.current;
+        
+            amplitude.track("photo_swipe_threshold_reached", {
+              screen_name: "home",
+              threshold: SWIPE_THRESHOLD,
+              swipe_count: swipe_count_ref.current,
+              current_index: i,
+              dwell_ms,
+            });
+          }
+        }}
+        images={viewerImages}
+        imageIndex={viewerIndex}
+        visible={viewerVisible}
+        onRequestClose={closeViewer}
+        //onImageIndexChange={(i: number) => setViewerIndex(i)} // ← 추가
+        // 선택: 상단 닫기버튼(간단한 헤더)
+        HeaderComponent={Header}
+        // 선택: 바닥 여백(제스처 충돌 완화)
+        backgroundColor="rgba(0,0,0,0.98)"
+        swipeToCloseEnabled={false} // ← 스와이프 제스처가 터치 선점하는 것 방지
+        doubleTapToZoomEnabled
+				// 2026-02-10 하단 추가 by Minji
+				FooterComponent={Footer}
+      />
 
-        {/* 전체화면 이미지 뷰어 (핀치줌/스와이프) */}
-        <ImageViewing
-          //images={photos.map(p => ({ uri: p.uri }))}
-          onImageIndexChange={(i: number) => {
-            // 기존
-            viewerIndexRef.current = i;
-            // swipe count 증가 (첫 진입은 0->선택 index로 이미 열리니, 변경 이벤트만 카운트)
-            swipe_count_ref.current += 1;
-
-            if (
-              !swipe_threshold_fired_ref.current &&
-              swipe_count_ref.current >= SWIPE_THRESHOLD
-            ) {
-              swipe_threshold_fired_ref.current = true;
-
-              const dwell_ms = Date.now() - home_view_start_ms_ref.current;
-
-              amplitude.track("photo_swipe_threshold_reached", {
-                screen_name: "home",
-                threshold: SWIPE_THRESHOLD,
-                swipe_count: swipe_count_ref.current,
-                current_index: i,
-                dwell_ms,
-              });
-            }
-          }}
-          images={viewerImages}
-          imageIndex={viewerIndex}
-          visible={viewerVisible}
-          onRequestClose={closeViewer}
-          //onImageIndexChange={(i: number) => setViewerIndex(i)} // ← 추가
-          // 선택: 상단 닫기버튼(간단한 헤더)
-          HeaderComponent={Header}
-          // 선택: 바닥 여백(제스처 충돌 완화)
-          backgroundColor="rgba(0,0,0,0.98)"
-          swipeToCloseEnabled={false} // ← 스와이프 제스처가 터치 선점하는 것 방지
-          doubleTapToZoomEnabled
-          // 2026-02-10 하단 추가 by Minji
-          FooterComponent={Footer}
-        />
-
-        <Modal visible={slideshowVisible} animationType="fade">
-          <SafeAreaView style={{ flex: 1, backgroundColor: "black" }}>
-            <FlatList
-              ref={(r) => {
-                slideshowListRef.current = r;
-              }}
-              data={viewerImages} // { uri } 배열 이미 있음
-              horizontal
-              pagingEnabled
-              showsHorizontalScrollIndicator={false}
-              keyExtractor={(_, i) => i.toString()}
-              initialScrollIndex={viewerIndex}
-              getItemLayout={(_, index) => ({
-                length: screenWidth,
-                offset: screenWidth * index,
-                index,
-              })}
-              renderItem={({ item }) => (
+      <Modal visible={slideshowVisible} animationType="fade">
+        <SafeAreaView style={{ flex: 1, backgroundColor: "black" }}>
+          <FlatList
+            ref={(r) => {slideshowListRef.current = r;}}
+            data={viewerImages} // { uri } 배열 이미 있음
+            horizontal
+            pagingEnabled
+            showsHorizontalScrollIndicator={false}
+            keyExtractor={(_, i) => i.toString()}
+            initialScrollIndex={viewerIndex}
+            getItemLayout={(_, index) => ({
+              length: screenWidth,
+              offset: screenWidth * index,
+              index,
+            })}
+            renderItem={({ item }) => (
+              <TouchableOpacity
+                activeOpacity={1}
+                onPress={closeSlideshow}
+                style={{ width: screenWidth, height: "100%" }}
+              >
                 <Image
                   source={{ uri: item.uri }}
                   style={{ width: screenWidth, height: "100%" }}
                   resizeMode="contain"
                 />
-              )}
-            />
+              </TouchableOpacity>
+            )}
+          />
 
-            {/* 닫기 버튼 */}
-            <TouchableOpacity
-              onPress={closeSlideshow}
-              style={{ position: "absolute", top: 20, right: 16, padding: 10 }}
-            >
-              <Ionicons name="close" size={28} color="#fff" />
-            </TouchableOpacity>
-          </SafeAreaView>
-        </Modal>
-      </SafeAreaView>
+          {/* 닫기 버튼 */}
+          <TouchableOpacity
+            onPress={closeSlideshow}
+            style={{ position: "absolute", top: 20, right: 16, padding: 10 }}
+          >
+            <Ionicons name="close" size={28} color="#fff" />
+          </TouchableOpacity>
+        </SafeAreaView>
+      </Modal>
+    </SafeAreaView>
     </LinearGradient>
   );
 }
@@ -1186,7 +1761,7 @@ const styles = StyleSheet.create({
   },
   counter: { color: "#fff", fontSize: 16, fontWeight: "600" },
   metaTxt: { color: "#fff", fontSize: 14, fontWeight: "600" },
-  locationTxt: { color: "#fff", fontSize: 14, fontWeight: "600", marginTop: 2 },
+	locationTxt: { color: "#fff", fontSize: 14, fontWeight: "600", marginTop: 2 },
   closeBtn: {
     zIndex: 999,
     width: 32,
@@ -1197,28 +1772,27 @@ const styles = StyleSheet.create({
     justifyContent: "center",
   },
   closeTxt: { color: "#fff", fontSize: 18, fontWeight: "700" },
-  headerTextContainer: {
-    flexDirection: "column",
-    alignItems: "center",
-    flexShrink: 1, // 긴 텍스트도 잘림
-    marginHorizontal: 8,
-  },
-  footer: {
-    // 2026-02-10 footer 스타일 원복 by Minji
-    flexDirection: "row",
-    justifyContent: "space-between",
-    alignItems: "center",
-    paddingHorizontal: 16,
-    paddingVertical: 10,
-    backgroundColor: "rgba(0,0,0,0.6)",
-    position: "absolute",
-    bottom: 0,
-    width: "100%",
-    zIndex: 20, // zIndex 높여서 이미지 위로
-    minHeight: 60, // 충분한 높이 지정
-  },
+	headerTextContainer: {
+		flexDirection: "column",
+		alignItems: "center",
+		flexShrink: 1, // 긴 텍스트도 잘림
+		marginHorizontal: 8,
+	},
+	footer: { // 2026-02-10 footer 스타일 원복 by Minji
+		 flexDirection: "row",
+		 justifyContent: "space-between",
+		 alignItems: "center",
+		 paddingHorizontal: 16,
+		 paddingVertical: 10,
+		 backgroundColor: "rgba(0,0,0,0.6)",
+		 position: "absolute",
+		 bottom: 0,
+		 width: "100%",
+		 zIndex: 20, // zIndex 높여서 이미지 위로
+		 minHeight: 60, // 충분한 높이 지정
+	},
   thumbnailCard: {
-    backgroundColor: "#FFFFFF", // 내부 흰색
+    backgroundColor: '#FFFFFF',   // 내부 흰색
     borderRadius: 32, // 모서리 둥글게
     padding: 12,
     marginTop: 12,
@@ -1276,68 +1850,58 @@ const styles = StyleSheet.create({
     alignItems: "center",
     padding: 20,
   },
-  emptyTitle: {
-    fontSize: 16,
-    fontWeight: "700",
-    color: "#111",
-    marginBottom: 6,
-  },
-  emptyDesc: {
-    fontSize: 13,
-    color: "#666",
-    textAlign: "center",
-    lineHeight: 18,
-  },
+  emptyTitle: { fontSize: 16, fontWeight: "700", color: "#111", marginBottom: 6 },
+  emptyDesc: { fontSize: 13, color: "#666", textAlign: "center", lineHeight: 18 },
 
   croppedButtonWrap: {
     //width: 128,
     height: 60,
-    overflow: "hidden",
+    overflow: 'hidden',
     //borderRadius: 16,
     //marginRight: 10,
-    alignItems: "center",
-    justifyContent: "center",
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   croppedButtonImage: {
-    width: "100%",
-    height: 56, // 원본보다 더 크게 잡고
+    width: '100%',
+    height: 56,          // 원본보다 더 크게 잡고
     transform: [{ translateY: -6 }], // 아래 여백 잘라내기
   },
 
   /** 2026.03.18 Add by June */
   topButtonsRow: {
-    flexDirection: "row",
-    alignItems: "center",
+    flexDirection: 'row',
+    alignItems: 'center',
     marginBottom: 16,
-    width: "100%",
+    width: '100%',
   },
-
+  
   topLeftSpace: {
     flex: 3, // 30%
   },
-
+  
   topButtonsGroup: {
     flex: 7, // 70%
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
   },
-
+  
   playButtonSlot: {
     flex: 3, // 30
     height: 38,
     marginRight: 5,
-    justifyContent: "center",
+    justifyContent: 'center',
   },
-
+  
   mapButtonSlot: {
     flex: 3, // 30
     height: 38,
     marginLeft: 0,
     marginRight: 5,
-    justifyContent: "center",
+    justifyContent: 'center',
   },
-
+  
   settingsButtonSlot: {
     flex: 1, // 10
     height: 36,
@@ -1357,15 +1921,15 @@ const styles = StyleSheet.create({
   },
 
   playButtonBg: {
-    width: "100%",
-    height: "100%",
+    width: '100%',
+    height: '100%',
     borderRadius: 16,
-    alignItems: "center",
-    justifyContent: "center",
+    alignItems: 'center',
+    justifyContent: 'center',
     shadowColor: "#2563EB",
     shadowOpacity: 0.25,
     shadowRadius: 10,
     shadowOffset: { width: 0, height: 6 },
   },
-  /** 2026.03.18 Add by June */
+  /** 2026.03.18 Add by June */ 
 });

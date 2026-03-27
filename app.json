@@ -15,8 +15,13 @@
         "expo-splash-screen",
         {
           "image": "./assets/images/splash-screen.png",
-          "resizeMode": "cover",
-          "imageWidth": 500,
+          "resizeMode": "contain",
+          "ios": {
+            "imageWidth": 500
+          },
+          "android": {
+            "imageWidth": 300
+          },
           "backgroundColor": "#ffffff"
         }
       ],
