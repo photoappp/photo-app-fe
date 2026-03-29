@@ -75,7 +75,7 @@ const styles = StyleSheet.create({
 		alignItems: 'flex-start',
 		alignItems: 'center',
 		paddingVertical: 15,
-		paddingHorizontal: 15,
+		paddingHorizontal: 20,
 		marginVertical: 4
 	},
 	optionText: {

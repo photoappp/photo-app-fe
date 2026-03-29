@@ -406,10 +406,21 @@ export default function DateTimeFilter({
   // ---- 렌더 ----
   const dateLabel = `${fmtDate(dateStart)} – ${fmtDate(dateEnd)}`;
   const timeLabel = `${fmtTime(timeStart)} – ${fmtTime(timeEnd)}`;
-  const [locationLabel, setLocationLabel] = useState("Anywhere");
+	// 2026-03-27 Location default 다국어 지원 추가 by Minji
+  const [locationLabel, setLocationLabel] = useState(TRANSLATIONS[language]?.all ?? "All");
 
   const { language } = useLanguage();
 
+	useEffect(() => {
+		const allValues = Object.values(TRANSLATIONS).map(t => t.all);
+
+		if (allValues.includes(locationLabel)) {
+			setLocationLabel(
+				TRANSLATIONS[language]?.all ?? "All"
+			);
+		}
+	}, [language]);
+	
   const emitCountRef = useRef(0);
   const bypassDebounceRef = useRef(false);
   const emitChange = () => {

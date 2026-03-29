@@ -58,8 +58,8 @@ const CreditsScreen: React.FC = () => {
 };
 
 const styles = StyleSheet.create({
-	optionRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingVertical: 15, paddingHorizontal: 15, marginVertical: 4 },
-	optionColumn: { flexDirection: 'column', paddingVertical: 12, paddingHorizontal: 15, marginVertical: 4 },
+	optionRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingVertical: 15, paddingHorizontal: 20, marginVertical: 4 },
+	optionColumn: { flexDirection: 'column', paddingVertical: 12, paddingHorizontal: 20, marginVertical: 4 },
 	multilineValue: { marginTop: 12, lineHeight: 20, alignSelf: 'stretch' }, // textAlign: 'right', alignSelf: 'stretch' - 오른쪽 정렬 적용 시
 	optionText: { fontSize: 16 },
 	valueText: { fontSize: 16 },

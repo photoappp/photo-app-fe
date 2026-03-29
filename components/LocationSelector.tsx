@@ -43,7 +43,7 @@ type Props = {
   onSelectionChange?: (selected: {
     countries: string[];
     cities: string[];
-    locationLabel: string;
+//    locationLabel: string; //2026-03-27 언어 변경 시 필터 라벨 자동 변경 by Minji
   }) => void;
 };
 // 2026-03-04 to to push reset function to parent with forwardRef by yen
@@ -56,10 +56,12 @@ const LocationSelector = forwardRef<LocationSelectorHandle, Props>(
     const [selectedCities, setSelectedCities] = useState<string[]>([]);
     const [translations, setTranslations] = useState<string[][]>([]);
     const [locationMap, setLocationMap] = useState<LocationMap>({});
-		// 2026-03-18 Default All 값 다국어 설정 추가 by Minji
-    const [tempCountries, setTempCountries] = useState<string[]>(["All"]);
-    const [tempCities, setTempCities] = useState<string[]>(["All"]);
+		// 2026-03-27 Default All 값 다국어 설정 추가 by Minji
+		const ALL_KEY = "__ALL__";
+    const [tempCountries, setTempCountries] = useState<string[]>([ALL_KEY]);
+    const [tempCities, setTempCities] = useState<string[]>([ALL_KEY]);
     const { language, setLanguage } = useLanguage(); // 2026-02-10 언어 설정 추가 by Minji
+		const [buttonTitle, setButtonTitle] = useState("");
 
     useEffect(() => {
       // Fetch Translations from Google Sheets
@@ -75,14 +77,15 @@ const LocationSelector = forwardRef<LocationSelectorHandle, Props>(
           const allCountriesSet = new Set<string>();
           const allCitiesSet = new Set<string>();
 					// 2026-03-18 선택 국가 언어설정에 따라 보이게 by Minji
+					// 2026-03-27 언어 설정 값 고려하여 trim 추가 by Minji
           rows.slice(1).forEach((row) => {
-            const enName = row[0];
+            const enName = row[0].trim();
             countryTranslationMap[enName] = { en: enName };
 
             row.forEach((val, i) => {
-              const code = langCodes[i] as keyof Translations;
+              const code = langCodes[i].trim() as keyof Translations;
               if (val) {
-                countryTranslationMap[enName][code] = val;
+                countryTranslationMap[enName][code] = val.trim();
               }
             });
           });
@@ -109,10 +112,11 @@ const LocationSelector = forwardRef<LocationSelectorHandle, Props>(
           });
           setLocationMap(locationMap);
           if (allCountriesSet.size > 0) {
-            setAllCountries(["All", ...Array.from(allCountriesSet)]);
-            setAllCities(["All", ...Array.from(allCitiesSet)]);
-            setTempCountries(["All", ...Array.from(allCountriesSet)]);
-            setTempCities(["All", ...Array.from(allCitiesSet)]);
+						// 2026-03-27 Default 다국어 설정 추가 by Minji
+            setAllCountries([ALL_KEY, ...Array.from(allCountriesSet)]);
+            setAllCities([ALL_KEY, ...Array.from(allCitiesSet)]);
+            setTempCountries([ALL_KEY]);
+            setTempCities([ALL_KEY]);
           }
         })
         .catch(console.error);
@@ -130,31 +134,71 @@ const LocationSelector = forwardRef<LocationSelectorHandle, Props>(
       else setTempCities(items);
     };
 
+		
+		//2026-03-27 필터나 언어가 바뀔 때마다 버튼 라벨 업데이트 by Minji
+		useEffect(() => {
+				setButtonTitle(getButtonTitle(tempCountries, tempCities));
+		}, [tempCountries, tempCities, language, locationMap]);
+		
+		//2026-03-27 언어 설정이 바뀔 때만 부모의 라벨을 강제로 업데이트 by Minji
+		useEffect(() => {
+			if (Object.keys(locationMap).length === 0) return;
+			console.log("Language or Data changed! Updating label for:", language, selectedCountries);
+			console.log("Current Selected:", selectedCountries);
+			
+			// 2026-03-27 언어 변경 시에도 필터링 데이터 형식을 유지하기 위한 로직
+			const getActualCities = () => {
+				if (selectedCities.includes(ALL_KEY)) {
+					const allSelectedCities: string[] = [];
+					selectedCountries.forEach((country) => {
+						const cities = locationMap[country]?.cities ?? [];
+						cities.forEach((c) => { if (c.en) allSelectedCities.push(c.en); });
+					});
+					return allSelectedCities;
+				}
+				return selectedCities;
+			};
+
+			const actualCities = getActualCities();
+			const updatedLabel = getButtonTitle(selectedCountries, selectedCities);
+			onSelectionChange?.({
+				countries: selectedCountries,
+				cities: actualCities, // 부모가 이해할 수 있는 실제 도시 리스트 전달
+				locationLabel: updatedLabel,
+			});
+			console.log("Current Selected:", actualCities, updatedLabel);
+		}, [language,locationMap]); // 오직 language가 바뀔 때만 실행
+		
     const toggleItem = (type: "country" | "city", item: string) => {
       const current = getTempSelection(type);
       const allItems = getCurrentItems(type);
 
-      if (item === "All") {
-        if (!current.includes("All")) {
+      if (item === ALL_KEY) {
+        if (!current.includes(ALL_KEY)) {
           setTempSelection(type, allItems);
         } else {
           setTempSelection(type, []);
         }
         return;
       }
-      let updated: string[];
-      // 2026-03-04 change toggle logic to handle "All" selection by yen
-      if (current.includes(item) && current.includes("All")) {
-        updated = [item];
-      } else if (current.includes(item)) {
-        updated = current.filter((i) => i !== item && i !== "All");
-      } else {
-        updated = [...current, item];
-      }
+			// 2026-03-27 ALL_KEY 기준으로 변경 by Minji
+			const updated = current.includes(item)
+					? current.filter(i => i !== item && i !== ALL_KEY)
+					: [...current.filter(i => i !== ALL_KEY), item];
+//      let updated: string[];
+//      // 2026-03-04 change toggle logic to handle "All" selection by yen
+//      if (current.includes(item) && current.includes("All")) {
+//        updated = [item];
+//      } else if (current.includes(item)) {
+//        updated = current.filter((i) => i !== item && i !== "All");
+//      } else {
+//        updated = [...current, item];
+//      }
       setTempSelection(type, updated);
     };
 
     const getCurrentItems = (type: "country" | "city") => {
+			// 2026-03-27 실시간 번역 추가 by Minji
       if (type === "country") {
         return Array.from(new Set([...allCountries]));
       }
@@ -168,50 +212,59 @@ const LocationSelector = forwardRef<LocationSelectorHandle, Props>(
           });
         });
         if (allCitiesSet.size == 0) return [];
-        return Array.from(new Set(["All", ...allCitiesSet]));
+				// 2026-03-27 ALL_KEY 기준으로 변경 by Minji
+        return Array.from(new Set([ALL_KEY, ...allCitiesSet]));
       }
 
       return [];
     };
 
-    const getButtonTitle = () => {
+		//2026-03-27 언어 변경 시 필터 라벨 자동 변경되기 위한 함수로 타입 변경 by Minji
+		const getButtonTitle = (countries: string[] = [], cities: string[] = []) => {
 			// 2026-03-18 Default All 값 다국어 설정 추가 by Minji
-			if (tempCountries.length == 0 && tempCities.length == 0) {
+			const isCountriesAll = !countries.length || (countries.length === 1 && countries[0] === ALL_KEY);
+			const isCitiesAll = !cities.length || (cities.length === 1 && cities[0] === ALL_KEY);
+			if (isCountriesAll && isCitiesAll) {
 				return TRANSLATIONS[language].all;
 			}
 //      if (tempCountries.length == 0 && tempCities.length == 0) return "None";
 
-			const getTranslatedCountry = (item: string) => {
-				if (item === "All") return TRANSLATIONS[language].all;
-
-				return (
-					locationMap[item]?.country[language] ??
-					locationMap[item]?.country.en ??
-					item
-				);
-			};
-			
+			// 2026-03-27 Default All 실시간 번역 추가 by Minji
       const formatLabel = (items: string[]) => {
-        if (!items.includes("All")) {
-          return items.length === 1
-						? getTranslatedCountry(items[0])
-						: `${getTranslatedCountry(items[1])}+${items.length - 1}`;
+				// items가 비어있거나 "All" 키워드가 포함되어 있으면 All 표시
+				if (!items || !items.length || (items.length === 1 && items[0] === ALL_KEY)) {
+					return TRANSLATIONS[language].all; // 2026-03-18 Default All 값 다국어 설정 추가 by Minji
+				}
+				
+				const getTranslatedCountry = (item: string) => {
+				 if (item === ALL_KEY) return TRANSLATIONS[language].all;
+
+				 return (
+					 locationMap[item]?.country[language] ??
+					 locationMap[item]?.country.en ??
+					 item
+				 );
+			 };
+				
+				// 선택된 아이템이 1개일 때
+        if (items.length === 1) {
+          return getTranslatedCountry(items[0]);
         }
-				return TRANSLATIONS[language].all; // 2026-03-18 Default All 값 다국어 설정 추가 by Minji
-//        return items[0];
+        return `${getTranslatedCountry(items[0])}+${items.length - 1}`;
       };
 
-      const countryLabel = tempCountries.length
-        ? formatLabel([...tempCountries].sort())
+			// 2026-03-27 필터 라벨 실시간 번역 되도록 temps->countries 수정 by Minji
+      const countryLabel = countries.length
+        ? formatLabel([...countries].sort())
         : "";
 
-      const cityLabel = tempCities.length
-        ? formatLabel([...tempCities].sort())
+      const cityLabel = cities.length
+        ? formatLabel([...cities].sort())
         : "";
 
-      return [countryLabel, cityLabel].filter(Boolean).join(", ");
+			// 2개 이상일 때 (기존 로직의 items[1] 스타일 유지)
+			return [countryLabel, cityLabel].filter(Boolean).join(", ");
     };
-
     const handleReset = () => {
       setSelectedCountries([]);
       setSelectedCities([]);
@@ -260,18 +313,39 @@ const LocationSelector = forwardRef<LocationSelectorHandle, Props>(
                 >
                   <TouchableOpacity
                     onPress={() => {
+											// 2026-03-27 필터링된 도시 목록 계산 by Minji
+											const getFilteredCities = () => {
+												if (tempCities.includes(ALL_KEY)) {
+													const allSelectedCities: string[] = [];
+													tempCountries.forEach((country) => {
+														const cities = locationMap[country]?.cities ?? [];
+														cities.forEach((c) => {
+															if (c.en) allSelectedCities.push(c.en);
+														});
+													});
+													return allSelectedCities;
+												}
+												return tempCities;
+											};
+
+											const filteredCities = getFilteredCities();
+
+											// 2026-03-27 비동기적인 selectedCountries 대신 현재 값인 tempCountries를 사용 by Minji
+											const currentLabel = getButtonTitle(tempCountries, tempCities);
+												
+											console.log("Applying selection:", {
+												countries: tempCountries,
+												cities: filteredCities,
+												locationLabel: currentLabel,
+											});
+											onSelectionChange?.({
+												countries: tempCountries,
+												cities: filteredCities,
+												locationLabel: currentLabel, //2026-03-27 언어 변경 시 필터 라벨 자동 변경 by Minji
+											});
+											
                       setSelectedCountries(tempCountries);
                       setSelectedCities(tempCities);
-                      console.log("Applying selection:", {
-                        countries: tempCountries,
-                        cities: tempCities,
-                        locationLabel: getButtonTitle(),
-                      });
-                      onSelectionChange?.({
-                        countries: tempCountries,
-                        cities: tempCities,
-                        locationLabel: getButtonTitle(),
-                      });
 
                       onClose();
                     }}
@@ -323,7 +397,7 @@ const LocationSelector = forwardRef<LocationSelectorHandle, Props>(
                       >
                         <Text style={styles.listItem}>
                           {/* 2026-03-18 언어 설정 추가 by Minji */}
-													{item === "All"
+													{item === ALL_KEY
 														? TRANSLATIONS[language].all
 														: locationMap[item]?.country[language] ??
 															locationMap[item]?.country.en ??
@@ -368,7 +442,11 @@ const LocationSelector = forwardRef<LocationSelectorHandle, Props>(
                           ]}
                         >
 													{/* 2026-03-18 언어 설정 추가 by Minji */}
-													<Text style={styles.listItem}>{item === "All" ? TRANSLATIONS[language].all : item}</Text>
+													<Text style={styles.listItem}>
+															{item === ALL_KEY
+																? TRANSLATIONS[language].all
+																: locationMap[item]?.country[language] ?? locationMap[item]?.country.en ?? item}
+													</Text>
                         </Pressable>
                       );
                     }}
@@ -390,7 +468,7 @@ const LocationSelector = forwardRef<LocationSelectorHandle, Props>(
                   onSelectionChange?.({
                     countries: tempCountries,
                     cities: tempCities,
-                    locationLabel: getButtonTitle(),
+                    locationLabel: getButtonTitle(selectedCountries, filteredCities), //2026-03-27 언어 변경 시 필터 라벨 자동 변경 by Minji
                   });
 
                   onClose();

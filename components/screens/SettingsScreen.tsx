@@ -194,7 +194,7 @@ const SettingsScreen = () => {
 };
 
 const styles = StyleSheet.create({
-	optionRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', height: 50, paddingHorizontal: 15, marginVertical: 4 },
+	optionRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', height: 50, paddingHorizontal: 20, marginVertical: 4 },
 	optionText: { fontSize: 16 },
 	valueText: { fontSize: 16, color: '#555' },
 	themeButtonGroup: { flexDirection: 'row', gap: 8 },
