@@ -10,9 +10,10 @@ export default function SettingsLayout() {
 	const { language } = useLanguage();
 	
 	// 공통 Back 버튼
+	// 2026-03-27 left margin 수정 by Minji
 		const BackButton = () => (
 			<Pressable onPress={() => router.back()}>
-				<Text style={{ marginLeft: 10, color: colors.text }}>‹ Back</Text>
+				<Text style={{ fontsize: 18, color: colors.text, includeFontPadding: false }}>‹ Back</Text>
 			</Pressable>
 		);
 

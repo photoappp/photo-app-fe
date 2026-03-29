@@ -26,6 +26,16 @@ export const APPS_LIST = [
 		url: "https://wisdomqclock.onelink.me/SVr2/b7gs4og1",
 	},
 	{
+		name: "Histree",
+		image: require('@/assets/images/histree.png'),
+		url: "https://histree.onelink.me/c9TM/bfbeczqo",
+	},
+	{
+		name: "Play Memo",
+		image: require('@/assets/images/play_memo.png'),
+		url: "https://playmemo.onelink.me/LdOZ/6bbfoohf",
+	},
+	{
 		name: "Find Four",
 		image: require('@/assets/images/find_four.png'),
 		url: "https://findfour.onelink.me/vurA/0tfteiuf",

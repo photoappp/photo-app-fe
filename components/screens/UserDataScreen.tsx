@@ -48,7 +48,7 @@ const UserDataScreen: React.FC = () => {
 };
 
 const styles = StyleSheet.create({
-	optionRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingVertical: 15, paddingHorizontal: 15, marginVertical: 4 },
+	optionRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingVertical: 15, paddingHorizontal: 20, marginVertical: 4 },
 	optionText: { fontSize: 16 },
 	valueText: { fontSize: 16 },
 	separator: { height: 1 },

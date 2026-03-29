@@ -635,18 +635,47 @@ export default function HomeScreen() {
     return `${yyyy}/${MM}/${DD} ${hh}:${mm}`;
   };
 
-	const Header = useCallback(() => {
+	// 2026-03-27 슬라이드 쇼 버튼 추가 by Minji
+	const Header = useCallback(({ imageIndex }: { imageIndex: number }) => {
 		return (
 			<View style={styles.header}>
+				{/* 왼쪽: 중앙 정렬을 위한 빈 공간 */}
+				<View style={{ flex: 1 }} />
+
+				{/* 중앙: 플레이 버튼 */}
+				<View style={{ flex: 4, alignItems: 'center', justifyContent: 'center' }}>
 				<TouchableOpacity
-					onPress={() => setViewerVisible(false)}
-					style={styles.closeBtn}
+					style={[styles.playButtonSlot, { width: '100%', maxWidth: 100, marginRight: 0 }]}
+					onPress={() => {
+						setSlideshowVisible(true); // absolute View가 즉시 화면 덮음
+							startSlideshow(imageIndex);
+							setTimeout(() => setViewerVisible(false), 50);
+					}}
+					activeOpacity={0.9}
 				>
-					<Text style={styles.closeTxt}>✕</Text>
+					<LinearGradient
+						colors={['#2B7FFF', '#AD46FF']}
+						start={{ x: 0, y: 0 }}
+						end={{ x: 1, y: 0 }}
+						style={styles.playButtonBg}
+					>
+						<IconPlay width={18} height={18} />
+					</LinearGradient>
 				</TouchableOpacity>
+				</View>
+						
+				{/* 오른쪽: 닫기 버튼 */}
+				<View style={{ flex: 1, alignItems: 'flex-end', justifyContent: 'center' }}>
+					<TouchableOpacity
+						onPress={() => setViewerVisible(false)}
+						style={styles.closeBtn}
+					>
+						<Text style={styles.closeTxt}>✕</Text>
+					</TouchableOpacity>
+				</View>
 			</View>
 		);
-	}, []);
+	}, [startSlideshow, setViewerVisible]);
 
   const Footer = useCallback(() => {
     const current = photos[viewerIndex];
@@ -1003,40 +1032,47 @@ export default function HomeScreen() {
 				FooterComponent={Footer}
       />
 
-      <Modal visible={slideshowVisible} animationType="fade">
-        <SafeAreaView style={{ flex: 1, backgroundColor: "black" }}>
-          <FlatList
-            ref={(r) => {slideshowListRef.current = r;}}
-            data={viewerImages} // { uri } 배열 이미 있음
-            horizontal
-            pagingEnabled
-            showsHorizontalScrollIndicator={false}
-            keyExtractor={(_, i) => i.toString()}
-            initialScrollIndex={viewerIndex}
-            getItemLayout={(_, index) => ({
-              length: screenWidth,
-              offset: screenWidth * index,
-              index,
-            })}
-            renderItem={({ item }) => (
-              <Image
-                source={{ uri: item.uri }}
-                style={{ width: screenWidth, height: "100%" }}
-                resizeMode="contain"
-              />
-            )}
-          />
-
-          {/* 닫기 버튼 */}
-          <TouchableOpacity
-            onPress={closeSlideshow}
-            style={{ position: "absolute", top: 20, right: 16, padding: 10 }}
-          >
-            <Ionicons name="close" size={28} color="#fff" />
-          </TouchableOpacity>
-        </SafeAreaView>
-      </Modal>
-    </SafeAreaView>
+	</SafeAreaView>
+	{/* 2026-03-27 사진 뷰어에서도 슬라이드 쇼 바로 실행되게 View로 타입 변경 by Minji */}				
+	{slideshowVisible && (
+				<View style={{
+					...StyleSheet.absoluteFillObject,
+					backgroundColor: 'black',
+					zIndex: 9999,
+				}}>
+					<SafeAreaView style={{ flex: 1, backgroundColor: "black" }}>
+					<FlatList
+					ref={(r) => {slideshowListRef.current = r;}}
+					data={viewerImages} // { uri } 배열 이미 있음
+					horizontal
+					pagingEnabled
+					showsHorizontalScrollIndicator={false}
+					keyExtractor={(_, i) => i.toString()}
+					initialScrollIndex={viewerIndex}
+					getItemLayout={(_, index) => ({
+						length: screenWidth,
+						offset: screenWidth * index,
+						index,
+					})}
+					renderItem={({ item }) => (
+																		 <Image
+																		 source={{ uri: item.uri }}
+																		 style={{ width: screenWidth, height: "100%" }}
+																		 resizeMode="contain"
+																		 />
+																		 )}
+					/>
+					
+					{/* 닫기 버튼 */}
+					<TouchableOpacity
+					onPress={closeSlideshow}
+					style={{ position: "absolute", top: 20, right: 16, padding: 10 }}
+					>
+					<Ionicons name="close" size={28} color="#fff" />
+					</TouchableOpacity>
+					</SafeAreaView>
+				</View>
+		)}
     </LinearGradient>
   );
 }
@@ -1180,7 +1216,7 @@ const styles = StyleSheet.create({
     right: 16,
     flexDirection: "row",
     alignItems: "center",
-    justifyContent: "flex-end", // 2026-02-10 닫기 버튼 오른쪽으로 정렬 by Minji
+    justifyContent: "space-between", // 2026-03-27 우측 정렬 삭제 by Minji
   },
   counter: { color: "#fff", fontSize: 16, fontWeight: "600" },
   metaTxt: { color: "#fff", fontSize: 14, fontWeight: "600" },
