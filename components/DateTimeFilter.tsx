@@ -479,9 +479,11 @@ export default function DateTimeFilter({
             </Text>
             <TouchableOpacity
               onPress={() => {
+                bypassDebounceRef.current = true;
                 setDateStart(oneYearAgo);
                 setDateEnd(today);
                 setDateModalVisible(false);
+                flushPendingChange();
               }}
             >
               <ICON_RESET width={70} />
@@ -509,9 +511,11 @@ export default function DateTimeFilter({
             </Text>
             <TouchableOpacity
               onPress={() => {
+                bypassDebounceRef.current = true;
                 setTimeStart(0);
                 setTimeEnd(1439);
                 setTimeModalVisible(false);
+                flushPendingChange();
               }}
             >
               <ICON_RESET width={70} />
