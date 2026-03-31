@@ -182,7 +182,8 @@ const LocationSelector = forwardRef<LocationSelectorHandle, Props>(
 
     const getButtonTitle = () => {
       if (tempCountries.length == 0 && tempCities.length == 0) {
-        return TRANSLATIONS[language].all;
+        // 2026-03-30 location label change from all to allLocations by yen
+        return TRANSLATIONS[language].allLocations;
       }
 
       const getTranslatedCountry = (item: string) => {
@@ -190,7 +191,7 @@ const LocationSelector = forwardRef<LocationSelectorHandle, Props>(
         if (item.includes("All")) return TRANSLATIONS[language].allCountries;
 
         return (
-          locationMap[item]?.country[language] ??
+          locationMap[item]?.country[language as keyof Translations] ??
           locationMap[item]?.country.en ??
           item
         );
@@ -343,7 +344,9 @@ const LocationSelector = forwardRef<LocationSelectorHandle, Props>(
                           {/* 2026-03-30 check with includes by yen */}
                           {item.includes("All")
                             ? TRANSLATIONS[language].allCountries
-                            : (locationMap[item]?.country[language] ??
+                            : (locationMap[item]?.country[
+                                language as keyof Translations
+                              ] ??
                               locationMap[item]?.country.en ??
                               item)}
                         </Text>
