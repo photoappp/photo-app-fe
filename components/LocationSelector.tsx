@@ -68,7 +68,12 @@ const LocationSelector = forwardRef<LocationSelectorHandle, Props>(
       )
         .then((res) => res.text())
         .then((csvText) => {
-          const rows = csvText.split("\n").map((row) => row.split(","));
+          // 2026-03-30 parse carriage return for MacOS by yen
+          const rows = csvText
+            .split("\n")
+            .map((row) =>
+              row.split(",").map((cell) => cell.replace(/\r/g, "")),
+            );
           setTranslations(rows);
           const countryTranslationMap: Record<string, Translations> = {};
           const langCodes = rows[0];
