@@ -56,7 +56,7 @@ const LocationSelector = forwardRef<LocationSelectorHandle, Props>(
     const [selectedCities, setSelectedCities] = useState<string[]>([]);
     const [translations, setTranslations] = useState<string[][]>([]);
     const [locationMap, setLocationMap] = useState<LocationMap>({});
-		// 2026-03-18 Default All 값 다국어 설정 추가 by Minji
+    // 2026-03-18 Default All 값 다국어 설정 추가 by Minji
     const [tempCountries, setTempCountries] = useState<string[]>(["All"]);
     const [tempCities, setTempCities] = useState<string[]>(["All"]);
     const { language, setLanguage } = useLanguage(); // 2026-02-10 언어 설정 추가 by Minji
@@ -74,7 +74,7 @@ const LocationSelector = forwardRef<LocationSelectorHandle, Props>(
           const langCodes = rows[0];
           const allCountriesSet = new Set<string>();
           const allCitiesSet = new Set<string>();
-					// 2026-03-18 선택 국가 언어설정에 따라 보이게 by Minji
+          // 2026-03-18 선택 국가 언어설정에 따라 보이게 by Minji
           rows.slice(1).forEach((row) => {
             const enName = row[0];
             countryTranslationMap[enName] = { en: enName };
@@ -85,6 +85,7 @@ const LocationSelector = forwardRef<LocationSelectorHandle, Props>(
                 countryTranslationMap[enName][code] = val;
               }
             });
+            // console.log(countryTranslationMap);
           });
 
           photos.forEach(({ country, city }) => {
@@ -175,38 +176,46 @@ const LocationSelector = forwardRef<LocationSelectorHandle, Props>(
     };
 
     const getButtonTitle = () => {
-			// 2026-03-18 Default All 값 다국어 설정 추가 by Minji
-			if (tempCountries.length == 0 && tempCities.length == 0) {
-				return TRANSLATIONS[language].all;
-			}
-//      if (tempCountries.length == 0 && tempCities.length == 0) return "None";
+      if (tempCountries.length == 0 && tempCities.length == 0) {
+        return TRANSLATIONS[language].all;
+      }
 
-			const getTranslatedCountry = (item: string) => {
-				if (item === "All") return TRANSLATIONS[language].all;
+      const getTranslatedCountry = (item: string) => {
+        // 2026-03-30 all to allCountries by yen
+        if (item.includes("All")) return TRANSLATIONS[language].allCountries;
 
-				return (
-					locationMap[item]?.country[language] ??
-					locationMap[item]?.country.en ??
-					item
-				);
-			};
-			
-      const formatLabel = (items: string[]) => {
-        if (!items.includes("All")) {
-          return items.length === 1
-						? getTranslatedCountry(items[0])
-						: `${getTranslatedCountry(items[1])}+${items.length - 1}`;
+        return (
+          locationMap[item]?.country[language] ??
+          locationMap[item]?.country.en ??
+          item
+        );
+      };
+
+      const formatCountryLabel = (items: string[]) => {
+        if (items.includes("All")) {
+          return TRANSLATIONS[language].allCountries;
         }
-				return TRANSLATIONS[language].all; // 2026-03-18 Default All 값 다국어 설정 추가 by Minji
-//        return items[0];
+        return items.length === 1
+          ? getTranslatedCountry(items[0])
+          : `${getTranslatedCountry(items[1])}+${items.length - 1}`;
+      };
+
+      // 2026-03-30 all formatCityLabel by yen
+      const formatCityLabel = (items: string[]) => {
+        if (items.includes("All")) {
+          return TRANSLATIONS[language].allCities;
+        }
+        return items.length === 1
+          ? items[0]
+          : `${items[1]}+${items.length - 1}`;
       };
 
       const countryLabel = tempCountries.length
-        ? formatLabel([...tempCountries].sort())
+        ? formatCountryLabel([...tempCountries].sort())
         : "";
 
       const cityLabel = tempCities.length
-        ? formatLabel([...tempCities].sort())
+        ? formatCityLabel([...tempCities].sort())
         : "";
 
       return [countryLabel, cityLabel].filter(Boolean).join(", ");
@@ -221,8 +230,9 @@ const LocationSelector = forwardRef<LocationSelectorHandle, Props>(
       onSelectionChange?.({
         countries: [],
         cities: [],
-				/* 2026-03-18 언어 설정 추가 by Minji */
-        locationLabel: TRANSLATIONS[language].all,
+        /* 2026-03-18 언어 설정 추가 by Minji */
+        // 2026-03-30 location label change from all to allLocations by yen
+        locationLabel: TRANSLATIONS[language].allLocations,
       });
     };
     // 2026-03-04 to reset location selection by yen
@@ -249,8 +259,8 @@ const LocationSelector = forwardRef<LocationSelectorHandle, Props>(
                   paddingTop: "1%",
                 }}
               >
-								{/* 2026-03-18 다국어 라벨 출력 추가 by Minji */}
-							<Text>{TRANSLATIONS[language].selectLocation}</Text>
+                {/* 2026-03-18 다국어 라벨 출력 추가 by Minji */}
+                <Text>{TRANSLATIONS[language].selectLocation}</Text>
                 <View
                   style={{
                     flexDirection: "row",
@@ -315,19 +325,22 @@ const LocationSelector = forwardRef<LocationSelectorHandle, Props>(
                               : isSelected
                                 ? "#EFF6FF"
                                 : Colors.light.background,
-                            borderBottomWidth: item === "All" ? 1 : 0,
-                            borderBottomColor:
-                              item === "All" ? "#DBEAFE" : "transparent",
+                            //  2026-03-30 check with includes by yen
+                            borderBottomWidth: item.includes("All") ? 1 : 0,
+                            borderBottomColor: item.includes("All")
+                              ? "#DBEAFE"
+                              : "transparent",
                           },
                         ]}
                       >
                         <Text style={styles.listItem}>
                           {/* 2026-03-18 언어 설정 추가 by Minji */}
-													{item === "All"
-														? TRANSLATIONS[language].all
-														: locationMap[item]?.country[language] ??
-															locationMap[item]?.country.en ??
-															item}
+                          {/* 2026-03-30 check with includes by yen */}
+                          {item.includes("All")
+                            ? TRANSLATIONS[language].allCountries
+                            : (locationMap[item]?.country[language] ??
+                              locationMap[item]?.country.en ??
+                              item)}
                         </Text>
                       </Pressable>
                     );
@@ -361,14 +374,21 @@ const LocationSelector = forwardRef<LocationSelectorHandle, Props>(
                                 : isSelected
                                   ? "#EFF6FF"
                                   : Colors.light.background,
-                              borderBottomWidth: item === "All" ? 1 : 0,
-                              borderBottomColor:
-                                item === "All" ? "#DBEAFE" : "transparent",
+                              //  2026-03-30 check with includes by yen
+                              borderBottomWidth: item.includes("All") ? 1 : 0,
+                              borderBottomColor: item.includes("All")
+                                ? "#DBEAFE"
+                                : "transparent",
                             },
                           ]}
                         >
-													{/* 2026-03-18 언어 설정 추가 by Minji */}
-													<Text style={styles.listItem}>{item === "All" ? TRANSLATIONS[language].all : item}</Text>
+                          {/* 2026-03-18 언어 설정 추가 by Minji */}
+                          {/* 2026-03-30 check with includes by yen */}
+                          <Text style={styles.listItem}>
+                            {item.includes("All")
+                              ? TRANSLATIONS[language].allCities
+                              : item}
+                          </Text>
                         </Pressable>
                       );
                     }}
@@ -402,8 +422,11 @@ const LocationSelector = forwardRef<LocationSelectorHandle, Props>(
                   end={{ x: 1, y: 0 }}
                   style={styles.primaryButton}
                 >
-									{/*  2026-03-13 번역 라벨 추가 by Minji */}
-									<Text style={styles.primaryButtonText}>{TRANSLATIONS[language].allLocations}</Text>
+                  {/*  2026-03-13 번역 라벨 추가 by Minji */}
+                  {/* 2026-03-30 all to allLocations by yen */}
+                  <Text style={styles.primaryButtonText}>
+                    {TRANSLATIONS[language].allLocations}
+                  </Text>
                 </LinearGradient>
               </TouchableOpacity>
             </View>
