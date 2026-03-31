@@ -126,6 +126,8 @@ export default function HomeScreen() {
   const [didInitialLoad, setDidInitialLoad] = useState(false);
   const requestInFlightRef = useRef(false);
   const didKickoffBackgroundRef = useRef(false);
+  const [filterLoading, setFilterLoading] = useState(false);
+  const [appendLoading, setAppendLoading] = useState(false);
   /** 2026.03.26 By June */
 
   // ImageViewing 에 넘길 images 배열 (형식: { uri: string }[])
@@ -166,6 +168,8 @@ export default function HomeScreen() {
   ).getTime();
 
   /** 2026.03.26 by June Edit Start */  
+  const topAppendTriggeredRef = useRef(false);
+
   const today = new Date();
   const oneYearAgo = new Date(
     today.getFullYear() - 1,
@@ -626,6 +630,9 @@ export default function HomeScreen() {
 
   /** 앱 기동 후 초기 진입 시 사진 로드 빠르게 처리 */
   const loadInitialPhotos = useCallback(async () => {
+
+    let initialHasNextPage = false;
+
     if (requestInFlightRef.current) return;
   
     const ok = await ensurePhotoPermission();
@@ -636,11 +643,14 @@ export default function HomeScreen() {
     setEmptyMessage(null);
   
     try {
+      
       // 1. 딱 1페이지만 가져온다
       const result = await fetchAssetsPage({
         after: null,
-        first: 50, // 여기서 절대 늘리지 마세요
+        first: 50,
       });
+
+      initialHasNextPage = result.hasNextPage;
   
       const assets = result.assets ?? [];
   
@@ -669,15 +679,21 @@ export default function HomeScreen() {
       setDidInitialLoad(true);
   
       // 5. 즉시 백그라운드 로딩 시작
-      setTimeout(() => {
-        loadMorePhotos({ mode: "background" });
-      }, 0);
+      // setTimeout(() => {
+      //   loadMorePhotos({ mode: "background" });
+      // }, 0);
   
     } catch (err) {
       console.log("initial load error:", err);
     } finally {
       setInitialLoading(false);
       requestInFlightRef.current = false;
+      
+      if (initialHasNextPage) {
+        setTimeout(() => {
+          void loadMorePhotos({ mode: "background" });
+        }, 0);
+      }
     }
   }, [filter]);
 
@@ -689,9 +705,13 @@ export default function HomeScreen() {
     if (!ok) return;
   
     requestInFlightRef.current = true;
-    setLoading(true);
+    setFilterLoading(true);
     setEmptyMessage(null);
     didKickoffBackgroundRef.current = false;
+    setPhotos([]);          // 이전 결과 즉시 제거
+    setPhotosAll([]);       // 이전 결과 즉시 제거
+    setEndCursor(null);     // 새 필터는 처음부터 다시 시작
+    setHasNextPage(true);   // 새 필터는 다시 탐색 가능 상태로 초기화
   
     try {
       const result = await collectPhotosForTarget({
@@ -721,7 +741,7 @@ export default function HomeScreen() {
       console.log("reload error:", err);
       Alert.alert("오류", "사진을 다시 불러오는 중 문제가 발생했습니다.");
     } finally {
-      setLoading(false);
+      setFilterLoading(false);
       requestInFlightRef.current = false;
     }
   }, [filter]);
@@ -730,6 +750,7 @@ export default function HomeScreen() {
   const loadMorePhotos = useCallback(
     async ({ mode }: { mode: "background" | "append" }) => {
       if (requestInFlightRef.current) return;
+      if (filterLoading) return;
       if (!hasNextPage) return;
   
       const ok = await ensurePhotoPermission();
@@ -738,7 +759,7 @@ export default function HomeScreen() {
       requestInFlightRef.current = true;
   
       if (mode === "append") {
-        setLoading(true);
+        setAppendLoading(true);
       } else {
         setBackgroundLoading(true);
       }
@@ -762,14 +783,14 @@ export default function HomeScreen() {
         console.log("load more error:", err);
       } finally {
         if (mode === "append") {
-          setLoading(false);
+          setAppendLoading(false);
         } else {
           setBackgroundLoading(false);
         }
         requestInFlightRef.current = false;
       }
     },
-    [filter, endCursor, hasNextPage]
+    [filter, endCursor, hasNextPage, filterLoading]
   );
   /** 2026.03.26 By June END */
 
@@ -1076,10 +1097,8 @@ export default function HomeScreen() {
 
   /** 2026.03.26 수정 By June */
   const reloadPhotos = useCallback(async () => {
-    setEndCursor(null);
-    setHasNextPage(true);
-    await loadPhotosForFilterReset();
-  }, [loadPhotosForFilterReset]);
+    await reloadPhotosForFilter();
+  }, [reloadPhotosForFilter]);
 
   /** 초기 진입 이펙트 추가 2026.03.26 By June */
   useEffect(() => {
@@ -1136,10 +1155,8 @@ export default function HomeScreen() {
     if (usedTime) incrementTimeFilter();
     if (usedLocation) incrementLocationFilter();
   
-    setEndCursor(null);
-    setHasNextPage(true);
-    loadPhotosForFilterReset();
-  }, [filter, reloadPhotosForFilter]);
+    void reloadPhotosForFilter();
+  }, [filter, reloadPhotosForFilter, incrementDateFilter, incrementTimeFilter, incrementLocationFilter]);
   /** 2026.03.26 By June */
 
   // 썸네일 그리드에 사진 데이터 렌더링
@@ -1218,11 +1235,14 @@ export default function HomeScreen() {
 
   const Footer = useCallback(() => {
     const current = photos[viewerIndex];
-		const locationText = current?.city && current?.country
-				? `${current.city}, ${current.country}`
-				: current?.country
-				? current.country
-				: "";
+    const locationText = /** 2026.03.27 By June */
+    current?.city && current?.country
+      ? `${current.city}, ${current.country}`
+      : current?.country
+      ? current.country
+      : current?.location
+      ? "Loading location info..."
+      : "";
 		
 		const handleShare = async (photoUri: string, message: string) => {
 			try {
@@ -1390,7 +1410,7 @@ export default function HomeScreen() {
                 borderRadius: 10,
               }}
               ListEmptyComponent={
-                (!loading && !initialLoading && !isScanning && !error) ? (
+                (!initialLoading && !filterLoading && !appendLoading && !isScanning && !error) ? (
                   <View style={styles.emptyWrap}>
                     <Text style={styles.emptyTitle}>
                       {emptyMessage ?? EMPTY_DEFAULT_MESSAGE}
@@ -1403,6 +1423,7 @@ export default function HomeScreen() {
               }
               onScrollBeginDrag={() => {
                 setUserScrolled(true);
+                topAppendTriggeredRef.current = false;
               }}
               onMomentumScrollBegin={() => {
                 setUserScrolled(true);
@@ -1434,9 +1455,10 @@ export default function HomeScreen() {
               }}
               ListFooterComponent={
                 // 사용자가 스크롤해서 로딩하는 경우에만 표시(초기 자동 로딩 표시 억제)
-                isPaginatingRef.current && loading ? (
-                  <ActivityIndicator style={{ marginVertical: 12 }} />
-                ) : null
+                // isPaginatingRef.current && loading ? (
+                //   <ActivityIndicator style={{ marginVertical: 12 }} />
+                // ) : null
+                null
               }
               onLayout={({
                 nativeEvent: {
@@ -1449,10 +1471,28 @@ export default function HomeScreen() {
                 // 화면보다 컨텐츠가 클 때만 다음 페이지 로딩 허용
                 setListCanScroll(ch > 0);
               }}
+              onScroll={({ nativeEvent }) => {
+                const y = nativeEvent.contentOffset.y;
+              
+                if (y <= -60) {
+                  if (topAppendTriggeredRef.current) return;
+                  if (userScrolled && !appendLoading && !backgroundLoading && !filterLoading && !onEndLockRef.current && hasNextPage) {
+                    topAppendTriggeredRef.current = true;
+                    onEndLockRef.current = true;
+                    isPaginatingRef.current = true;
+                
+                    loadMorePhotos({ mode: "append" }).finally(() => {
+                      onEndLockRef.current = false;
+                      isPaginatingRef.current = false;
+                    });
+                  }
+                }
+              }}
+              scrollEventThrottle={16}
             />
             {/* 썸네일 그리드 END */}
             {/** Progress bar START */}
-            {loading || isScanning ? (
+            {initialLoading || filterLoading || appendLoading || isScanning ? ( // 2026.03.27 By June
               <View style={styles.gridOverlay} pointerEvents="auto">
                 <View style={styles.loadingBox}>
                   <ActivityIndicator size="large" />
@@ -1763,15 +1803,20 @@ const styles = StyleSheet.create({
   metaTxt: { color: "#fff", fontSize: 14, fontWeight: "600" },
 	locationTxt: { color: "#fff", fontSize: 14, fontWeight: "600", marginTop: 2 },
   closeBtn: {
-    zIndex: 999,
-    width: 32,
-    height: 32,
-    borderRadius: 16,
-    backgroundColor: "rgba(255,255,255,0.16)",
+    width: 40,
+    height: 40,
+    borderRadius: 20,
     alignItems: "center",
     justifyContent: "center",
+    backgroundColor: "rgba(173, 70, 255, 0.18)",
+    borderWidth: 1,
+    borderColor: "rgba(173, 70, 255, 0.55)",
   },
-  closeTxt: { color: "#fff", fontSize: 18, fontWeight: "700" },
+  closeTxt: {
+    color: "#C084FC",
+    fontSize: 18,
+    fontWeight: "700",
+  },
 	headerTextContainer: {
 		flexDirection: "column",
 		alignItems: "center",
