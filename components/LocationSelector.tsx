@@ -113,10 +113,16 @@ const LocationSelector = forwardRef<LocationSelectorHandle, Props>(
           setLocationMap(locationMap);
           if (allCountriesSet.size > 0) {
 						// 2026-03-27 Default 다국어 설정 추가 by Minji
-            setAllCountries([ALL_KEY, ...Array.from(allCountriesSet)]);
-            setAllCities([ALL_KEY, ...Array.from(allCitiesSet)]);
-            setTempCountries([ALL_KEY]);
-            setTempCities([ALL_KEY]);
+						const countryList = Array.from(allCountriesSet);
+						const cityList = Array.from(allCitiesSet);
+
+						// All 키워드와 실제 리스트를 합쳐서 전체 목록 생성
+						setAllCountries([ALL_KEY, ...countryList]);
+						setAllCities([ALL_KEY, ...cityList]);
+
+						// 초기 선택 상태를 [ALL_KEY, 국가1, 국가2...] 전체로 설정
+						setTempCountries([ALL_KEY, ...countryList]);
+						setTempCities([ALL_KEY, ...cityList]);
           }
         })
         .catch(console.error);
@@ -458,6 +464,23 @@ const LocationSelector = forwardRef<LocationSelectorHandle, Props>(
             <View style={styles.buttonContainer}>
               <TouchableOpacity
                 onPress={() => {
+									// 2026-04-05 close button과 동일한 로직 추가 by Minji
+									const getFilteredCities = () => {
+										if (tempCities.includes(ALL_KEY)) {
+											const allSelectedCities: string[] = [];
+											tempCountries.forEach((country) => {
+												const cities = locationMap[country]?.cities ?? [];
+												cities.forEach((c) => {
+													if (c.en) allSelectedCities.push(c.en);
+												});
+											});
+											return allSelectedCities;
+										}
+										return tempCities;
+									};
+									
+									const filteredCities = getFilteredCities();
+									
                   setSelectedCountries(tempCountries);
                   setSelectedCities(tempCities);
                   console.log("Applying selection:", {
@@ -467,7 +490,7 @@ const LocationSelector = forwardRef<LocationSelectorHandle, Props>(
                   });
                   onSelectionChange?.({
                     countries: tempCountries,
-                    cities: tempCities,
+                    cities: filteredCities,
                     locationLabel: getButtonTitle(selectedCountries, filteredCities), //2026-03-27 언어 변경 시 필터 라벨 자동 변경 by Minji
                   });
 

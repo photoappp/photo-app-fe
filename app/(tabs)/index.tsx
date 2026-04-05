@@ -637,7 +637,9 @@ export default function HomeScreen() {
 
 	// 2026-03-27 슬라이드 쇼 버튼 추가 by Minji
 	const Header = useCallback(({ imageIndex }: { imageIndex: number }) => {
+		/* 2026-04-05 기종별 스크린 크기 고려하여 SafeAreaView 추가 by Minji */
 		return (
+		<SafeAreaView edges={['top']} style={styles.headerSafeArea}>
 			<View style={styles.header}>
 				{/* 왼쪽: 중앙 정렬을 위한 빈 공간 */}
 				<View style={{ flex: 1 }} />
@@ -674,6 +676,7 @@ export default function HomeScreen() {
 					</TouchableOpacity>
 				</View>
 			</View>
+		</SafeAreaView>
 		);
 	}, [startSlideshow, setViewerVisible]);
 
@@ -730,8 +733,9 @@ export default function HomeScreen() {
 					]
 				);
 			};
-		
+		/* 2026-04-05 기종별 스크린 크기 고려하여 SafeAreaView 추가 by Minji */
     return (
+		<SafeAreaView edges={['bottom']} style={styles.footerSafeArea}>
       <View style={styles.footer}>
 				{/* 왼쪽: Share 버튼 */}
 				<TouchableOpacity onPress={onPressShare}>
@@ -751,6 +755,7 @@ export default function HomeScreen() {
 					<Ionicons name="trash-outline" size={24} color="white" />
 				</TouchableOpacity>
       </View>
+		</SafeAreaView>
     );
   }, [photos, viewerIndex]);
 
@@ -1211,13 +1216,17 @@ const styles = StyleSheet.create({
   },
   header: {
     position: "absolute",
-    top: 44, // 노치 고려해서 여백
+    top: 60, // 노치 고려해서 여백
     left: 16,
     right: 16,
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "space-between", // 2026-03-27 우측 정렬 삭제 by Minji
   },
+	// 2026-04-05 추가 by Minji
+	headerSafeArea: {
+			backgroundColor: 'rgba(0,0,0,0.4)', // 상단 바 배경 (선택사항)
+	},
   counter: { color: "#fff", fontSize: 16, fontWeight: "600" },
   metaTxt: { color: "#fff", fontSize: 14, fontWeight: "600" },
 	locationTxt: { color: "#fff", fontSize: 14, fontWeight: "600", marginTop: 2 },
@@ -1236,6 +1245,10 @@ const styles = StyleSheet.create({
 		alignItems: "center",
 		flexShrink: 1, // 긴 텍스트도 잘림
 		marginHorizontal: 8,
+	},
+	// 2026-04-05 추가 by Minji
+	footerSafeArea: {
+		backgroundColor: 'rgba(0,0,0,0.6)',
 	},
 	footer: { // 2026-02-10 footer 스타일 원복 by Minji
 		 flexDirection: "row",
