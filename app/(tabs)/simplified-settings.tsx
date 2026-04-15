@@ -12,6 +12,7 @@ import {
   SafeAreaView,
 } from 'react-native';
 import { router } from 'expo-router';
+import DropDownPicker from 'react-native-dropdown-picker';
 import { useTheme } from '@/components/context/ThemeContext';
 import { useLanguage } from '@/components/context/LanguageContext';
 import { useSlideshowTime } from '@/components/context/SlideshowTimeContext';
@@ -38,6 +39,7 @@ export default function SimplifiedSettings() {
 
   const [screen, setScreen] = useState<ScreenType>('main');
   const [inputValue, setInputValue] = useState((slideshowTime / 1000).toString());
+  const [langOpen, setLangOpen] = useState(false);
 
   const t = TRANSLATIONS[language];
 
@@ -93,12 +95,38 @@ export default function SimplifiedSettings() {
         );
       case 'lang':
         return (
-          <TouchableOpacity style={styles.row}>
+          <View style={[styles.row, { zIndex: langOpen ? 1000 : 1 }]}>
             <Text style={[styles.label, { color: colors.text }]}>{item.title}</Text>
-            <Text style={[styles.value, { color: colors.secondary }]}>
-              {LANGUAGES.find((l) => l.value === language)?.label || 'English'}
-            </Text>
-          </TouchableOpacity>
+            <View style={{ width: 160 }}>
+              <DropDownPicker
+                listMode="SCROLLVIEW"
+                dropDownDirection="BOTTOM"
+                maxHeight={300}
+                open={langOpen}
+                value={language}
+                items={LANGUAGES.map((l) => ({ label: l.label, value: l.value }))}
+                setOpen={setLangOpen}
+                setValue={(callback) => {
+                  const next = callback(language);
+                  setLanguage(next);
+                }}
+                setItems={() => {}}
+                style={{
+                  backgroundColor: isDarkTheme ? '#1c1c1e' : '#fff',
+                  borderColor: isDarkTheme ? '#333' : '#ccc',
+                  minHeight: 36,
+                }}
+                textStyle={{
+                  color: isDarkTheme ? '#fff' : '#000',
+                  fontSize: 14,
+                }}
+                dropDownContainerStyle={{
+                  backgroundColor: isDarkTheme ? '#1c1c1e' : '#fff',
+                  borderColor: isDarkTheme ? '#333' : '#ccc',
+                }}
+              />
+            </View>
+          </View>
         );
       case 'slideshow':
         return (
