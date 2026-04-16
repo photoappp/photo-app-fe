@@ -9,8 +9,10 @@ import {
   StyleSheet,
   Pressable,
   Image,
-  SafeAreaView,
+  Platform,
 } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
+import { Edges } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
 import DropDownPicker from 'react-native-dropdown-picker';
 import { useTheme } from '@/components/context/ThemeContext';
@@ -300,9 +302,11 @@ export default function SimplifiedSettings() {
 
   const showBack = screen !== 'main';
 
+  const edges: Edges = ["top", "bottom", "left", "right"];
+
   return (
     <View style={{ flex: 1, backgroundColor: colors.background }}>
-      <SafeAreaView style={{ backgroundColor: '#fff' }}>
+      <SafeAreaView style={{ backgroundColor: '#fff' }} edges={edges}>
         <View style={[styles.header, { backgroundColor: '#fff' }]}>
           {showBack ? (
             <Pressable onPress={() => setScreen('main')} style={styles.backBtn}>
@@ -354,7 +358,8 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'space-between',
     paddingHorizontal: 16,
-    paddingVertical: 12,
+    paddingTop: 12,
+    paddingBottom: Platform.OS === 'android' ? 4 : 12,
   },
   headerTitle: {
     fontSize: 18,

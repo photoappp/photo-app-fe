@@ -174,6 +174,7 @@ export default function HomeScreen() {
   });
 
   // 슬라이드쇼 관련
+  // 2026-04-15: 슬라이드쇼 시간 설정 Context에서 값 받아오도록 변경 by yen
   const { slideshowTime } = useSlideshowTime();
   const SLIDESHOW_MS = slideshowTime;
   const [slideshowOn, setSlideshowOn] = useState(false);
