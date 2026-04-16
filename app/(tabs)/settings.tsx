@@ -53,8 +53,9 @@ export default function SimplifiedSettings() {
   );
 
   const formatDateOnly = (isoString?: string) => {
-    if (!isoString) return '-';
+    if (!isoString || isoString === '-') return '-';
     const d = new Date(isoString);
+    if (isNaN(d.getTime())) return '-';
     return `${d.getFullYear()}/${(d.getMonth() + 1).toString().padStart(2, '0')}/${d.getDate().toString().padStart(2, '0')}`;
   };
 

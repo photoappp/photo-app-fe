@@ -1,93 +1,131 @@
-//  components/context/UserDataContext.tsx
-import React, { createContext, useContext, useState, ReactNode, useEffect, useCallback } from 'react';
+import React, { createContext, useContext, useState, useEffect, ReactNode } from 'react';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
-interface UserData {
-	startDate: string;
-	dateSearchCount: number;
-	timeSearchCount: number;
-	locationSearchCount: number;
-	totalPhotos: number;
+export interface UserData {
+  startDate: string;
+  dateSearchCount: number;
+  timeSearchCount: number;
+  locationSearchCount: number;
+  totalPhotos: number;
 }
 
 interface UserDataContextType {
-	userData: UserData;
-	updateUserData: (partial: Partial<UserData>) => void;
-	incrementDateFilter: () => void;
-	incrementTimeFilter: () => void;
-	incrementLocationFilter: () => void;
-	updateTotalPhotos: (count: number) => void;
+  userData: UserData;
+  updateUserData: (data: Partial<UserData>) => void;
+  incrementDateFilter: () => void;
+  incrementTimeFilter: () => void;
+  incrementLocationFilter: () => void;
+  updateTotalPhotos: (count: number) => void;
 }
 
 const defaultUserData: UserData = {
-	startDate: '-',
-	dateSearchCount: 0,
-	timeSearchCount: 0,
-	locationSearchCount: 0,
-	totalPhotos: 0,
+  startDate: '-',
+  dateSearchCount: 0,
+  timeSearchCount: 0,
+  locationSearchCount: 0,
+  totalPhotos: 0,
 };
-
-const UserDataContext = createContext<UserDataContextType | undefined>(undefined);
 
 const STORAGE_KEY = 'userData';
 
+const UserDataContext = createContext<UserDataContextType | undefined>(undefined);
+
 export const UserDataProvider = ({ children }: { children: ReactNode }) => {
-	const [userData, setUserData] = useState<UserData>(defaultUserData);
-	const [loaded, setLoaded] = useState(false);
+  const [userData, setUserData] = useState<UserData>(defaultUserData);
 
-	// 앱 최초 실행일 저장
-	useEffect(() => {
-			(async () => {
-				const stored = await AsyncStorage.getItem(STORAGE_KEY);
-				if (stored) {
-					setUserData(JSON.parse(stored));
-				} else {
-					const today = new Date().toISOString().split('T')[0];
-					const init = { ...defaultUserData, startDate: today };
-					setUserData(init);
-					await AsyncStorage.setItem(STORAGE_KEY, JSON.stringify(init));
-				}
-				setLoaded(true);
-			})();
-		}, []);
+  useEffect(() => {
+    loadUserData();
+  }, []);
 
-	// userData 변경 시 자동 저장
-	useEffect(() => {
-		if (!loaded) return;
-		AsyncStorage.setItem(STORAGE_KEY, JSON.stringify(userData));
-	}, [userData, loaded]);
+  const loadUserData = async () => {
+    try {
+      const stored = await AsyncStorage.getItem(STORAGE_KEY);
+      if (stored) {
+        const parsed = JSON.parse(stored);
+        if (!parsed.startDate || parsed.startDate === '-') {
+          parsed.startDate = new Date().toISOString().split('T')[0];
+          await AsyncStorage.setItem(STORAGE_KEY, JSON.stringify(parsed));
+        }
+        setUserData(parsed);
+      } else {
+        const today = new Date().toISOString().split('T')[0];
+        const initialData = { ...defaultUserData, startDate: today };
+        setUserData(initialData);
+        await AsyncStorage.setItem(STORAGE_KEY, JSON.stringify(initialData));
+      }
+    } catch (error) {
+      console.error('Failed to load user data:', error);
+    }
+  };
 
-	const updateUserData = (partial: Partial<UserData>) => {
-		setUserData(prev => ({ ...prev, ...partial }));
-	};
+  const saveUserData = async (data: UserData) => {
+    try {
+      await AsyncStorage.setItem(STORAGE_KEY, JSON.stringify(data));
+    } catch (error) {
+      console.error('Failed to save user data:', error);
+    }
+  };
 
-	const incrementDateFilter = () => {
-		setUserData(prev => ({ ...prev, dateSearchCount: prev.dateSearchCount + 1 }));
-	};
-	
-	const incrementTimeFilter = () => {
-		setUserData(prev => ({ ...prev, timeSearchCount: prev.timeSearchCount + 1 }));
-	};
+  const updateUserData = (data: Partial<UserData>) => {
+    setUserData(prev => {
+      const updated = { ...prev, ...data };
+      saveUserData(updated);
+      return updated;
+    });
+  };
 
-	const incrementLocationFilter = () => {
-		setUserData(prev => ({ ...prev, locationSearchCount: prev.locationSearchCount + 1 }));
-	};
-	
-	const updateTotalPhotos = (count: number) => {
-		setUserData(prev => ({ ...prev, totalPhotos: count }));
-	};
+  const incrementDateFilter = () => {
+    setUserData(prev => {
+      const updated = { ...prev, dateSearchCount: prev.dateSearchCount + 1 };
+      saveUserData(updated);
+      return updated;
+    });
+  };
 
-	return (
-		<UserDataContext.Provider
-			value={{ userData, updateUserData, incrementDateFilter, incrementTimeFilter, incrementLocationFilter, updateTotalPhotos }}
-		>
-			{children}
-		</UserDataContext.Provider>
-	);
+  const incrementTimeFilter = () => {
+    setUserData(prev => {
+      const updated = { ...prev, timeSearchCount: prev.timeSearchCount + 1 };
+      saveUserData(updated);
+      return updated;
+    });
+  };
+
+  const incrementLocationFilter = () => {
+    setUserData(prev => {
+      const updated = { ...prev, locationSearchCount: prev.locationSearchCount + 1 };
+      saveUserData(updated);
+      return updated;
+    });
+  };
+
+  const updateTotalPhotos = (count: number) => {
+    setUserData(prev => {
+      const updated = { ...prev, totalPhotos: count };
+      saveUserData(updated);
+      return updated;
+    });
+  };
+
+  return (
+    <UserDataContext.Provider
+      value={{
+        userData,
+        updateUserData,
+        incrementDateFilter,
+        incrementTimeFilter,
+        incrementLocationFilter,
+        updateTotalPhotos,
+      }}
+    >
+      {children}
+    </UserDataContext.Provider>
+  );
 };
 
-export const useUserData = () => {
-	const context = useContext(UserDataContext);
-	if (!context) throw new Error('useUserData must be used within UserDataProvider');
-	return context;
+export const useUserData = (): UserDataContextType => {
+  const context = useContext(UserDataContext);
+  if (!context) {
+    throw new Error('useUserData must be used within UserDataProvider');
+  }
+  return context;
 };
