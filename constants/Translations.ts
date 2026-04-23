@@ -1,6 +1,7 @@
 //  Translations.ts
-export const TRANSLATIONS: Record<string, Record<string, string>> = {
-	en: {
+/* 2026.04.22 번역 키/언어 타입을 코드에서 재사용 가능하게 만들기 위해 객체 리터럴 기반 상수로 구조를 고정 by June */
+export const TRANSLATIONS = {
+		en: {
 		settings: 'Settings',
 		userData: 'User Data',
 		startDate: 'Start Date',
@@ -39,11 +40,38 @@ export const TRANSLATIONS: Record<string, Record<string, string>> = {
 		past_12_months: 'Past 12 Months',
 		past_30_days: 'Past 30 Days',
 		past_7_days: 'Past 7 Days',
-		selectDate: "Select Date",
-		selectTime: "Select Time",
-		selectLocation: "Select Location",
-		all: "All"
-	},
+			selectDate: "Select Date",
+			selectTime: "Select Time",
+			selectLocation: "Select Location",
+			all: "All",
+			/* 2026.04.22 홈/뷰어 공용 UI 문구를 다국어 처리하기 위해 번역 키를 확장 by June */
+			anywhere: "Anywhere",
+			noPhotosFound: "No photos found",
+			tryExpandingFilters: "Try expanding the filters.",
+			noDateInfo: "No date info",
+			loadingLocationInfo: "Loading location info...",
+			permissionRequiredTitle: "Permission Required",
+			photoPermissionRequired: "Photo access permission is required.",
+			photoPermissionSettingsMessage:
+				"To display photos, allow photo access in Settings.",
+			goToSettings: "Open Settings",
+			cancel: "Cancel",
+			delete: "Delete",
+			deletePhotoTitle: "Delete Photo",
+			deletePhotoConfirm: "Are you sure you want to delete this photo?",
+			errorTitle: "Error",
+			loadPhotosError: "There was a problem while loading photos.",
+			reloadPhotosError: "There was a problem while reloading photos.",
+			shareFailedMessage: "Failed to share the photo.",
+			sharePhotoMessagePrefix: "Check out this photo!",
+			loadingPhotos: "Loading photos...",
+			photoIndexing: "Photo indexing",
+			syncing: "syncing",
+			complete: "complete",
+			geocodeCache: "Geocode cache",
+			queue: "Queue",
+			noRecent3YearsPhotos: "No photos in the last 3 years."
+		},
 	ko: {
 		settings: '설정',
 		userData: '사용자 데이터',
@@ -302,6 +330,29 @@ export const TRANSLATIONS: Record<string, Record<string, string>> = {
 		selectLocation: "Seleccionar ubicación",
 		all: "Todo"
 	},
+} as const;
+
+/* 2026.04.22 지원 언어 목록을 단일 원천으로 관리해 언어 컨텍스트/번역 훅에서 동일 기준을 사용하도록 추가 by June */
+export const SUPPORTED_LANGUAGES = Object.keys(TRANSLATIONS) as Array<keyof typeof TRANSLATIONS>;
+/* 2026.04.22 언어 타입을 상수에서 추론해 문자열 오타로 인한 런타임 fallback을 줄이기 위해 타입을 추가 by June */
+export type SupportedLanguage = keyof typeof TRANSLATIONS;
+/* 2026.04.22 번역 키 타입을 공통 노출해 컴포넌트에서 안전한 key 접근을 보장하기 위해 타입을 추가 by June */
+export type TranslationKey = keyof typeof TRANSLATIONS.en;
+
+/* 2026.04.22 임의 언어 입력을 지원 언어로 정규화해 컨텍스트 초기화/설정 저장 시 예외를 줄이기 위해 헬퍼를 추가 by June */
+export const normalizeLanguage = (language: string): SupportedLanguage => {
+	const found = SUPPORTED_LANGUAGES.find((lang) => lang === language);
+	return found ?? "en";
 };
 
-
+/* 2026.04.22 모든 화면에서 동일 fallback 정책을 사용하도록 공용 번역 조회 함수를 추가 by June */
+export const translateText = (
+	language: string,
+	key: TranslationKey,
+	fallback?: string
+) => {
+	const normalized = normalizeLanguage(language);
+	/* 2026.04.22 일부 언어에서 신규 키가 아직 비어있을 수 있어 런타임에 안전하게 en fallback 하도록 레코드 캐스팅을 적용 by June */
+	const table = TRANSLATIONS[normalized] as Record<string, string>;
+	return table[key] ?? fallback ?? TRANSLATIONS.en[key];
+};
