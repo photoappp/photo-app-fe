@@ -30,7 +30,7 @@ import ImageViewing from 'react-native-image-viewing';
 import { Edges, SafeAreaView } from 'react-native-safe-area-context';
 import Share from 'react-native-share';
 
-import { useLanguage } from '@/components/context/LanguageContext';
+import { useI18n } from '@/components/context/useI18n';
 import { useSlideshowTime } from '@/components/context/SlideshowTimeContext';
 import { useTheme } from '@/components/context/ThemeContext';
 import { useUserData } from '@/components/context/UserDataContext';
@@ -93,7 +93,8 @@ export default function HomeScreen() {
 	const router = useRouter();
 	const navigation = useNavigation();
 	const { isDarkTheme, colors } = useTheme();
-	const { language } = useLanguage();
+	/* 2026.04.22 홈 화면의 하드코딩 문구를 다국어로 전환하기 위해 공용 i18n 훅을 사용하도록 변경 by June */
+	const { t } = useI18n();
 //	const { userData, updateUserData } = useUserData();
 
 	const { incrementDateFilter, incrementTimeFilter, incrementLocationFilter, updateTotalPhotos } = useUserData();
@@ -232,9 +233,10 @@ export default function HomeScreen() {
   /* 2026.04.15 시간 필터를 SQL로 이관한 이후 불필요한 대량 조회를 줄여 긴 기간 검색 응답 속도를 개선하기 위해 조회 상한을 조정 by June */
   const DB_QUERY_LIMIT = 120;
   
-  const EMPTY_RECENT_3Y_MESSAGE = "최근 3년 내 사진이 없습니다.";
-  const EMPTY_DEFAULT_MESSAGE = "No photos found";
-  const EMPTY_DEFAULT_DESC = "Try expanding the filters.";
+  /* 2026.04.22 빈 상태 문구를 다국어로 표시하기 위해 하드코딩 문자열을 번역 키 기반으로 교체 by June */
+  const EMPTY_RECENT_3Y_MESSAGE = t("noRecent3YearsPhotos", "No photos in the last 3 years.");
+  const EMPTY_DEFAULT_MESSAGE = t("noPhotosFound", "No photos found");
+  const EMPTY_DEFAULT_DESC = t("tryExpandingFilters", "Try expanding the filters.");
  
   const sortPhotosByTakenAtAsc = (items: Photo[]) => {
     return [...items].sort((a, b) => {
@@ -1018,13 +1020,17 @@ export default function HomeScreen() {
     if (hasPerm) return true;
   
     if (!canAskAgain) {
+      /* 2026.04.22 권한 거부 안내 알럿을 다국어로 통일해 언어 설정과 사용자 안내 문구를 일치시키기 위해 수정 by June */
       Alert.alert(
-        "권한 필요",
-        "사진을 표시하려면 사진 접근 권한을 허용해야 합니다. 설정에서 권한을 켜주세요.",
+        t("permissionRequiredTitle", "Permission Required"),
+        t(
+          "photoPermissionSettingsMessage",
+          "To display photos, allow photo access in Settings."
+        ),
         [
-          { text: "취소", style: "cancel" },
+          { text: t("cancel", "Cancel"), style: "cancel" },
           {
-            text: "설정으로 이동",
+            text: t("goToSettings", "Open Settings"),
             onPress: () => {
               Linking.openSettings().catch(() => {
                 console.log("openSettings failed");
@@ -1034,7 +1040,11 @@ export default function HomeScreen() {
         ]
       );
     } else {
-      Alert.alert("권한 필요", "사진 접근 권한이 필요합니다.");
+      /* 2026.04.22 재요청 가능 상태의 권한 알럿도 다국어 처리해 언어별 UX 일관성을 유지하기 위해 수정 by June */
+      Alert.alert(
+        t("permissionRequiredTitle", "Permission Required"),
+        t("photoPermissionRequired", "Photo access permission is required.")
+      );
     }
   
     return false;
@@ -1354,7 +1364,11 @@ export default function HomeScreen() {
       }
     } catch (err) {
       console.log("reload error:", err);
-      Alert.alert("오류", "사진을 다시 불러오는 중 문제가 발생했습니다.");
+      /* 2026.04.22 필터 재조회 실패 알럿을 다국어 키로 전환해 비영어권 사용자도 즉시 원인을 이해할 수 있도록 수정 by June */
+      Alert.alert(
+        t("errorTitle", "Error"),
+        t("reloadPhotosError", "There was a problem while reloading photos.")
+      );
     } finally {
       /* 2026.04.22 필터 재검색 시간을 경로/결과건수와 함께 기록해 긴 기간 필터 성능 회귀를 빠르게 검출하기 위해 계측을 추가 by June */
       recordPerfMetric("home.reload_filter.ms", Date.now() - reloadStartedAt, {
@@ -1368,7 +1382,7 @@ export default function HomeScreen() {
       setFilterLoading(false);
       requestInFlightRef.current = false;
     }
-  }, [enrichPhotosWithAssetLocation, filter, normalizePhotosForDisplay, tryLoadPhotosFromDbForDateTime, triggerPhotoMetadataSync]);
+  }, [enrichPhotosWithAssetLocation, filter, normalizePhotosForDisplay, t, tryLoadPhotosFromDbForDateTime, triggerPhotoMetadataSync]);
 
   /** append/background 공용 로드 처리 */
   const loadMorePhotos = useCallback(
@@ -1466,7 +1480,11 @@ export default function HomeScreen() {
       }
 
       if (!hasPerm) {
-        Alert.alert("권한 필요", "사진 접근 권한이 필요합니다.");
+        /* 2026.04.22 구 로딩 경로의 권한 알럿도 다국어 처리해 예외 경로에서 언어가 섞이지 않도록 수정 by June */
+        Alert.alert(
+          t("permissionRequiredTitle", "Permission Required"),
+          t("photoPermissionRequired", "Photo access permission is required.")
+        );
         return;
       } else {
         console.log("Access permit OK");
@@ -1592,12 +1610,16 @@ export default function HomeScreen() {
         setHasNextPage(result.hasNextPage);
       } catch (err) {
         console.log("MediaLibrary 오류:", err);
-        Alert.alert("오류", "사진을 불러오는 중 문제가 발생했습니다.");
+        /* 2026.04.22 사진 로드 실패 알럿을 다국어로 통일해 오류 메시지 현지화 누락을 방지하기 위해 수정 by June */
+        Alert.alert(
+          t("errorTitle", "Error"),
+          t("loadPhotosError", "There was a problem while loading photos.")
+        );
       } finally {
         setLoading(false);
       }
     },
-    [loading, hasNextPage, endCursor, filter]
+    [loading, hasNextPage, endCursor, filter, t]
   );
 
   /** 2026.03.26 by June */
@@ -1614,7 +1636,11 @@ export default function HomeScreen() {
     }
   
     if (!hasPerm) {
-      Alert.alert("권한 필요", "사진 접근 권한이 필요합니다.");
+      /* 2026.04.22 필터 리셋 경로의 권한 알럿을 다국어 처리해 분기별 메시지 편차를 제거하기 위해 수정 by June */
+      Alert.alert(
+        t("permissionRequiredTitle", "Permission Required"),
+        t("photoPermissionRequired", "Photo access permission is required.")
+      );
       return;
     }
   
@@ -1726,7 +1752,11 @@ export default function HomeScreen() {
       setHasNextPage(nextPage);
     } catch (err) {
       console.log("MediaLibrary filter reset error:", err);
-      Alert.alert("오류", "사진을 다시 불러오는 중 문제가 발생했습니다.");
+      /* 2026.04.22 필터 리셋 실패 알럿도 다국어 키를 사용해 전체 오류 안내 체계를 일관화하기 위해 수정 by June */
+      Alert.alert(
+        t("errorTitle", "Error"),
+        t("reloadPhotosError", "There was a problem while reloading photos.")
+      );
     } finally {
       setLoading(false);
     }
@@ -1738,6 +1768,7 @@ export default function HomeScreen() {
     timeEnd,
     countries,
     cities,
+    t,
   ]);
 
   /** 2026.03.03 사진 삭제 등으로 데이터 갱신 발생 시 새로고침 관련 추가 By June START */
@@ -1900,10 +1931,11 @@ export default function HomeScreen() {
 
   /** 2026.03.26 By June */
   const fmtDateTime = (ms: string | number | Date | null | undefined) => {
-    if (!ms) return "날짜 정보 없음";
+    /* 2026.04.22 날짜 정보 없음 문구를 다국어 키로 전환해 메타 정보 미존재 케이스도 현지화되도록 수정 by June */
+    if (!ms) return t("noDateInfo", "No date info");
   
     const d = new Date(ms);
-    if (Number.isNaN(d.getTime())) return "날짜 정보 없음";
+    if (Number.isNaN(d.getTime())) return t("noDateInfo", "No date info");
   
     const yyyy = d.getFullYear();
     const MM = `${d.getMonth() + 1}`.padStart(2, "0");
@@ -1949,7 +1981,8 @@ export default function HomeScreen() {
       : current?.country
       ? current.country
       : current?.location
-      ? "Loading location info..."
+      /* 2026.04.22 위치 보강 중 안내 문구를 다국어 처리해 로딩 상태 텍스트도 언어 설정을 따르도록 수정 by June */
+      ? t("loadingLocationInfo", "Loading location info...")
       : "";
 		
 		const handleShare = async (photoUri: string, message: string) => {
@@ -1960,32 +1993,39 @@ export default function HomeScreen() {
 					type: 'image/jpeg',
 				};
 				await Share.open(shareOptions);
-			} catch (err) {
+				} catch (err) {
 				// 사용자가 공유하기 취소한 경우
 				if (err?.message === 'User did not share') {
 					return; // 아무것도 하지 않음
 				} 
 
 				console.log(err);
-				Alert.alert("Error", "Failed to share the photo.");
-			}
-		};
-		
-		const onPressShare = async () => {
-			if (!current?.uri) return;
-			const message = `Check out this photo! ${locationText}`;
-			await handleShare(current.uri, message);
-		};
-		
-		const handleDelete = () => {
-				Alert.alert(
-					"Delete Photo",
-					"Are you sure you want to delete this photo?",
-					[
-						{ text: "Cancel", style: "cancel" },
-						{
-							text: "Delete",
-							style: "destructive",
+          /* 2026.04.22 공유 실패 알럿을 다국어로 전환해 공유 예외 시에도 언어 일관성을 유지하기 위해 수정 by June */
+					Alert.alert(
+            t("errorTitle", "Error"),
+            t("shareFailedMessage", "Failed to share the photo.")
+          );
+				}
+			};
+			
+			const onPressShare = async () => {
+				if (!current?.uri) return;
+        /* 2026.04.22 공유 메시지 prefix를 번역 키로 치환해 공유 텍스트가 선택 언어를 반영하도록 수정 by June */
+				const messagePrefix = t("sharePhotoMessagePrefix", "Check out this photo!");
+				const message = locationText ? `${messagePrefix} ${locationText}` : messagePrefix;
+				await handleShare(current.uri, message);
+			};
+			
+			const handleDelete = () => {
+          /* 2026.04.22 삭제 확인 다이얼로그(제목/본문/버튼)를 다국어로 변환해 뷰어 액션 문구를 현지화하기 위해 수정 by June */
+					Alert.alert(
+						t("deletePhotoTitle", "Delete Photo"),
+						t("deletePhotoConfirm", "Are you sure you want to delete this photo?"),
+						[
+							{ text: t("cancel", "Cancel"), style: "cancel" },
+							{
+								text: t("delete", "Delete"),
+								style: "destructive",
 							onPress: () => {
 								// photos 배열에서 제거
 								setPhotos((prev) =>
@@ -2019,7 +2059,7 @@ export default function HomeScreen() {
 				</TouchableOpacity>
       </View>
     );
-  }, [photos, viewerIndex]);
+  }, [photos, t, viewerIndex]);
 
   const handleLocationChange = (selections: LocationFilterState) => {
     setFilter((prev) => ({ ...prev, ...selections }));
@@ -2197,14 +2237,15 @@ export default function HomeScreen() {
                 <View style={styles.loadingBox}>
                   <ActivityIndicator size="large" />
                   <Text style={styles.loadingText}>
-                    Loading photos…
+                    {/* 2026.04.22 로딩 오버레이 문구를 다국어 키 기반으로 전환해 진행 상태 텍스트 현지화를 적용하기 위해 수정 by June */}
+                    {t("loadingPhotos", "Loading photos...")}
                     {progress.total ? ` / ${progress.total}` : ""}
                   </Text>
                   <Text style={styles.loadingSubText}>
-                    {`Photo indexing: ${indexingProgress.photoIndexed.toLocaleString()} (${indexingProgress.isPhotoIndexing ? "syncing" : "complete"})`}
+                    {`${t("photoIndexing", "Photo indexing")}: ${indexingProgress.photoIndexed.toLocaleString()} (${indexingProgress.isPhotoIndexing ? t("syncing", "syncing") : t("complete", "complete")})`}
                   </Text>
                   <Text style={styles.loadingSubText}>
-                    {`Geocode cache: ${indexingProgress.geocodeCached.toLocaleString()} / Queue: ${indexingProgress.geocodePending.toLocaleString()}`}
+                    {`${t("geocodeCache", "Geocode cache")}: ${indexingProgress.geocodeCached.toLocaleString()} / ${t("queue", "Queue")}: ${indexingProgress.geocodePending.toLocaleString()}`}
                   </Text>
                 </View>
                 {progress.total ? (

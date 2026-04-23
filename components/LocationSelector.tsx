@@ -14,19 +14,15 @@ import {
   TouchableOpacity,
   View,
 } from "react-native";
-
-import { useLanguage } from "@/components/context/LanguageContext";
-import { TRANSLATIONS } from "@/constants/Translations";
-type Translations = {
+import { useI18n } from "@/components/context/useI18n";
+import { SUPPORTED_LANGUAGES, SupportedLanguage } from "@/constants/Translations";
+/* 2026.04.22 위치 선택 번역 재구현을 위해 지원 언어 기반 로컬라이즈 라벨 타입을 명시적으로 정의 by June */
+type LocalizedLabel = {
   en: string;
-  ko?: string;
-  ja?: string;
-  "zh-Hans"?: string;
-  "zh-Hant"?: string;
-};
+} & Partial<Record<SupportedLanguage, string>>;
 type CountryBlock = {
-  country: Translations;
-  cities: Translations[];
+  country: LocalizedLabel;
+  cities: LocalizedLabel[];
 };
 type LocationMap = {
   [country: string]: CountryBlock;
@@ -54,12 +50,12 @@ const LocationSelector = forwardRef<LocationSelectorHandle, Props>(
     const [allCities, setAllCities] = useState<string[]>([]);
     const [selectedCountries, setSelectedCountries] = useState<string[]>([]);
     const [selectedCities, setSelectedCities] = useState<string[]>([]);
-    const [translations, setTranslations] = useState<string[][]>([]);
     const [locationMap, setLocationMap] = useState<LocationMap>({});
 
     const [tempCountries, setTempCountries] = useState<string[]>(["All"]);
     const [tempCities, setTempCities] = useState<string[]>(["All"]);
-    const { language, setLanguage } = useLanguage();
+    /* 2026.04.22 TRANSLATIONS 직접 접근을 제거하고 공용 i18n 훅을 사용해 번역 처리 방식을 통일하기 위해 변경 by June */
+    const { language, t } = useI18n();
 
     useEffect(() => {
       // Fetch Translations from Google Sheets
@@ -69,8 +65,7 @@ const LocationSelector = forwardRef<LocationSelectorHandle, Props>(
         .then((res) => res.text())
         .then((csvText) => {
           const rows = csvText.split("\n").map((row) => row.split(","));
-          setTranslations(rows);
-          const countryTranslationMap: Record<string, Translations> = {};
+          const countryTranslationMap: Record<string, LocalizedLabel> = {};
           const langCodes = rows[0];
           const allCountriesSet = new Set<string>();
           const allCitiesSet = new Set<string>();
@@ -80,9 +75,11 @@ const LocationSelector = forwardRef<LocationSelectorHandle, Props>(
             countryTranslationMap[enName] = { en: enName };
 
             row.forEach((val, i) => {
-              const code = langCodes[i] as keyof Translations;
-              if (val) {
-                countryTranslationMap[enName][code] = val;
+              const code = langCodes[i] as string;
+              /* 2026.04.22 CSV 헤더 중 지원 언어만 라벨 맵에 반영해 잘못된 키 인덱싱으로 인한 타입/런타임 오류를 방지하기 위해 조건 가드 추가 by June */
+              if (val && SUPPORTED_LANGUAGES.includes(code as SupportedLanguage)) {
+                const normalizedCode = code as SupportedLanguage;
+                countryTranslationMap[enName][normalizedCode] = val;
               }
             });
           });
@@ -177,15 +174,15 @@ const LocationSelector = forwardRef<LocationSelectorHandle, Props>(
     const getButtonTitle = () => {
 
 			if (tempCountries.length == 0 && tempCities.length == 0) {
-				return TRANSLATIONS[language].all;
-			}
+					return t("all");
+				}
 //      if (tempCountries.length == 0 && tempCities.length == 0) return "None";
 
-			const getTranslatedCountry = (item: string) => {
-				if (item === "All") return TRANSLATIONS[language].all;
+				const getTranslatedCountry = (item: string) => {
+					if (item === "All") return t("all");
 
-				return (
-					locationMap[item]?.country[language] ??
+					return (
+						locationMap[item]?.country[language] ??
 					locationMap[item]?.country.en ??
 					item
 				);
@@ -197,7 +194,7 @@ const LocationSelector = forwardRef<LocationSelectorHandle, Props>(
 						? getTranslatedCountry(items[0])
 						: `${getTranslatedCountry(items[1])}+${items.length - 1}`;
         }
-				return TRANSLATIONS[language].all;
+					return t("all");
 //        return items[0];
       };
 
@@ -221,8 +218,8 @@ const LocationSelector = forwardRef<LocationSelectorHandle, Props>(
       onSelectionChange?.({
         countries: [],
         cities: [],
-				
-        locationLabel: TRANSLATIONS[language].all,
+					
+        locationLabel: t("all"),
       });
     };
     // 2026-03-04 to reset location selection by yen
@@ -250,7 +247,7 @@ const LocationSelector = forwardRef<LocationSelectorHandle, Props>(
                 }}
               >
 								
-							<Text>{TRANSLATIONS[language].selectLocation}</Text>
+							<Text>{t("selectLocation")}</Text>
                 <View
                   style={{
                     flexDirection: "row",
@@ -296,7 +293,7 @@ const LocationSelector = forwardRef<LocationSelectorHandle, Props>(
                 }}
               >
                 <Text style={styles.tableTitle}>
-                  {TRANSLATIONS[language].country}
+                  {t("country")}
                 </Text>
                 <FlatList
                   data={getCurrentItems("country")}
@@ -324,7 +321,7 @@ const LocationSelector = forwardRef<LocationSelectorHandle, Props>(
                         <Text style={styles.listItem}>
                           
 													{item === "All"
-														? TRANSLATIONS[language].all
+														? t("all")
 														: locationMap[item]?.country[language] ??
 															locationMap[item]?.country.en ??
 															item}
@@ -341,7 +338,7 @@ const LocationSelector = forwardRef<LocationSelectorHandle, Props>(
                 }}
               >
                 <Text style={styles.tableTitle}>
-                  {TRANSLATIONS[language].city}
+                  {t("city")}
                 </Text>
                 {tempCountries && (
                   <FlatList
@@ -368,7 +365,7 @@ const LocationSelector = forwardRef<LocationSelectorHandle, Props>(
                           ]}
                         >
 													
-													<Text style={styles.listItem}>{item === "All" ? TRANSLATIONS[language].all : item}</Text>
+													<Text style={styles.listItem}>{item === "All" ? t("all") : item}</Text>
                         </Pressable>
                       );
                     }}
@@ -403,7 +400,7 @@ const LocationSelector = forwardRef<LocationSelectorHandle, Props>(
                   style={styles.primaryButton}
                 >
 									
-									<Text style={styles.primaryButtonText}>{TRANSLATIONS[language].allLocations}</Text>
+									<Text style={styles.primaryButtonText}>{t("allLocations")}</Text>
                 </LinearGradient>
               </TouchableOpacity>
             </View>

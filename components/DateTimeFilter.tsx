@@ -24,7 +24,7 @@ import DateTimePicker from "./DateTimePicker";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import LocationSelector, { LocationSelectorHandle } from "./LocationSelector";
 
-import { useLanguage } from "@/components/context/LanguageContext";
+import { useI18n } from "@/components/context/useI18n";
 
 import ICON_CLOSE from "@/assets/icons/ic_close.svg";
 import ICON_DATE from "@/assets/icons/ic_date.svg";
@@ -33,16 +33,6 @@ import ICON_RESET from "@/assets/icons/ic_reset.svg";
 import ICON_TIME from "@/assets/icons/ic_time.svg";
 import { clampToToday, shiftMonthsClamped } from "@/components/dateUtil";
 import * as amplitude from "@amplitude/analytics-react-native";
-
-
-import { TRANSLATIONS } from "@/constants/Translations";
-type Translations = {
-	en: string;
-	ko?: string;
-	ja?: string;
-	"zh-Hans"?: string;
-	"zh-Hant"?: string;
-};
 
 type DatePickersResponsiveProps = {
   dateStart: Date;
@@ -409,9 +399,10 @@ export default function DateTimeFilter({
   // ---- 렌더 ----
   const dateLabel = `${fmtDate(dateStart)} – ${fmtDate(dateEnd)}`;
   const timeLabel = `${fmtTime(timeStart)} – ${fmtTime(timeEnd)}`;
-  const [locationLabel, setLocationLabel] = useState("Anywhere");
-
-  const { language } = useLanguage();
+  /* 2026.04.22 번역 처리 재구현을 위해 컴포넌트에서 TRANSLATIONS 직접 접근 대신 공용 i18n 훅을 사용하도록 변경 by June */
+  const { t } = useI18n();
+  /* 2026.04.22 위치 라벨 기본값도 다국어로 노출되도록 빈 상태를 두고 렌더 시 번역 fallback을 사용하도록 변경 by June */
+  const [locationLabel, setLocationLabel] = useState("");
 
   const emitCountRef = useRef(0);
   const bypassDebounceRef = useRef(false);
@@ -540,11 +531,11 @@ export default function DateTimeFilter({
             activeOpacity={0.8}
             style={styles.filterCard}
           >
-            <View style={styles.filterValueArea}>
-              <Text style={styles.filterValue} numberOfLines={1}>
-                {/* 2026-02-21 location label 변수로 교체 by yen*/}
-                {locationLabel}
-              </Text>
+	            <View style={styles.filterValueArea}>
+	              <Text style={styles.filterValue} numberOfLines={1}>
+	                {/* 2026.04.22 선택 위치가 없을 때 현재 언어의 기본 라벨을 표시하도록 fallback을 적용 by June */}
+	                {locationLabel || t("anywhere", "Anywhere")}
+	              </Text>
               {/* 2026-02-21 location reset function trigger added by yen*/}
               <TouchableOpacity
                 onPress={() => {
@@ -591,7 +582,7 @@ export default function DateTimeFilter({
               {/* 헤더 */}
               <View style={styles.sheetHeader}>
                 
-                <Text style={styles.sheetTitle}>{TRANSLATIONS[language].selectDate}</Text>
+                <Text style={styles.sheetTitle}>{t("selectDate")}</Text>
                 <View style={{ flexDirection: "row" }}>
                   <TouchableOpacity
                     onPress={() => {
@@ -636,7 +627,7 @@ export default function DateTimeFilter({
                       style={styles.rangeBtnGradient}
                     >
                       
-                      <Text style={styles.presetTxt}>{TRANSLATIONS[language][p.key] ?? p.key}</Text>
+                      <Text style={styles.presetTxt}>{t(p.key, p.label)}</Text>
                     </LinearGradient>
                   </TouchableOpacity>
                 ))}
@@ -674,7 +665,7 @@ export default function DateTimeFilter({
               {/* 헤더 */}
               <View style={styles.sheetHeader}>
               
-              <Text style={styles.sheetTitle}>{TRANSLATIONS[language].selectTime}</Text>
+              <Text style={styles.sheetTitle}>{t("selectTime")}</Text>
                 <View style={{ flexDirection: "row" }}>
                   <TouchableOpacity
                     onPress={() => {
@@ -771,7 +762,7 @@ export default function DateTimeFilter({
                   style={styles.rangeBtnGradient}
                 >
                   
-                  <Text style={styles.presetTxt}>{TRANSLATIONS[language]?.all_day ?? TRANSLATIONS.en.all_day}</Text>
+                  <Text style={styles.presetTxt}>{t("all_day", "All Times")}</Text>
                 </LinearGradient>
               </TouchableOpacity>
             </ScrollView>
