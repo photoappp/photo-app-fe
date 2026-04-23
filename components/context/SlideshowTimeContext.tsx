@@ -1,18 +1,51 @@
-// components/context/SlideshowTimeContext.tsx
-import { createContext, useContext, useState } from 'react';
+import React, { createContext, useContext, useState, useEffect, ReactNode } from 'react';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 
-const SlideshowTimeContext = createContext({
-	slideshowTime: 3000,
-	setSlideshowTime: (time: number) => {}
-});
+interface SlideshowTimeContextType {
+  slideshowTime: number;
+  setSlideshowTime: (time: number) => void;
+}
 
-export const SlideshowTimeProvider = ({ children }) => {
-	const [slideshowTime, setSlideshowTime] = useState(3000); // default 3 sec
-	return (
-		<SlideshowTimeContext.Provider value={{ slideshowTime, setSlideshowTime }}>
-			{children}
-		</SlideshowTimeContext.Provider>
-	);
-};
+const SlideshowTimeContext = createContext<SlideshowTimeContextType | undefined>(undefined);
 
-export const useSlideshowTime = () => useContext(SlideshowTimeContext);
+const STORAGE_KEY = 'slideshowTime';
+
+export function SlideshowTimeProvider({ children }: { children: ReactNode }) {
+  const [slideshowTime, setSlideshowTimeState] = useState(2000);
+
+  useEffect(() => {
+    loadSlideshowTime();
+  }, []);
+
+  const loadSlideshowTime = async () => {
+    try {
+      const stored = await AsyncStorage.getItem(STORAGE_KEY);
+      if (stored) {
+        setSlideshowTimeState(JSON.parse(stored));
+      }
+    } catch (error) {
+      console.error('Failed to load slideshow time:', error);
+    }
+  };
+
+  const setSlideshowTime = (time: number) => {
+    setSlideshowTimeState(time);
+    AsyncStorage.setItem(STORAGE_KEY, JSON.stringify(time)).catch(error => {
+      console.error('Failed to save slideshow time:', error);
+    });
+  };
+
+  return (
+    <SlideshowTimeContext.Provider value={{ slideshowTime, setSlideshowTime }}>
+      {children}
+    </SlideshowTimeContext.Provider>
+  );
+}
+
+export function useSlideshowTime() {
+  const context = useContext(SlideshowTimeContext);
+  if (!context) {
+    return { slideshowTime: 2000, setSlideshowTime: () => {} };
+  }
+  return context;
+}
