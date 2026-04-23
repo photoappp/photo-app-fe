@@ -538,6 +538,19 @@ export default function HomeScreen() {
       photo_count: photosRef.current.length,
     });
   };
+  /* 2026.04.22 사진 뷰어 상단 Play 버튼에서 현재 보고 있는 인덱스부터 슬라이드쇼가 시작되도록 전용 핸들러를 추가 by June */
+  const handleViewerPlayPress = useCallback(() => {
+    const startIndex = viewerIndexRef.current ?? 0;
+    /* 2026.04.22 뷰어와 슬라이드쇼 모달이 겹쳐 보이는 문제를 막기 위해 재생 시작 전 뷰어를 닫도록 처리 by June */
+    setViewerVisible(false);
+    startSlideshow(startIndex);
+
+    amplitude.track("tap_slideshow_button_from_viewer", {
+      screen_name: "home",
+      start_index: startIndex,
+      photo_count: photosRef.current.length,
+    });
+  }, [startSlideshow]);
   
   async function imagesWithLocation(
     images: any[],
@@ -1901,17 +1914,32 @@ export default function HomeScreen() {
   };
 
 	const Header = useCallback(() => {
-		return (
-			<View style={styles.header}>
-				<TouchableOpacity
-					onPress={() => setViewerVisible(false)}
-					style={styles.closeBtn}
-				>
-					<Text style={styles.closeTxt}>✕</Text>
-				</TouchableOpacity>
-			</View>
-		);
-	}, []);
+			return (
+				<View style={styles.header}>
+          {/* 2026.04.22 사진 보기 화면에서도 메인과 동일한 플레이 버튼으로 현재 사진부터 슬라이드쇼를 시작할 수 있도록 헤더 버튼을 추가 by June */}
+          <TouchableOpacity
+            onPress={handleViewerPlayPress}
+            style={styles.viewerHeaderPlaySlot}
+            activeOpacity={0.9}
+          >
+            <LinearGradient
+              colors={['#2B7FFF', '#AD46FF']}
+              start={{ x: 0, y: 0 }}
+              end={{ x: 1, y: 0 }}
+              style={styles.playButtonBg}
+            >
+              <IconPlay width={18} height={18} />
+            </LinearGradient>
+          </TouchableOpacity>
+					<TouchableOpacity
+						onPress={() => setViewerVisible(false)}
+						style={styles.closeBtn}
+					>
+						<Text style={styles.closeTxt}>✕</Text>
+					</TouchableOpacity>
+				</View>
+			);
+		}, [handleViewerPlayPress]);
 
   const Footer = useCallback(() => {
     const current = photos[viewerIndex];
@@ -2475,7 +2503,13 @@ const styles = StyleSheet.create({
     right: 16,
     flexDirection: "row",
     alignItems: "center",
-    justifyContent: "flex-end",
+    justifyContent: "space-between",
+  },
+  /* 2026.04.22 이미지 뷰어 헤더의 Play 버튼 영역을 메인 버튼과 유사한 비율로 노출하기 위해 전용 슬롯 스타일을 추가 by June */
+  viewerHeaderPlaySlot: {
+    width: 56,
+    height: 40,
+    justifyContent: "center",
   },
   counter: { color: "#fff", fontSize: 16, fontWeight: "600" },
   metaTxt: { color: "#fff", fontSize: 14, fontWeight: "600" },
