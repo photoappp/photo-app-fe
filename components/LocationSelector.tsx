@@ -14,7 +14,7 @@ import {
   TouchableOpacity,
   View,
 } from "react-native";
-// 2026-02-10 언어 설정 추가 by Minji
+
 import { useLanguage } from "@/components/context/LanguageContext";
 import { TRANSLATIONS } from "@/constants/Translations";
 type Translations = {
@@ -56,10 +56,10 @@ const LocationSelector = forwardRef<LocationSelectorHandle, Props>(
     const [selectedCities, setSelectedCities] = useState<string[]>([]);
     const [translations, setTranslations] = useState<string[][]>([]);
     const [locationMap, setLocationMap] = useState<LocationMap>({});
-		// 2026-03-18 Default All 값 다국어 설정 추가 by Minji
+
     const [tempCountries, setTempCountries] = useState<string[]>(["All"]);
     const [tempCities, setTempCities] = useState<string[]>(["All"]);
-    const { language, setLanguage } = useLanguage(); // 2026-02-10 언어 설정 추가 by Minji
+    const { language, setLanguage } = useLanguage();
 
     useEffect(() => {
       // Fetch Translations from Google Sheets
@@ -74,7 +74,7 @@ const LocationSelector = forwardRef<LocationSelectorHandle, Props>(
           const langCodes = rows[0];
           const allCountriesSet = new Set<string>();
           const allCitiesSet = new Set<string>();
-					// 2026-03-18 선택 국가 언어설정에 따라 보이게 by Minji
+
           rows.slice(1).forEach((row) => {
             const enName = row[0];
             countryTranslationMap[enName] = { en: enName };
@@ -175,7 +175,7 @@ const LocationSelector = forwardRef<LocationSelectorHandle, Props>(
     };
 
     const getButtonTitle = () => {
-			// 2026-03-18 Default All 값 다국어 설정 추가 by Minji
+
 			if (tempCountries.length == 0 && tempCities.length == 0) {
 				return TRANSLATIONS[language].all;
 			}
@@ -197,7 +197,7 @@ const LocationSelector = forwardRef<LocationSelectorHandle, Props>(
 						? getTranslatedCountry(items[0])
 						: `${getTranslatedCountry(items[1])}+${items.length - 1}`;
         }
-				return TRANSLATIONS[language].all; // 2026-03-18 Default All 값 다국어 설정 추가 by Minji
+				return TRANSLATIONS[language].all;
 //        return items[0];
       };
 
@@ -221,7 +221,7 @@ const LocationSelector = forwardRef<LocationSelectorHandle, Props>(
       onSelectionChange?.({
         countries: [],
         cities: [],
-				/* 2026-03-18 언어 설정 추가 by Minji */
+				
         locationLabel: TRANSLATIONS[language].all,
       });
     };
@@ -249,7 +249,7 @@ const LocationSelector = forwardRef<LocationSelectorHandle, Props>(
                   paddingTop: "1%",
                 }}
               >
-								{/* 2026-03-18 다국어 라벨 출력 추가 by Minji */}
+								
 							<Text>{TRANSLATIONS[language].selectLocation}</Text>
                 <View
                   style={{
@@ -322,7 +322,7 @@ const LocationSelector = forwardRef<LocationSelectorHandle, Props>(
                         ]}
                       >
                         <Text style={styles.listItem}>
-                          {/* 2026-03-18 언어 설정 추가 by Minji */}
+                          
 													{item === "All"
 														? TRANSLATIONS[language].all
 														: locationMap[item]?.country[language] ??
@@ -367,7 +367,7 @@ const LocationSelector = forwardRef<LocationSelectorHandle, Props>(
                             },
                           ]}
                         >
-													{/* 2026-03-18 언어 설정 추가 by Minji */}
+													
 													<Text style={styles.listItem}>{item === "All" ? TRANSLATIONS[language].all : item}</Text>
                         </Pressable>
                       );
@@ -402,7 +402,7 @@ const LocationSelector = forwardRef<LocationSelectorHandle, Props>(
                   end={{ x: 1, y: 0 }}
                   style={styles.primaryButton}
                 >
-									{/*  2026-03-13 번역 라벨 추가 by Minji */}
+									
 									<Text style={styles.primaryButtonText}>{TRANSLATIONS[language].allLocations}</Text>
                 </LinearGradient>
               </TouchableOpacity>
