@@ -34,7 +34,7 @@ import ICON_TIME from "@/assets/icons/ic_time.svg";
 import { clampToToday, shiftMonthsClamped } from "@/components/dateUtil";
 import * as amplitude from "@amplitude/analytics-react-native";
 
-// 2026-03-12 언어 설정 추가 by Minji
+
 import { TRANSLATIONS } from "@/constants/Translations";
 type Translations = {
 	en: string;
@@ -453,7 +453,7 @@ export default function DateTimeFilter({
 
   // };
 
-  console.log("ICON_DATE = ", ICON_DATE);
+  /* 2026.04.15 렌더링 반복 시 콘솔 스팸으로 실제 에러 분석이 어려워져 ICON_DATE 디버그 로그를 제거 by June */
 
   return (
     <View>
@@ -590,7 +590,7 @@ export default function DateTimeFilter({
             >
               {/* 헤더 */}
               <View style={styles.sheetHeader}>
-                {/* 2026-03-18 다국어 라벨 출력 추가 by Minji */}
+                
                 <Text style={styles.sheetTitle}>{TRANSLATIONS[language].selectDate}</Text>
                 <View style={{ flexDirection: "row" }}>
                   <TouchableOpacity
@@ -635,7 +635,7 @@ export default function DateTimeFilter({
                       end={{ x: 1, y: 0 }}
                       style={styles.rangeBtnGradient}
                     >
-                      {/* 2026-03-13 다국어 라벨 출력 추가 by Minji */}
+                      
                       <Text style={styles.presetTxt}>{TRANSLATIONS[language][p.key] ?? p.key}</Text>
                     </LinearGradient>
                   </TouchableOpacity>
@@ -673,7 +673,7 @@ export default function DateTimeFilter({
             >
               {/* 헤더 */}
               <View style={styles.sheetHeader}>
-              {/* 2026-03-18 다국어 라벨 출력 추가 by Minji */}
+              
               <Text style={styles.sheetTitle}>{TRANSLATIONS[language].selectTime}</Text>
                 <View style={{ flexDirection: "row" }}>
                   <TouchableOpacity
@@ -770,7 +770,7 @@ export default function DateTimeFilter({
                   end={{ x: 1, y: 0 }}
                   style={styles.rangeBtnGradient}
                 >
-                  {/* 2026-03-13 다국어 라벨 출력 추가 by Minji */}
+                  
                   <Text style={styles.presetTxt}>{TRANSLATIONS[language]?.all_day ?? TRANSLATIONS.en.all_day}</Text>
                 </LinearGradient>
               </TouchableOpacity>

@@ -1,5 +1,5 @@
 //  components/context/UserDataContext.tsx
-import React, { createContext, useContext, useState, ReactNode, useEffect, useCallback } from 'react';
+import React, { createContext, useContext, useState, ReactNode, useEffect, useCallback, useMemo } from 'react';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
 interface UserData {
@@ -57,29 +57,40 @@ export const UserDataProvider = ({ children }: { children: ReactNode }) => {
 		AsyncStorage.setItem(STORAGE_KEY, JSON.stringify(userData));
 	}, [userData, loaded]);
 
-	const updateUserData = (partial: Partial<UserData>) => {
+	/* 2026.04.15 Context 함수 참조를 고정해 소비 컴포넌트 useEffect 의존성 루프를 방지하기 위해 useCallback 적용 by June */
+	const updateUserData = useCallback((partial: Partial<UserData>) => {
 		setUserData(prev => ({ ...prev, ...partial }));
-	};
+	}, []);
 
-	const incrementDateFilter = () => {
+	/* 2026.04.15 날짜 필터 카운트 함수의 참조 안정성을 보장해 Maximum update depth 루프를 방지하기 위해 useCallback 적용 by June */
+	const incrementDateFilter = useCallback(() => {
 		setUserData(prev => ({ ...prev, dateSearchCount: prev.dateSearchCount + 1 }));
-	};
-	
-	const incrementTimeFilter = () => {
+	}, []);
+		
+	/* 2026.04.15 시간 필터 카운트 함수의 참조 안정성을 보장해 불필요한 effect 재실행을 방지하기 위해 useCallback 적용 by June */
+	const incrementTimeFilter = useCallback(() => {
 		setUserData(prev => ({ ...prev, timeSearchCount: prev.timeSearchCount + 1 }));
-	};
+	}, []);
 
-	const incrementLocationFilter = () => {
+	/* 2026.04.15 위치 필터 카운트 함수의 참조 안정성을 보장해 필터 effect 루프를 차단하기 위해 useCallback 적용 by June */
+	const incrementLocationFilter = useCallback(() => {
 		setUserData(prev => ({ ...prev, locationSearchCount: prev.locationSearchCount + 1 }));
-	};
-	
-	const updateTotalPhotos = (count: number) => {
+	}, []);
+		
+	/* 2026.04.15 전체 사진 수 업데이트 함수 참조를 안정화해 context 리렌더 파급을 최소화하기 위해 useCallback 적용 by June */
+	const updateTotalPhotos = useCallback((count: number) => {
 		setUserData(prev => ({ ...prev, totalPhotos: count }));
-	};
+	}, []);
+
+	/* 2026.04.15 Provider value 객체를 메모이징해 함수 참조 안정화 효과가 실제 소비 컴포넌트까지 전달되도록 보장하기 위해 추가 by June */
+	const contextValue = useMemo(
+		() => ({ userData, updateUserData, incrementDateFilter, incrementTimeFilter, incrementLocationFilter, updateTotalPhotos }),
+		[userData, updateUserData, incrementDateFilter, incrementTimeFilter, incrementLocationFilter, updateTotalPhotos]
+	);
 
 	return (
 		<UserDataContext.Provider
-			value={{ userData, updateUserData, incrementDateFilter, incrementTimeFilter, incrementLocationFilter, updateTotalPhotos }}
+			value={contextValue}
 		>
 			{children}
 		</UserDataContext.Provider>

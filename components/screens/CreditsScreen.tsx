@@ -21,7 +21,7 @@ const CreditsScreen: React.FC = () => {
 	const renderItem = ({ item }: { item: any }) => {
 		// specialThanks만 왼쪽 정렬
 		const isSpecialThanks = item.id === 'specialThanks';
-		if (item.multiline) { // 2026.02.10 value가 긴 경우 multi line 처리 by Minji
+		if (item.multiline) {
 			return (
 						<View style={styles.optionColumn}>
 							<Text style={[styles.optionText, { color: colors.text }]}>
