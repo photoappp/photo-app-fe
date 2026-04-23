@@ -41,6 +41,7 @@ import { AMPLITUDE_API_KEY } from '@/constants/env';
 import * as amplitude from '@amplitude/analytics-react-native';
 /* 2026.04.15 SQLite 메타데이터 DB/동기화 모듈을 홈 화면 로딩 파이프라인에 연결하기 위해 import 추가 by June */
 import {
+  countPhotoMetadataByDateTime,
   enqueueGeocodeJobs,
   getGeocodeCacheCount,
   getGeocodePendingJobCount,
@@ -151,10 +152,10 @@ export default function HomeScreen() {
   const [hasNextPage, setHasNextPage] = useState<boolean>(true); // 다음 페이지 있는지 여부
   const [loading, setLoading] = useState<boolean>(false);
 
-  const [userScrolled, setUserScrolled] = useState(false);
-  const [listCanScroll, setListCanScroll] = useState(false);
   const [viewerVisible, setViewerVisible] = useState(false);
   const [viewerIndex, setViewerIndex] = useState(0);
+  /* 2026.04.22 썸네일 리스트는 경량 URI를 유지하고 상세 뷰어에서만 고해상도 URI를 점진 교체하기 위해 뷰어 전용 URI 맵 상태를 추가 by June */
+  const [viewerDetailUriMap, setViewerDetailUriMap] = useState<Record<string, string>>({});
 
   /** 2026.03.26 By June - 사진 목록/페이지네이션 관련 */
   const [initialLoading, setInitialLoading] = useState(false);
@@ -162,24 +163,24 @@ export default function HomeScreen() {
   const [emptyMessage, setEmptyMessage] = useState<string | null>(null);
   const [didInitialLoad, setDidInitialLoad] = useState(false);
   const requestInFlightRef = useRef(false);
-  const didKickoffBackgroundRef = useRef(false);
+  /* 2026.04.22 날짜/시간 DB 경로에서도 스크롤 append를 지원하기 위해 현재 DB 페이지네이션 오프셋/활성 상태를 ref로 관리하도록 추가 by June */
+  const dbDateTimePagingRef = useRef<{ enabled: boolean; offset: number }>({
+    enabled: false,
+    offset: 0,
+  });
   const [filterLoading, setFilterLoading] = useState(false);
   const [appendLoading, setAppendLoading] = useState(false);
   /** 2026.03.26 By June */
 
   // ImageViewing 에 넘길 images 배열 (형식: { uri: string }[])
   const viewerImages = useMemo(
-    () => photos.map((p) => ({ uri: p.uri })),
-    [photos]
+    /* 2026.04.22 상세 진입 후 해상도 보강된 URI가 있으면 뷰어에서 우선 사용하도록 병합해 썸네일/상세 로딩 경로를 분리하기 위해 수정 by June */
+    () => photos.map((p) => ({ uri: viewerDetailUriMap[p.uri] ?? p.uri })),
+    [photos, viewerDetailUriMap]
   );
 
   const photosRef = useRef<Photo[]>(photos);
   const viewerIndexRef = useRef<number>(viewerIndex);
-
-  const lastEndCallRef = useRef(0);
-  const onEndLockRef = useRef(false); // 연속 호출 잠금
-  const onEndDuringMomentumRef = useRef(true); // 모멘텀 중 중복 호출 방지
-  const isPaginatingRef = useRef(false); // footer 로딩바 표시에만 사용
 
   // ----- amplitude tracking helpers -----
   const is_amp_ready_ref = useRef(false);
@@ -207,8 +208,6 @@ export default function HomeScreen() {
   ).getTime(), []);
 
   /** 2026.03.26 by June Edit Start */  
-  const topAppendTriggeredRef = useRef(false);
-
   /* 2026.04.15 초기 기준 날짜를 렌더마다 재생성하지 않도록 고정해 필터/로드 콜백 재생성을 줄이기 위해 추가 by June */
   const baseTodayRef = useRef(new Date());
   const today = baseTodayRef.current;
@@ -283,11 +282,12 @@ export default function HomeScreen() {
   const slideshowListRef = useRef<FlatList<{ uri: string }> | null>(null);
   const slideshowTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const slideshowRunTokenRef = useRef(0);
-  /* 2026.04.22 슬라이드쇼 속도 설정값을 실제 지연 시간으로 정규화해 설정 컨텍스트와 동작을 일치시키기 위해 계산 로직을 추가 by June */
+  /* 2026.04.22 Settings에서 slideshowTime을 ms 단위로 저장하므로 여기서 초→ms 재변환을 제거해 3초 설정이 3초로 정확히 동작하도록 수정 by June */
   const slideshowDelayMs = useMemo(() => {
-    const seconds = Number(slideshowTime);
-    if (!Number.isFinite(seconds) || seconds <= 0) return 2000;
-    return Math.max(1000, Math.round(seconds * 1000));
+    const delayMs = Number(slideshowTime);
+    /* 2026.04.22 비정상 값 유입 시에도 슬라이드쇼가 멈추지 않도록 최소 1초 기본값으로 안전 처리하기 위해 유효성 검사를 유지 by June */
+    if (!Number.isFinite(delayMs) || delayMs <= 0) return 3000;
+    return Math.max(1000, Math.round(delayMs));
   }, [slideshowTime]);
   /* 2026.04.22 슬라이드쇼 타이머 정리를 공용화해 중복 clear 호출/누락을 방지하기 위해 헬퍼를 추가 by June */
   const clearSlideshowTimer = useCallback(() => {
@@ -466,6 +466,43 @@ export default function HomeScreen() {
       console.log("refreshIndexingProgress error:", err);
     }
   }, []);
+
+  /* 2026.04.22 날짜 필터 대상 전체 건수와 현재 표출 건수를 함께 표시하기 위해 필터 기준 progress 계산 함수를 추가 by June */
+  const refreshFilterProgress = useCallback(
+    async (currentFilter: FilterState, loadedCount: number) => {
+      try {
+        const hasLocationFilter =
+          currentFilter.countries.length > 0 || currentFilter.cities.length > 0;
+
+        /* 2026.04.22 위치 필터가 포함된 경우 현재 단계에서는 전체 건수 즉시 산출이 어려워 표출 건수만 우선 노출하도록 분기 by June */
+        if (hasLocationFilter) {
+          setProgress({ loaded: loadedCount, total: null });
+          return;
+        }
+
+        const metadataCount = await getPhotoMetadataCount();
+        if (metadataCount <= 0) {
+          /* 2026.04.22 DB 인덱싱 전 구간에서는 총 건수가 불확정이므로 loaded만 먼저 갱신해 진행 상태를 끊김 없이 보여주기 위해 처리 by June */
+          setProgress({ loaded: loadedCount, total: null });
+          return;
+        }
+
+        const total = await countPhotoMetadataByDateTime({
+          dateStartMs: dayStartMs(currentFilter.dateStart),
+          dateEndNextMs: dayEndNextMs(currentFilter.dateEnd),
+          timeStart: currentFilter.timeStart,
+          timeEnd: currentFilter.timeEnd,
+        });
+
+        setProgress({ loaded: loadedCount, total });
+      } catch (err) {
+        /* 2026.04.22 progress 계산 실패가 메인 로딩을 막지 않도록 loaded만 유지하고 total은 null로 폴백하기 위해 예외 처리 by June */
+        console.log("refreshFilterProgress error:", err);
+        setProgress({ loaded: loadedCount, total: null });
+      }
+    },
+    [dayEndNextMs, dayStartMs]
+  );
 
   /* 2026.04.15 초기 화면 렌더 이후 메타데이터 인덱싱을 점진적으로 누적해 차기 DB 조회 전환을 준비하기 위해 추가 by June */
   useEffect(() => {
@@ -754,8 +791,8 @@ export default function HomeScreen() {
           : null,
       location: null,
     }));
-    /* 2026.04.15 MediaLibrary fetch 직후에도 ph:// URI를 정규화해 초기/필터 목록 렌더 시 동일한 iOS 충돌을 예방하기 위해 추가 by June */
-    return normalizePhotosForDisplay(base);
+    /* 2026.04.22 썸네일 리스트 단계에서는 원본 URI를 유지해 대량 localUri 변환으로 인한 메모리 피크를 줄이고 상세 진입 시점에만 고해상도 로드를 하도록 변경 by June */
+    return base;
   };
 
   /** 위치 필터 */
@@ -776,14 +813,12 @@ export default function HomeScreen() {
   /** geocoding 필요 여부 판별 */
   const shouldUseGeocoding = (
     currentFilter: FilterState,
-    mode: "initial" | "background" | "append" | "filter-reset"
+    _mode: "initial" | "background" | "append" | "filter-reset"
   ) => {
     const hasLocationFilter =
       currentFilter.countries.length > 0 || currentFilter.cities.length > 0;
-  
-    if (hasLocationFilter) return true;
-    if (mode === "initial") return false;
-    return true;
+    /* 2026.04.22 위치 필터가 실제로 사용될 때만 geocoding을 수행해 append/background에서 불필요한 메모리/CPU 사용을 줄이기 위해 정책을 단순화 by June */
+    return hasLocationFilter;
   };
 
   /** 사진 정렬 처리: 오래된 순 + timestamp 없는 사진 최하단 표출 */
@@ -839,67 +874,14 @@ export default function HomeScreen() {
     }
   }, []);
 
-  /* 2026.04.15 화면 렌더에 들어가는 Photo 배열을 일괄 정규화해 ph:// 기반 이미지 로더 충돌 가능성을 낮추기 위해 추가 by June */
-  const normalizePhotosForDisplay = useCallback(
-    async (items: Photo[]) => {
-      const normalized = await Promise.all(
-        items.map(async (item) => {
-          const resolvedUri = await resolveDisplayUri(item.uri);
-          return {
-            ...item,
-            uri: resolvedUri,
-          };
-        })
-      );
-      return normalized;
-    },
-    [resolveDisplayUri]
-  );
-
-  /* 2026.04.22 DB 경로의 photo row는 location 좌표가 비어 있을 수 있어 AssetInfo에서 좌표를 복원하기 위한 헬퍼를 추가 by June */
-  const enrichPhotosWithAssetLocation = useCallback(
-    async (items: Photo[], maxLookups = 80) => {
-      let lookups = 0;
-      const out: Photo[] = [];
-
-      for (const item of items) {
-        if (item.location) {
-          out.push(item);
-          continue;
-        }
-
-        if (!item.uri.startsWith("ph://")) {
-          out.push(item);
-          continue;
-        }
-
-        if (lookups >= maxLookups) {
-          out.push(item);
-          continue;
-        }
-
-        try {
-          const assetId = item.uri.replace("ph://", "");
-          const info = await MediaLibrary.getAssetInfoAsync(assetId);
-          const location = info.location
-            ? {
-                latitude: Number(info.location.latitude),
-                longitude: Number(info.location.longitude),
-              }
-            : null;
-          lookups += 1;
-          out.push({ ...item, location });
-        } catch (err) {
-          /* 2026.04.22 개별 AssetInfo 조회 실패가 전체 목록 렌더를 막지 않도록 원본 아이템을 유지하고 진행하기 위해 추가 by June */
-          console.log("enrichPhotosWithAssetLocation error:", err);
-          out.push(item);
-        }
-      }
-
-      return out;
-    },
-    []
-  );
+  /* 2026.04.22 사용자가 사진을 눌렀을 때 해당 항목만 고해상도 URI로 보강해 리스트 전체 변환 없이 상세 품질을 확보하기 위해 뷰어 전용 로더를 추가 by June */
+  const resolveViewerDetailUri = useCallback(async (sourceUri: string) => {
+    const resolved = await resolveDisplayUri(sourceUri);
+    setViewerDetailUriMap((prev) => {
+      if (prev[sourceUri] === resolved) return prev;
+      return { ...prev, [sourceUri]: resolved };
+    });
+  }, [resolveDisplayUri]);
 
   /* 2026.04.15 DB 조회 결과를 기존 화면 Photo 타입으로 안전하게 변환해 기존 렌더링/로케이션 코드와 호환시키기 위해 추가 by June */
   const mapDbRowsToPhotos = useCallback(
@@ -928,7 +910,7 @@ export default function HomeScreen() {
 
   /* 2026.04.15 날짜/시간 전용 DB 조회 경로를 분리해 로케이션 필터 영역 영향 없이 성능 테스트 가능한 모듈 단위를 만들기 위해 추가 by June */
   const tryLoadPhotosFromDbForDateTime = useCallback(
-    async (currentFilter: FilterState, limit: number) => {
+    async (currentFilter: FilterState, limit: number, offset: number = 0) => {
       /* 2026.04.22 DB 날짜/시간 조회 지연을 계측해 MediaLibrary fallback 대비 성능 차이를 수치화하기 위해 타이머를 추가 by June */
       const dbLoadStartedAt = Date.now();
       const hasLocationFilter =
@@ -945,7 +927,12 @@ export default function HomeScreen() {
             logEvery: 3,
           }
         );
-        return { usedDb: false as const, photos: [] as Photo[] };
+        return {
+          usedDb: false as const,
+          photos: [] as Photo[],
+          dbHasMore: false,
+          nextOffset: offset,
+        };
       }
 
       const metadataCount = await getPhotoMetadataCount();
@@ -959,7 +946,12 @@ export default function HomeScreen() {
             logEvery: 3,
           }
         );
-        return { usedDb: false as const, photos: [] as Photo[] };
+        return {
+          usedDb: false as const,
+          photos: [] as Photo[],
+          dbHasMore: false,
+          nextOffset: offset,
+        };
       }
       /* 2026.04.22 인덱싱 완료 여부를 함께 확인해 DB 단독 신뢰 여부를 결정하기 위해 동기화 상태 조회 추가 by June */
       const syncState = await getPhotoSyncState();
@@ -970,10 +962,18 @@ export default function HomeScreen() {
         dateEndNextMs: dayEndNextMs(currentFilter.dateEnd),
         timeStart: currentFilter.timeStart,
         timeEnd: currentFilter.timeEnd,
-        limit,
+        /* 2026.04.22 hasMore 판정을 위해 limit+1을 조회하고 1건 초과 시 다음 페이지 존재로 판단하도록 수정 by June */
+        limit: limit + 1,
+        /* 2026.04.22 같은 날짜 필터에서 append 시 이어서 조회할 수 있도록 DB 조회 오프셋을 전달 by June */
+        offset,
       });
 
-      const dbMapped = dedupePhotosByUri(mapDbRowsToPhotos(rows));
+      /* 2026.04.22 limit+1 조회 결과에서 초과 1건 존재 여부를 hasMore로 변환해 스크롤 추가 로딩 가능 여부를 계산하기 위해 추가 by June */
+      const dbHasMore = rows.length > limit;
+      /* 2026.04.22 실제 렌더에는 요청 limit까지만 반영해 이전 화면 밀도/성능 기준을 유지하기 위해 trim 처리 추가 by June */
+      const trimmedRows = dbHasMore ? rows.slice(0, limit) : rows;
+
+      const dbMapped = dedupePhotosByUri(mapDbRowsToPhotos(trimmedRows));
       /* 2026.04.15 DB 조회 함수는 필터링/정렬만 담당하고 URI 정규화는 실제 노출 개수 확정 후 호출하도록 분리해 장기 범위 성능을 개선하기 위해 수정 by June */
       const photosFromDb = sortPhotosForDisplay(dbMapped);
 
@@ -988,7 +988,12 @@ export default function HomeScreen() {
             logEvery: 2,
           }
         );
-        return { usedDb: false as const, photos: [] as Photo[] };
+        return {
+          usedDb: false as const,
+          photos: [] as Photo[],
+          dbHasMore: false,
+          nextOffset: offset,
+        };
       }
 
       /* 2026.04.22 DB 조회 성공 지연을 결과 건수와 함께 기록해 장기 범위 검색 최적화 튜닝 포인트를 찾기 위해 계측을 추가 by June */
@@ -997,12 +1002,20 @@ export default function HomeScreen() {
           usedDb: true,
           resultCount: photosFromDb.length,
           limit,
+          offset,
+          dbHasMore,
           isIndexComplete,
         },
         logEvery: 2,
       });
 
-      return { usedDb: true as const, photos: photosFromDb };
+      return {
+        usedDb: true as const,
+        photos: photosFromDb,
+        dbHasMore,
+        /* 2026.04.22 다음 append 시작 오프셋을 한 곳에서 계산해 호출부의 중복 계산/오차를 방지하기 위해 반환값에 포함 by June */
+        nextOffset: offset + photosFromDb.length,
+      };
     },
     [dayEndNextMs, dayStartMs, dedupePhotosByUri, mapDbRowsToPhotos, sortPhotosForDisplay]
   );
@@ -1179,24 +1192,32 @@ export default function HomeScreen() {
 
       if (dbResult.usedDb) {
         initialLoadPath = "db";
-        /* 2026.04.22 DB row의 누락된 좌표를 먼저 복원해 위치 필터 목록 계산에 필요한 city/country 보강 기반을 확보하기 위해 추가 by June */
-        const dbPhotosWithLocation = await enrichPhotosWithAssetLocation(
-          dbResult.photos.slice(0, INITIAL_TARGET_COUNT)
+        /* 2026.04.22 초기 DB 진입은 날짜/시간 필터 성능 우선 경로이므로 위치 보강/URI 정규화를 생략해 메모리 사용량을 낮추기 위해 경량화 by June */
+        const initialDbPhotos = dbResult.photos.slice(0, INITIAL_TARGET_COUNT);
+        setPhotos(initialDbPhotos);
+        setPhotosAll(initialDbPhotos);
+        /* 2026.04.22 초기 DB 로드 시점에도 필터 기준 표출/전체 건수를 즉시 노출하기 위해 progress를 동기화 by June */
+        void refreshFilterProgress(
+          {
+            dateStart: oneYearAgo,
+            dateEnd: new Date(),
+            timeStart: 0,
+            timeEnd: 1439,
+            countries: [],
+            cities: [],
+          },
+          initialDbPhotos.length
         );
-        /* 2026.04.22 좌표 복원 결과를 캐시 우선 geocode로 보강해 초기 진입에서도 위치 라벨이 노출되도록 유지하기 위해 수정 by June */
-        const enrichedDbPhotos = await imagesWithLocation(dbPhotosWithLocation, {
-          maxLookups: 30,
-          precision: 2,
-          delayMs: 80,
-        });
-        /* 2026.04.22 위치 보강 후에 URI 정규화를 적용해 이미지 로더 충돌 회피와 위치 라벨 노출을 동시에 보장하기 위해 순서 조정 by June */
-        const normalizedEnrichedDbPhotos = await normalizePhotosForDisplay(
-          enrichedDbPhotos
-        );
-        setPhotos(normalizedEnrichedDbPhotos);
-        setPhotosAll(normalizedEnrichedDbPhotos);
         setEndCursor(null);
-        setHasNextPage(false);
+        /* 2026.04.22 초기 DB 로드에서도 남은 결과가 있으면 스크롤 append가 가능하도록 hasNextPage를 DB hasMore 기준으로 설정 by June */
+        setHasNextPage(dbResult.dbHasMore);
+        /* 2026.04.22 초기 DB 로드 후 append를 이어가기 위해 DB 페이지네이션 오프셋을 저장하고 활성 상태를 갱신 by June */
+        dbDateTimePagingRef.current = {
+          enabled: dbResult.dbHasMore,
+          offset: dbResult.nextOffset,
+        };
+        /* 2026.04.22 초기 finally에서 background append 분기를 재사용하기 위해 DB 경로의 nextPage 상태를 initialHasNextPage에 반영 by June */
+        initialHasNextPage = dbResult.dbHasMore;
         setDidInitialLoad(true);
         return;
       }
@@ -1234,8 +1255,22 @@ export default function HomeScreen() {
   
       setPhotos(initial);
       setPhotosAll(initial);
+      /* 2026.04.22 초기 MediaLibrary 경로에서도 현재 표출 건수를 progress에 반영해 사용자에게 로드 상태를 보여주기 위해 추가 by June */
+      void refreshFilterProgress(
+        {
+          dateStart: oneYearAgo,
+          dateEnd: new Date(),
+          timeStart: 0,
+          timeEnd: 1439,
+          countries: [],
+          cities: [],
+        },
+        initial.length
+      );
       setEndCursor(result.endCursor ?? null);
       setHasNextPage(result.hasNextPage);
+      /* 2026.04.22 MediaLibrary 경로에서는 DB 오프셋 상태가 남아 잘못 append되지 않도록 DB 페이지네이션 상태를 비활성화 by June */
+      dbDateTimePagingRef.current = { enabled: false, offset: 0 };
       setDidInitialLoad(true);
   
       // 5. 즉시 백그라운드 로딩 시작
@@ -1258,15 +1293,10 @@ export default function HomeScreen() {
       setInitialLoading(false);
       requestInFlightRef.current = false;
       
-      /* 2026.04.15 DB 경로 사용 시 append 페이지네이션이 불필요하므로 기존 조건에서만 background append를 유지하기 위해 주석 유지/동작 고정 by June */
-      if (initialHasNextPage) {
-        setTimeout(() => {
-          void loadMorePhotos({ mode: "background" });
-        }, 0);
-      }
+      /* 2026.04.22 자동 background append 대신 하단 명시적 버튼으로만 다음 페이지를 로드하도록 UX 정책을 변경해 예측 가능한 동작을 제공하기 위해 자동 호출 제거 by June */
     }
   /* 2026.04.15 loadMorePhotos 선언 순서와의 순환 참조를 피하기 위해 의존성 배열에서 제외하고 기존 동작과 동일하게 후속 로딩을 유지하도록 수정 by June */
-  }, [enrichPhotosWithAssetLocation, normalizePhotosForDisplay, oneYearAgo, tryLoadPhotosFromDbForDateTime]);
+  }, [oneYearAgo, refreshFilterProgress, tryLoadPhotosFromDbForDateTime]);
 
   /** 날짜 필터 변경 처리 - 유저가 날짜 변경 시 해당 날짜 조건에 맞는 결과를 찾을 때까지 다시 탐색 */
   const reloadPhotosForFilter = useCallback(async () => {
@@ -1290,11 +1320,16 @@ export default function HomeScreen() {
     requestInFlightRef.current = true;
     setFilterLoading(true);
     setEmptyMessage(null);
-    didKickoffBackgroundRef.current = false;
     setPhotos([]);          // 이전 결과 즉시 제거
     setPhotosAll([]);       // 이전 결과 즉시 제거
+    /* 2026.04.22 필터 변경 시 이전 상세 URI 캐시를 비워 누적 메모리 증가를 방지하기 위해 초기화 추가 by June */
+    setViewerDetailUriMap({});
+    /* 2026.04.22 필터 재검색 시작 시 progress를 초기화해 이전 필터 값이 남아 혼동되는 것을 방지하기 위해 추가 by June */
+    setProgress({ loaded: 0, total: null });
     setEndCursor(null);     // 새 필터는 처음부터 다시 시작
     setHasNextPage(true);   // 새 필터는 다시 탐색 가능 상태로 초기화
+    /* 2026.04.22 필터 변경 시 이전 DB 오프셋이 남아 다음 조회가 어긋나는 문제를 막기 위해 페이지네이션 상태를 먼저 초기화 by June */
+    dbDateTimePagingRef.current = { enabled: false, offset: 0 };
   
     try {
       /* 2026.04.15 날짜/시간 필터 테스트를 위해 로케이션 필터 미사용 시 DB 조회를 우선 적용하고, 실패/미적재 시 기존 탐색으로 폴백하기 위해 추가 by June */
@@ -1305,29 +1340,22 @@ export default function HomeScreen() {
 
       if (dbResult.usedDb) {
         reloadPath = "db";
+        /* 2026.04.22 날짜/시간 DB 리로드에서는 썸네일 리스트 경량화를 위해 위치 보강/URI 정규화를 생략하고 메타데이터만 즉시 반영하도록 변경 by June */
         const dbPhotos = dbResult.photos.slice(0, FILTER_RESET_TARGET_COUNT);
-        /* 2026.04.22 DB 경로 위치 누락으로 LocationSelector가 비는 문제를 해결하기 위해 AssetInfo 기반 좌표 복원을 선행 by June */
-        const dbPhotosWithLocation = await enrichPhotosWithAssetLocation(
-          dbPhotos,
-          120
-        );
-        /* 2026.04.22 복원된 좌표를 geocode 캐시 우선으로 처리해 위치 라벨과 필터 목록을 안정적으로 채우기 위해 수정 by June */
-        const enrichedDbPhotos = await imagesWithLocation(dbPhotosWithLocation, {
-          maxLookups: 40,
-          precision: 2,
-          delayMs: 80,
-        });
-        /* 2026.04.22 위치 보강 이후 URI 정규화를 적용해 이미지 표시 안정성과 위치 데이터 보강을 동시에 유지하기 위해 순서 조정 by June */
-        const normalizedEnrichedDbPhotos = await normalizePhotosForDisplay(
-          enrichedDbPhotos
-        );
-
-        setPhotos(normalizedEnrichedDbPhotos);
-        setPhotosAll(normalizedEnrichedDbPhotos);
+        setPhotos(dbPhotos);
+        setPhotosAll(dbPhotos);
+        /* 2026.04.22 DB 필터 결과 반영 직후 표출/전체 건수를 업데이트해 프로그레스바에 현재 진행을 명확히 표시하기 위해 추가 by June */
+        void refreshFilterProgress(filter, dbPhotos.length);
         setEndCursor(null);
-        setHasNextPage(false);
+        /* 2026.04.22 필터 DB 결과에도 남은 페이지 여부를 반영해 스크롤 추가 로딩이 가능하도록 수정 by June */
+        setHasNextPage(dbResult.dbHasMore);
+        /* 2026.04.22 다음 append에서 이어받을 DB 오프셋을 저장해 동일 필터 범위를 끝까지 탐색할 수 있도록 추가 by June */
+        dbDateTimePagingRef.current = {
+          enabled: dbResult.dbHasMore,
+          offset: dbResult.nextOffset,
+        };
 
-        if (normalizedEnrichedDbPhotos.length === 0) {
+        if (dbPhotos.length === 0) {
           setEmptyMessage(EMPTY_DEFAULT_MESSAGE);
         } else {
           setEmptyMessage(null);
@@ -1353,15 +1381,18 @@ export default function HomeScreen() {
   
       setPhotos(sorted);
       setPhotosAll(sorted);
+      /* 2026.04.22 MediaLibrary 경로에서도 현재 필터의 표출/전체 건수를 동기화해 append 전 진행률 기준을 맞추기 위해 추가 by June */
+      void refreshFilterProgress(filter, sorted.length);
       setEndCursor(result.endCursor);
       setHasNextPage(result.hasNextPage);
+      /* 2026.04.22 MediaLibrary 분기로 전환된 경우 DB 페이지네이션 상태를 끄고 커서 기반 append만 사용하도록 정리 by June */
+      dbDateTimePagingRef.current = { enabled: false, offset: 0 };
   
       if (sorted.length === 0) {
         setEmptyMessage(EMPTY_DEFAULT_MESSAGE);
       } else {
         setEmptyMessage(null);
-        didKickoffBackgroundRef.current = true;
-        void loadMorePhotos({ mode: "background" });
+        /* 2026.04.22 필터 재조회 후 자동 background 로딩을 제거하고 사용자가 하단 버튼으로 명시적으로 추가 로드를 선택하도록 변경 by June */
       }
     } catch (err) {
       console.log("reload error:", err);
@@ -1383,7 +1414,7 @@ export default function HomeScreen() {
       setFilterLoading(false);
       requestInFlightRef.current = false;
     }
-  }, [enrichPhotosWithAssetLocation, filter, normalizePhotosForDisplay, t, tryLoadPhotosFromDbForDateTime, triggerPhotoMetadataSync]);
+  }, [filter, refreshFilterProgress, t, tryLoadPhotosFromDbForDateTime, triggerPhotoMetadataSync]);
 
   /** append/background 공용 로드 처리 */
   const loadMorePhotos = useCallback(
@@ -1416,6 +1447,53 @@ export default function HomeScreen() {
           setBackgroundLoading(true);
         }
 
+        /* 2026.04.22 위치 필터 미사용 + DB 경로 활성 상태에서는 MediaLibrary 대신 DB 페이지네이션 append를 우선 사용해 날짜 범위 전체를 순차 노출하기 위해 분기 추가 by June */
+        const shouldUseDbDateTimePaging =
+          dbDateTimePagingRef.current.enabled &&
+          filter.countries.length === 0 &&
+          filter.cities.length === 0;
+
+        if (shouldUseDbDateTimePaging) {
+          const dbOffset = dbDateTimePagingRef.current.offset;
+          const dbResult = await tryLoadPhotosFromDbForDateTime(
+            filter,
+            APPEND_TARGET_COUNT,
+            dbOffset
+          );
+
+          if (dbResult.usedDb) {
+            /* 2026.04.22 append 결과가 0건이면 같은 offset 재요청 루프가 발생해 스크롤 시 과부하/종료로 이어질 수 있어 즉시 페이지네이션을 종료하도록 가드 추가 by June */
+            if (dbResult.photos.length === 0) {
+              setHasNextPage(false);
+              dbDateTimePagingRef.current = { enabled: false, offset: dbOffset };
+              return;
+            }
+
+            const merged = dedupePhotosByUri([
+              ...photosRef.current,
+              /* 2026.04.22 DB append에서도 원본 URI를 유지해 대량 localUri 변환 누적으로 인한 메모리 증가를 억제하기 위해 변경 by June */
+              ...dbResult.photos,
+            ]);
+            const sorted = sortPhotosForDisplay(merged);
+
+            setPhotos(sorted);
+            setPhotosAll(sorted);
+            /* 2026.04.22 DB append로 사진이 추가될 때마다 프로그레스바의 표출/전체 건수를 즉시 갱신하기 위해 추가 by June */
+            void refreshFilterProgress(filter, sorted.length);
+            setEndCursor(null);
+            setHasNextPage(dbResult.dbHasMore);
+            /* 2026.04.22 다음 append 기준점을 일관되게 유지하기 위해 DB 페이지네이션 오프셋/활성 상태를 즉시 갱신 by June */
+            dbDateTimePagingRef.current = {
+              enabled: dbResult.dbHasMore,
+              offset: dbResult.nextOffset,
+            };
+            return;
+          }
+
+          /* 2026.04.22 DB append 분기 실패 시 무한 재시도 루프를 피하고 MediaLibrary 폴백이 가능하도록 DB 페이지네이션을 비활성화 by June */
+          dbDateTimePagingRef.current = { enabled: false, offset: 0 };
+        }
+
         const result = await collectPhotosForTarget({
           currentFilter: filter,
           targetCount: APPEND_TARGET_COUNT,
@@ -1428,8 +1506,12 @@ export default function HomeScreen() {
 
         setPhotos(sorted);
         setPhotosAll(sorted);
+        /* 2026.04.22 MediaLibrary append에서도 누적 표출 건수를 프로그레스바에 반영해 사용자 체감 진행률을 맞추기 위해 추가 by June */
+        void refreshFilterProgress(filter, sorted.length);
         setEndCursor(result.endCursor);
         setHasNextPage(result.hasNextPage);
+        /* 2026.04.22 MediaLibrary append 경로로 처리된 경우 DB 페이지네이션 상태를 비활성화해 분기 혼선을 방지하기 위해 정리 by June */
+        dbDateTimePagingRef.current = { enabled: false, offset: 0 };
       } catch (err) {
         /* 2026.04.22 loadMore 예외를 여기서 흡수해 스크롤 이벤트 핸들러의 unhandled rejection 크래시를 방지하기 위해 로그 처리 by June */
         console.log("load more error:", err);
@@ -1454,7 +1536,7 @@ export default function HomeScreen() {
         }
       }
     },
-    [filter, endCursor, hasNextPage, filterLoading]
+    [APPEND_TARGET_COUNT, endCursor, filter, filterLoading, hasNextPage, refreshFilterProgress, sortPhotosForDisplay, tryLoadPhotosFromDbForDateTime]
   );
   /** 2026.03.26 By June END */
 
@@ -1927,6 +2009,13 @@ export default function HomeScreen() {
 
           setViewerIndex(index);
           setViewerVisible(true);
+          /* 2026.04.22 상세 보기 진입 시 선택 사진만 고해상도 URI를 비동기 보강해 리스트 전체 메모리 사용 없이 상세 품질을 확보하기 위해 추가 by June */
+          void resolveViewerDetailUri(item.uri);
+          /* 2026.04.22 좌우 스와이프 첫 체감을 개선하기 위해 인접 1장의 URI도 선행 보강하되 범위를 최소화해 메모리 피크를 제한 by June */
+          const next = photosRef.current[index + 1];
+          if (next?.uri) {
+            void resolveViewerDetailUri(next.uri);
+          }
         }}
       >
         {/* <Image source={{ uri: item.uri }} style={styles.thumb} /> */}
@@ -2100,6 +2189,13 @@ export default function HomeScreen() {
     []
   );
 
+  /* 2026.04.22 썸네일 하단의 명시적 "더 불러오기" 버튼으로만 append를 실행해 자동 스크롤 트리거의 간헐적 동작을 제거하기 위해 버튼 핸들러를 추가 by June */
+  const handleManualLoadMorePress = useCallback(() => {
+    if (refreshing || filterLoading || appendLoading || initialLoading) return;
+    if (!hasNextPage) return;
+    void loadMorePhotos({ mode: "append" });
+  }, [appendLoading, filterLoading, hasNextPage, initialLoading, loadMorePhotos, refreshing]);
+
   const handleShowOnMap = () => {
     <View style={styles.mapContainer}>
       <ShowOnMap images={photos} />
@@ -2171,8 +2267,14 @@ export default function HomeScreen() {
               style={{ flex: 1 }} // 리스트가 남은 세로 공간을 다 차지
               data={photos}
               numColumns={numColumns}
-              keyExtractor={(_, i) => i.toString()}
+              /* 2026.04.22 index key 사용 시 append/재정렬 구간에서 셀 재생성이 과도해져 스크롤 안정성이 저하될 수 있어 URI 우선 key로 변경 by June */
+              keyExtractor={(item, i) => item.uri || i.toString()}
               renderItem={renderItem}
+              /* 2026.04.22 대량 사진 스크롤 시 메모리 사용량을 낮춰 OS 강제 종료 가능성을 줄이기 위해 FlatList 배치 렌더 파라미터를 최적화 by June */
+              initialNumToRender={25}
+              maxToRenderPerBatch={20}
+              windowSize={7}
+              removeClippedSubviews
               refreshing={refreshing} // 2026.03.03 June 추가
               onRefresh={onRefresh}   // 2026.03.03 June 추가
               contentContainerStyle={{
@@ -2194,58 +2296,55 @@ export default function HomeScreen() {
                   </View>
                 ) : null
               }
-              onScrollBeginDrag={() => {
-                setUserScrolled(true);
-                topAppendTriggeredRef.current = false;
-              }}
-              onMomentumScrollBegin={() => {
-                setUserScrolled(true);
-                onEndDuringMomentumRef.current = false;
-              }}
-              onMomentumScrollEnd={() => {
-                onEndDuringMomentumRef.current = true;
-              }}
               onEndReachedThreshold={0.4}
               onEndReached={() => {
-                // 1) 스크롤 시작 전이면 무시
-                if (!userScrolled) return;
-                // 2) 모멘텀 중 첫 호출만 허용
-                if (onEndDuringMomentumRef.current) return;
-                // 3) 이미 로딩 중/락이면 무시 - 2026.03.26 Edit By June
-                if (loading || backgroundLoading || onEndLockRef.current) return;
-                /* 2026.04.22 pull-to-refresh와 append가 동시에 실행되며 크래시가 발생하는 경쟁 상태를 막기 위해 refresh 중에는 append를 차단 by June */
-                if (refreshing || filterLoading || appendLoading) return;
-                // 4) 더 불러올 페이지 없으면 무시
-                if (!hasNextPage) return;
-                // ---- 페이지네이션 시작 ----
-                onEndLockRef.current = true;
-                onEndDuringMomentumRef.current = true; // 이번 모멘텀 사이클에서는 한 번만
-                isPaginatingRef.current = true;
-
-                /** 2026.03.26 Edit By June */
-                void loadMorePhotos({ mode: "append" }).finally(() => {
-                  onEndLockRef.current = false;
-                  isPaginatingRef.current = false;
-                });
+                /* 2026.04.22 간헐적으로 동작하는 자동 무한스크롤 트리거를 완전히 비활성화하고 하단 명시 버튼만 사용하도록 변경 by June */
+                return;
               }}
               ListFooterComponent={
-                // 사용자가 스크롤해서 로딩하는 경우에만 표시(초기 자동 로딩 표시 억제)
-                // isPaginatingRef.current && loading ? (
-                //   <ActivityIndicator style={{ marginVertical: 12 }} />
-                // ) : null
-                null
+                /* 2026.04.22 썸네일 하단에 명시적 더 불러오기 CTA를 제공해 사용자가 다음 페이지 로딩 시점을 직접 제어할 수 있도록 UI를 추가 by June */
+                !initialLoading && !filterLoading ? (
+                  <View style={{ paddingVertical: 12, alignItems: "center" }}>
+                    {appendLoading || backgroundLoading ? (
+                      <View style={{ alignItems: "center", gap: 8 }}>
+                        <ActivityIndicator />
+                        <Text style={styles.loadingSubText}>
+                          {t("loadingMorePhotos", "Loading more photos...")}
+                        </Text>
+                      </View>
+                    ) : hasNextPage ? (
+                      <TouchableOpacity
+                        style={styles.loadMoreButton}
+                        activeOpacity={0.85}
+                        onPress={handleManualLoadMorePress}
+                      >
+                        {/* 2026.04.22 하단 더 불러오기 버튼도 앱 전반의 CTA 톤앤매너와 일치시키기 위해 블루-퍼플 그라디언트 배경으로 변경 by June */}
+                        <LinearGradient
+                          colors={["#2B7FFF", "#AD46FF"]}
+                          start={{ x: 0, y: 0 }}
+                          end={{ x: 1, y: 0 }}
+                          style={styles.loadMoreButtonGradient}
+                        >
+                          <Text style={styles.loadMoreButtonText}>
+                            {t("loadMorePhotos", "Load more photos")}
+                          </Text>
+                        </LinearGradient>
+                      </TouchableOpacity>
+                    ) : (
+                      <Text style={styles.loadingSubText}>
+                        {t("allFilteredPhotosLoaded", "All filtered photos are loaded")}
+                      </Text>
+                    )}
+                    <Text style={styles.loadMoreProgressText}>
+                      {/* 2026.04.22 필터 기준 표출/총 건수 안내 위치를 로딩 오버레이에서 하단 CTA 영역으로 이동해 사용자가 현재 로드 진행을 항상 확인할 수 있도록 수정 by June */}
+                      {progress.total !== null
+                        ? `${t("filteredPhotos", "Filtered photos")}: ${progress.loaded.toLocaleString()} / ${progress.total.toLocaleString()}`
+                        : `${t("filteredPhotos", "Filtered photos")}: ${progress.loaded.toLocaleString()}`}
+                    </Text>
+                  </View>
+                ) : null
               }
-              onLayout={({
-                nativeEvent: {
-                  layout: { height: lh },
-                },
-              }) => {
-                // 높이는 onContentSizeChange에서 비교
-              }}
-              onContentSizeChange={(_, ch) => {
-                // 화면보다 컨텐츠가 클 때만 다음 페이지 로딩 허용
-                setListCanScroll(ch > 0);
-              }}
+              /* 2026.04.22 자동 무한스크롤 관련 상태 제거에 맞춰 onLayout/onContentSizeChange 기반 보조 로직을 정리해 렌더 비용을 줄이기 위해 제거 by June */
               onScroll={({ nativeEvent }) => {
                 const y = nativeEvent.contentOffset.y;
                 /* 2026.04.22 상단 당김(y<=-60) 구간은 onRefresh와 역할이 겹치고 append 경쟁으로 앱 크래시를 유발해 해당 경로를 비활성화 by June */
@@ -2264,7 +2363,6 @@ export default function HomeScreen() {
                   <Text style={styles.loadingText}>
                     {/* 2026.04.22 로딩 오버레이 문구를 다국어 키 기반으로 전환해 진행 상태 텍스트 현지화를 적용하기 위해 수정 by June */}
                     {t("loadingPhotos", "Loading photos...")}
-                    {progress.total ? ` / ${progress.total}` : ""}
                   </Text>
                   <Text style={styles.loadingSubText}>
                     {`${t("photoIndexing", "Photo indexing")}: ${indexingProgress.photoIndexed.toLocaleString()} (${indexingProgress.isPhotoIndexing ? t("syncing", "syncing") : t("complete", "complete")})`}
@@ -2273,26 +2371,6 @@ export default function HomeScreen() {
                     {`${t("geocodeCache", "Geocode cache")}: ${indexingProgress.geocodeCached.toLocaleString()} / ${t("queue", "Queue")}: ${indexingProgress.geocodePending.toLocaleString()}`}
                   </Text>
                 </View>
-                {progress.total ? (
-                  <View
-                    style={{
-                      width: 220,
-                      height: 6,
-                      backgroundColor: "#e5e7eb",
-                      marginTop: 8,
-                      borderRadius: 3,
-                    }}
-                  >
-                    <View
-                      style={{
-                        width: `${(progress.loaded / progress.total) * 100}%`,
-                        height: "100%",
-                        backgroundColor: "#9ca3af",
-                        borderRadius: 3,
-                      }}
-                    />
-                  </View>
-                ) : null}
               </View>
             ) : error ? (
               <View style={styles.centerContainer}>
@@ -2659,6 +2737,27 @@ const styles = StyleSheet.create({
   },
   loadingSubText: {
     marginTop: 4,
+    fontSize: 12,
+    color: "#374151",
+  },
+  loadMoreButton: {
+    /* 2026.04.22 그라디언트 버튼 컨테이너의 모서리와 오버플로우를 고정해 기존 CTA와 동일한 카드형 모양을 유지하기 위해 스타일 분리 by June */
+    borderRadius: 10,
+    overflow: "hidden",
+  },
+  loadMoreButtonGradient: {
+    /* 2026.04.22 그라디언트 실제 영역의 패딩을 별도 스타일로 분리해 버튼 터치 영역과 시각 영역을 명확히 맞추기 위해 추가 by June */
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+    borderRadius: 10,
+  },
+  loadMoreButtonText: {
+    color: "#FFFFFF",
+    fontSize: 13,
+    fontWeight: "700",
+  },
+  loadMoreProgressText: {
+    marginTop: 8,
     fontSize: 12,
     color: "#374151",
   },

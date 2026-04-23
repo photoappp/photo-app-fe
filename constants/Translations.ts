@@ -65,6 +65,12 @@ export const TRANSLATIONS = {
 			shareFailedMessage: "Failed to share the photo.",
 			sharePhotoMessagePrefix: "Check out this photo!",
 			loadingPhotos: "Loading photos...",
+			/* 2026.04.22 날짜 필터 로딩 프로그레스에 표출/총 건수 라벨을 표시하기 위해 번역 키를 추가 by June */
+			filteredPhotos: "Filtered photos",
+			/* 2026.04.22 하단 명시적 append UX를 위해 더 불러오기/로딩/완료 안내 문구 키를 추가 by June */
+			loadMorePhotos: "Load more photos",
+			loadingMorePhotos: "Loading more photos...",
+			allFilteredPhotosLoaded: "All filtered photos are loaded",
 			photoIndexing: "Photo indexing",
 			syncing: "syncing",
 			complete: "complete",
