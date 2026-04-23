@@ -585,6 +585,8 @@ export const queryPhotoMetadataByDateTime = async (params: {
   timeStart: number;
   timeEnd: number;
   limit: number;
+  /* 2026.04.22 날짜/시간 DB 결과를 스크롤 append로 이어붙이기 위해 OFFSET 기반 페이지네이션 파라미터를 추가 by June */
+  offset?: number;
 }) => {
   /* 2026.04.15 taken_minute 컬럼 추가 전 쿼리 실행으로 no such column 에러가 나는 문제를 막기 위해 조회 전 초기화를 강제 by June */
   await initPhotoMetadataDb();
@@ -607,6 +609,7 @@ export const queryPhotoMetadataByDateTime = async (params: {
     ORDER BY
       taken_at ASC
     LIMIT ?
+    OFFSET ?
     `,
     params.dateStartMs,
     params.dateEndNextMs,
@@ -620,9 +623,53 @@ export const queryPhotoMetadataByDateTime = async (params: {
     params.timeStart,
     params.timeStart,
     params.timeEnd,
-    params.limit
+    params.limit,
+    /* 2026.04.22 호출부에서 offset 미지정 시 기존 동작과 동일하게 0부터 조회되도록 기본값을 적용 by June */
+    params.offset ?? 0
   );
 
   /* 2026.04.15 시간 필터를 SQL로 완전 이관해 긴 기간 검색 시 JS 후처리 비용을 제거하기 위해 반환 필터를 제거 by June */
   return rows;
+};
+
+/* 2026.04.22 날짜/시간 필터 범위의 전체 대상 건수를 즉시 계산해 로딩 프로그레스(표출/전체)를 정확히 표시하기 위해 COUNT 쿼리 함수를 추가 by June */
+export const countPhotoMetadataByDateTime = async (params: {
+  dateStartMs: number;
+  dateEndNextMs: number;
+  timeStart: number;
+  timeEnd: number;
+}) => {
+  /* 2026.04.22 카운트 조회도 스키마 초기화 이후에 실행되도록 보장해 구버전 DB에서 컬럼 누락 오류를 방지하기 위해 초기화 선행 by June */
+  await initPhotoMetadataDb();
+  const db = await getDb();
+
+  const row = await db.getFirstAsync<{ count: number }>(
+    `
+    SELECT COUNT(*) as count
+    FROM photo_metadata
+    WHERE is_deleted = 0
+      AND taken_at IS NOT NULL
+      AND taken_at >= ?
+      AND taken_at < ?
+      AND (
+        (? = 1439 AND taken_minute >= ? AND taken_minute <= 1439)
+        OR (? >= ? AND taken_minute >= ? AND taken_minute <= ?)
+        OR (? < ? AND taken_minute >= ? AND taken_minute <= ?)
+      )
+    `,
+    params.dateStartMs,
+    params.dateEndNextMs,
+    params.timeEnd,
+    params.timeStart,
+    params.timeEnd,
+    params.timeStart,
+    params.timeStart,
+    params.timeEnd,
+    params.timeEnd,
+    params.timeStart,
+    params.timeStart,
+    params.timeEnd
+  );
+
+  return row?.count ?? 0;
 };
