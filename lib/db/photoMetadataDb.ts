@@ -308,6 +308,22 @@ export const getPhotoMetadataCount = async () => {
   return row?.count ?? 0;
 };
 
+/* 2026.04.22 All Dates 프리셋 시작일을 1970 고정값이 아닌 실제 보유 사진의 최저 촬영일로 계산하기 위해 최소 taken_at 조회 함수를 추가 by June */
+export const getOldestPhotoTakenAt = async () => {
+  /* 2026.04.22 최소 날짜 조회가 마이그레이션 이전에 실행되며 컬럼 누락 오류가 나는 상황을 방지하기 위해 초기화 선행을 보장 by June */
+  await initPhotoMetadataDb();
+  const db = await getDb();
+  const row = await db.getFirstAsync<{ oldestTakenAt: number | null }>(
+    `
+    SELECT MIN(taken_at) as oldestTakenAt
+    FROM photo_metadata
+    WHERE is_deleted = 0
+      AND taken_at IS NOT NULL
+    `
+  );
+  return row?.oldestTakenAt ?? null;
+};
+
 /* 2026.04.22 geocode 캐시 조회를 key 단위로 제공해 reverse geocode 호출 전 캐시 hit 여부를 빠르게 판단하기 위해 추가 by June */
 export const getGeocodeCacheByKey = async (geoKey: string) => {
   await initPhotoMetadataDb();

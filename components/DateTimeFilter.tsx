@@ -117,6 +117,8 @@ type DateTimeFilterValue = {
 type DateTimeFilterProps = {
   onChange?: (value: DateTimeFilterValue) => void;
   photos: Photo[]; // add photos here
+  /* 2026.04.22 All Dates 선택 시 실제 사진첩 최저 날짜를 외부(DB 우선)에서 주입받아 1970 고정 범위를 제거하기 위해 비동기 resolver prop을 추가 by June */
+  resolveOldestPhotoDate?: () => Promise<Date | null>;
   onLocationChange: (value: {
     countries: string[];
     cities: string[];
@@ -223,6 +225,7 @@ const DATE_PRESETS: DatePreset[] = [
 export default function DateTimeFilter({
   onChange,
   photos,
+  resolveOldestPhotoDate,
   onLocationChange,
 }: DateTimeFilterProps) {
   // ---- 필터 상태 ----
@@ -313,12 +316,49 @@ export default function DateTimeFilter({
     // 2026-03-04 add onLocationChange to emit value by yen
   }, [dateStart, dateEnd, timeStart, timeEnd, onChange, onLocationChange]);
 
-  const applyDatePreset = (key: DatePreset["key"]) => {
+  /* 2026.04.22 현재 로드된 사진 배열에서도 최소 날짜를 계산할 수 있도록 fallback 헬퍼를 추가해 DB 미적재 구간의 All Dates 정확도를 보강하기 위해 추가 by June */
+  const getOldestDateFromLoadedPhotos = () => {
+    let minTakenAt: number | null = null;
+    for (const photo of photos) {
+      if (!photo.takenAt || !Number.isFinite(photo.takenAt)) continue;
+      if (minTakenAt === null || photo.takenAt < minTakenAt) {
+        minTakenAt = photo.takenAt;
+      }
+    }
+    return minTakenAt ? new Date(minTakenAt) : null;
+  };
+
+  /* 2026.04.22 All Dates 프리셋에서 비동기 최소 날짜 해석(DB 우선, 로컬 fallback)을 지원하기 위해 preset 적용 함수를 async로 확장 by June */
+  const applyDatePreset = async (key: DatePreset["key"]) => {
     const preset = DATE_PRESETS.find((p) => p.key === key);
     if (!preset) return;
   
     const now = new Date();
-    const { start, end } = preset.getRange(now);
+    let { start, end } = preset.getRange(now);
+
+    /* 2026.04.22 all_times에서만 동적 최소 날짜를 적용해 기존 다른 프리셋 동작은 완전히 유지하기 위해 조건 분기 추가 by June */
+    if (key === "all_times") {
+      try {
+        /* 2026.04.22 우선순위를 DB resolver로 두어 전체 라이브러리 기준 최저 날짜를 반영하도록 먼저 조회 by June */
+        const resolvedOldestDate = resolveOldestPhotoDate
+          ? await resolveOldestPhotoDate()
+          : null;
+        /* 2026.04.22 resolver 미응답 시 현재 로드된 사진으로 보정해 사용자가 즉시 체감 가능한 범위를 제공하기 위해 fallback 적용 by June */
+        const fallbackOldestDate = getOldestDateFromLoadedPhotos();
+        const oldestDate = resolvedOldestDate ?? fallbackOldestDate;
+        if (oldestDate && Number.isFinite(oldestDate.getTime())) {
+          /* 2026.04.22 필터 시작 시각 변동으로 인한 일자 경계 흔들림을 막기 위해 시작일을 해당 날짜의 자정으로 정규화 by June */
+          start = new Date(
+            oldestDate.getFullYear(),
+            oldestDate.getMonth(),
+            oldestDate.getDate()
+          );
+        }
+      } catch (error) {
+        /* 2026.04.22 최소 날짜 조회 실패가 프리셋 전체 실패로 이어지지 않도록 1970 fallback을 유지하면서 오류만 로깅하기 위해 보호 처리 추가 by June */
+        console.log("all_times oldest date resolve error:", error);
+      }
+    }
 
     amplitude.track("tap_date_preset", {
       screen_name: "home",
@@ -618,7 +658,8 @@ export default function DateTimeFilter({
                       styles.presetBtn,
                       p.fullWidth && styles.presetBtnFull,
                     ]}
-                    onPress={() => applyDatePreset(p.key)}
+                    /* 2026.04.22 비동기 preset 적용 중 Promise 반환 경고를 피하고 기존 버튼 인터랙션 흐름을 유지하기 위해 void 호출로 명시 by June */
+                    onPress={() => void applyDatePreset(p.key)}
                   >
                     <LinearGradient
                       colors={["#2B7FFF", "#AD46FF"]}
