@@ -45,6 +45,7 @@ import {
   getGeocodeCacheCount,
   getGeocodePendingJobCount,
   getGeocodeCacheByKey,
+  getOldestPhotoTakenAt,
   getPhotoMetadataCount,
   getPhotoSyncState,
   initPhotoMetadataDb,
@@ -1461,6 +1462,30 @@ export default function HomeScreen() {
   const { dateStart, dateEnd, timeStart, timeEnd, countries, cities } = filter;
 
   const loadCountRef = useRef(0);
+  /* 2026.04.22 All Dates 프리셋 시작일을 실제 최저 촬영일로 바꾸기 위해 DateTimeFilter에서 호출할 최소 날짜 resolver를 추가 by June */
+  const resolveOldestPhotoDate = useCallback(async () => {
+    try {
+      /* 2026.04.22 전체 라이브러리 기준 신뢰도를 확보하기 위해 DB 최소 촬영일을 1순위로 조회하도록 추가 by June */
+      const oldestTakenAt = await getOldestPhotoTakenAt();
+      if (oldestTakenAt && Number.isFinite(oldestTakenAt)) {
+        return new Date(oldestTakenAt);
+      }
+    } catch (error) {
+      /* 2026.04.22 DB 조회 실패 시에도 All Dates 기능이 동작하도록 로컬 fallback으로 이어가기 위해 오류를 로그만 남기고 흡수 by June */
+      console.log("resolve oldest photo date from db error:", error);
+    }
+
+    /* 2026.04.22 DB 미적재 초기 구간을 대비해 현재 메모리에 로드된 사진에서도 최소 날짜를 계산하는 fallback을 추가 by June */
+    let minTakenAt: number | null = null;
+    for (const photo of photosRef.current) {
+      if (!photo.takenAt || !Number.isFinite(photo.takenAt)) continue;
+      if (minTakenAt === null || photo.takenAt < minTakenAt) {
+        minTakenAt = photo.takenAt;
+      }
+    }
+    return minTakenAt ? new Date(minTakenAt) : null;
+  }, []);
+
   const loadPhotos = useCallback(
     async ({ reset = false }: { reset?: boolean } = {}) => {
 
@@ -2299,6 +2324,8 @@ export default function HomeScreen() {
             <DateTimeFilter
               onChange={handleDateTimeChange}
               photos={photos}
+              /* 2026.04.22 DateTimeFilter의 All Dates 프리셋이 DB 최소 날짜를 사용하도록 resolver prop을 연결하기 위해 추가 by June */
+              resolveOldestPhotoDate={resolveOldestPhotoDate}
               onLocationChange={handleLocationChange}
             />
           </View>
