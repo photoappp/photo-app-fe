@@ -2099,19 +2099,20 @@ export default function HomeScreen() {
       ? t("loadingLocationInfo", "Loading location info...")
       : "";
 		
-		const handleShare = async (photoUri: string, message: string) => {
-			try {
-				const shareOptions: Share.ShareOptions = {
-					message,
-					url: Platform.OS === 'android' ? `file://${photoUri}` : photoUri,
-					type: 'image/jpeg',
-				};
-				await Share.open(shareOptions);
-				} catch (err) {
-				// 사용자가 공유하기 취소한 경우
-				if (err?.message === 'User did not share') {
-					return; // 아무것도 하지 않음
-				} 
+			const handleShare = async (photoUri: string, message: string) => {
+				try {
+					const shareOptions: Parameters<typeof Share.open>[0] = {
+						message,
+						url: Platform.OS === 'android' ? `file://${photoUri}` : photoUri,
+						type: 'image/jpeg',
+					};
+					await Share.open(shareOptions);
+					} catch (err: unknown) {
+					const errMessage = err instanceof Error ? err.message : "";
+					// 사용자가 공유하기 취소한 경우
+					if (errMessage === 'User did not share') {
+						return; // 아무것도 하지 않음
+					} 
 
 				console.log(err);
           /* 2026.04.22 공유 실패 알럿을 다국어로 전환해 공유 예외 시에도 언어 일관성을 유지하기 위해 수정 by June */
