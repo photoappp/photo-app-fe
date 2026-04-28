@@ -156,6 +156,8 @@ export default function HomeScreen() {
   const [viewerIndex, setViewerIndex] = useState(0);
   /* 2026.04.22 썸네일 리스트는 경량 URI를 유지하고 상세 뷰어에서만 고해상도 URI를 점진 교체하기 위해 뷰어 전용 URI 맵 상태를 추가 by June */
   const [viewerDetailUriMap, setViewerDetailUriMap] = useState<Record<string, string>>({});
+  /* 2026.04.28 썸네일 단계에서 ph:// 로더 충돌을 줄이기 위해 표시용 URI 캐시를 별도로 유지하도록 추가 by June */
+  const [displayUriMap, setDisplayUriMap] = useState<Record<string, string>>({});
 
   /** 2026.03.26 By June - 사진 목록/페이지네이션 관련 */
   const [initialLoading, setInitialLoading] = useState(false);
@@ -175,8 +177,11 @@ export default function HomeScreen() {
   // ImageViewing 에 넘길 images 배열 (형식: { uri: string }[])
   const viewerImages = useMemo(
     /* 2026.04.22 상세 진입 후 해상도 보강된 URI가 있으면 뷰어에서 우선 사용하도록 병합해 썸네일/상세 로딩 경로를 분리하기 위해 수정 by June */
-    () => photos.map((p) => ({ uri: viewerDetailUriMap[p.uri] ?? p.uri })),
-    [photos, viewerDetailUriMap]
+    () =>
+      photos.map((p) => ({
+        uri: viewerDetailUriMap[p.uri] ?? displayUriMap[p.uri] ?? p.uri,
+      })),
+    [displayUriMap, photos, viewerDetailUriMap]
   );
 
   const photosRef = useRef<Photo[]>(photos);
@@ -883,6 +888,42 @@ export default function HomeScreen() {
     });
   }, [resolveDisplayUri]);
 
+  useEffect(() => {
+    if (Platform.OS !== "ios") return;
+
+    /* 2026.04.28 썸네일/뷰어에서 ph://를 직접 사용하지 않도록 현재 목록의 일부(최대 200장)를 선행 해상해 displayUri 캐시를 채우기 위해 추가 by June */
+    const targets = photos
+      .slice(0, 200)
+      .map((p) => p.uri)
+      .filter((uri) => uri.startsWith("ph://") && !displayUriMap[uri]);
+
+    if (targets.length === 0) return;
+
+    let cancelled = false;
+    void (async () => {
+      const pairs = await Promise.all(
+        targets.map(async (uri) => [uri, await resolveDisplayUri(uri)] as const)
+      );
+      if (cancelled) return;
+
+      setDisplayUriMap((prev) => {
+        let changed = false;
+        const next = { ...prev };
+        for (const [sourceUri, resolvedUri] of pairs) {
+          if (!next[sourceUri] && resolvedUri && resolvedUri !== sourceUri) {
+            next[sourceUri] = resolvedUri;
+            changed = true;
+          }
+        }
+        return changed ? next : prev;
+      });
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [displayUriMap, photos, resolveDisplayUri]);
+
   /* 2026.04.15 DB 조회 결과를 기존 화면 Photo 타입으로 안전하게 변환해 기존 렌더링/로케이션 코드와 호환시키기 위해 추가 by June */
   const mapDbRowsToPhotos = useCallback(
     (
@@ -1342,6 +1383,35 @@ export default function HomeScreen() {
         reloadPath = "db";
         /* 2026.04.22 날짜/시간 DB 리로드에서는 썸네일 리스트 경량화를 위해 위치 보강/URI 정규화를 생략하고 메타데이터만 즉시 반영하도록 변경 by June */
         const dbPhotos = dbResult.photos.slice(0, FILTER_RESET_TARGET_COUNT);
+        /* 2026.04.28 DB 경로에서 0건이더라도 인덱스 최신화 지연/신뢰도 이슈로 false-empty가 발생할 수 있어 MediaLibrary 재탐색 폴백을 추가 by June */
+        if (dbPhotos.length === 0) {
+          dbDateTimePagingRef.current = { enabled: false, offset: 0 };
+
+          const fallbackResult = await collectPhotosForTarget({
+            currentFilter: filter,
+            targetCount: FILTER_RESET_TARGET_COUNT,
+            startCursor: null,
+            mode: "filter-reset",
+          });
+
+          const fallbackSorted = sortPhotosForDisplay(
+            dedupePhotosByUri(fallbackResult.photos)
+          );
+
+          setPhotos(fallbackSorted);
+          setPhotosAll(fallbackSorted);
+          void refreshFilterProgress(filter, fallbackSorted.length);
+          setEndCursor(fallbackResult.endCursor);
+          setHasNextPage(fallbackResult.hasNextPage);
+          setEmptyMessage(
+            fallbackSorted.length === 0 ? EMPTY_DEFAULT_MESSAGE : null
+          );
+
+          reloadPath = "medialibrary";
+          void triggerPhotoMetadataSync();
+          return;
+        }
+
         setPhotos(dbPhotos);
         setPhotosAll(dbPhotos);
         /* 2026.04.22 DB 필터 결과 반영 직후 표출/전체 건수를 업데이트해 프로그레스바에 현재 진행을 명확히 표시하기 위해 추가 by June */
@@ -1354,12 +1424,7 @@ export default function HomeScreen() {
           enabled: dbResult.dbHasMore,
           offset: dbResult.nextOffset,
         };
-
-        if (dbPhotos.length === 0) {
-          setEmptyMessage(EMPTY_DEFAULT_MESSAGE);
-        } else {
-          setEmptyMessage(null);
-        }
+        setEmptyMessage(null);
 
         /* 2026.04.15 DB 조회를 사용하더라도 백그라운드 동기화는 계속 진행해 데이터 최신성을 유지하기 위해 추가 by June */
         void triggerPhotoMetadataSync();
@@ -2019,11 +2084,18 @@ export default function HomeScreen() {
         }}
       >
         {/* <Image source={{ uri: item.uri }} style={styles.thumb} /> */}
-        <Image
-          source={{ uri: item.uri }}
-          style={styles.image}
-          resizeMode="cover"
-        />
+        {Platform.OS === "ios" &&
+        item.uri.startsWith("ph://") &&
+        !displayUriMap[item.uri] ? (
+          /* 2026.04.28 빈 URI 전달 경고를 없애기 위해 미해결 ph:// 썸네일은 임시 플레이스홀더로 렌더링 by June */
+          <View style={[styles.image, styles.imagePlaceholder]} />
+        ) : (
+          <Image
+            source={{ uri: displayUriMap[item.uri] ?? item.uri }}
+            style={styles.image}
+            resizeMode="cover"
+          />
+        )}
       </TouchableOpacity>
     );
   };
@@ -2269,7 +2341,7 @@ export default function HomeScreen() {
               data={photos}
               numColumns={numColumns}
               /* 2026.04.22 index key 사용 시 append/재정렬 구간에서 셀 재생성이 과도해져 스크롤 안정성이 저하될 수 있어 URI 우선 key로 변경 by June */
-              keyExtractor={(item, i) => item.uri || i.toString()}
+              keyExtractor={(item, i) => `${item.uri || "missing-uri"}::${i}`}
               renderItem={renderItem}
               /* 2026.04.22 대량 사진 스크롤 시 메모리 사용량을 낮춰 OS 강제 종료 가능성을 줄이기 위해 FlatList 배치 렌더 파라미터를 최적화 by June */
               initialNumToRender={25}
@@ -2631,6 +2703,10 @@ const styles = StyleSheet.create({
     shadowOpacity: 0.1,
     shadowRadius: 10,
     shadowOffset: { width: 0, height: 10 },
+  },
+  /* 2026.04.28 ph:// 미해결 구간의 빈 썸네일을 명시적으로 표시해 로딩 중 화면이 깨진 것처럼 보이지 않도록 추가 by June */
+  imagePlaceholder: {
+    backgroundColor: "#EEF2F7",
   },
   errorText: {
     color: "red",
