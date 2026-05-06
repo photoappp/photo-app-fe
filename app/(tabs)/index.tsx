@@ -30,9 +30,9 @@ import ImageViewing from 'react-native-image-viewing';
 import { Edges, SafeAreaView } from 'react-native-safe-area-context';
 import Share from 'react-native-share';
 
-import { useI18n } from '@/components/context/useI18n';
 import { useSlideshowTime } from '@/components/context/SlideshowTimeContext';
 import { useTheme } from '@/components/context/ThemeContext';
+import { useI18n } from '@/components/context/useI18n';
 import { useUserData } from '@/components/context/UserDataContext';
 
 import IconPlay from "@/assets/icons/ic_play.svg"; //2026.03.18 Change button UI by June
@@ -43,9 +43,9 @@ import * as amplitude from '@amplitude/analytics-react-native';
 import {
   countPhotoMetadataByDateTime,
   enqueueGeocodeJobs,
+  getGeocodeCacheByKey,
   getGeocodeCacheCount,
   getGeocodePendingJobCount,
-  getGeocodeCacheByKey,
   getOldestPhotoTakenAt,
   getPhotoMetadataCount,
   getPhotoSyncState,
@@ -53,12 +53,12 @@ import {
   queryPhotoMetadataByDateTime,
   upsertGeocodeCacheRows,
 } from "@/lib/db/photoMetadataDb";
+import { processGeocodeJobsInBackground } from "@/lib/services/geocodeJobWorker";
+import { recordPerfMetric } from "@/lib/services/perfMetrics";
 import {
   syncPhotoMetadataInBackground,
   upsertPhotoMetadataFromAssets,
 } from "@/lib/services/photoMetadataSync";
-import { processGeocodeJobsInBackground } from "@/lib/services/geocodeJobWorker";
-import { recordPerfMetric } from "@/lib/services/perfMetrics";
 
 
 
@@ -142,6 +142,15 @@ export default function HomeScreen() {
 
   /* 2026.04.15 DB 동기화 작업의 중복 실행을 막아 기존 로딩/필터 플로우에 성능 영향을 최소화하기 위해 추가 by June */
   const dbSyncInFlightRef = useRef(false);
+  /* 2026.05.06 썸네일 선노출 이후 위치 팔로업 작업의 중복 실행을 막기 위해 in-flight ref를 추가 by Codex */
+  /* 2026.05.06 기본 화면 위치 팔로업이 겹쳐 돌며 state 갱신 순서가 꼬이지 않도록 단일 실행 가드를 두기 위해 추가 by June */
+  const locationFollowUpInFlightRef = useRef(false);
+  /* 2026.05.06 동일 목록에 대한 위치 팔로업 반복 실행을 줄이기 위해 최근 처리 시그니처를 저장하는 ref를 추가 by Codex */
+  /* 2026.05.06 동일 후보 목록에 대한 위치 팔로업 재실행을 건너뛰어 불필요한 OS 메타 조회/지오코딩 반복을 줄이기 위해 추가 by June */
+  const locationFollowUpSignatureRef = useRef<string>("");
+  /* 2026.05.06 사용자가 선택한 사진의 우선 위치 로딩 중복 실행을 막기 위해 URI 기준 in-flight 집합을 추가 by Codex */
+  /* 2026.05.06 사용자가 연속 탭/스와이프할 때 같은 URI 우선 로딩 중복 요청을 막아 체감 지연과 배터리 소모를 줄이기 위해 추가 by June */
+  const priorityLocationInFlightRef = useRef<Set<string>>(new Set());
   /* 2026.04.15 iOS ph:// URI를 localUri로 변환한 결과를 재사용해 반복 조회 비용과 이미지 로더 충돌 노출을 줄이기 위해 캐시 추가 by June */
   const resolvedUriCacheRef = useRef<Map<string, string>>(new Map());
 
@@ -172,6 +181,12 @@ export default function HomeScreen() {
   });
   const [filterLoading, setFilterLoading] = useState(false);
   const [appendLoading, setAppendLoading] = useState(false);
+  /* 2026.05.06 지도 표시 안정화를 위해 지도 전용 좌표 준비본을 별도 상태로 유지 by June */
+  const [mapReadyPhotos, setMapReadyPhotos] = useState<Photo[]>([]);
+  /* 2026.05.06 지도용 좌표 준비 작업 중복 실행을 막기 위한 가드 ref by June */
+  const mapPrepareInFlightRef = useRef(false);
+  /* 2026.05.06 동일 사진 집합에서 지도용 좌표 재준비를 건너뛰기 위한 시그니처 ref by June */
+  const mapPrepareSignatureRef = useRef<string>("");
   /** 2026.03.26 By June */
 
   // ImageViewing 에 넘길 images 배열 (형식: { uri: string }[])
@@ -509,12 +524,58 @@ export default function HomeScreen() {
     [dayEndNextMs, dayStartMs]
   );
 
+  /* 2026.05.06 동일 asset 기준으로 위치 메타 반환 여부를 단건 비교해 경로 회귀를 즉시 진단하기 위해 추가 by June */
+  const runSingleAssetLocationCompare = useCallback(async () => {
+    try {
+      const result = await MediaLibrary.getAssetsAsync({
+        first: 1,
+        mediaType: MediaLibrary.MediaType.photo,
+        sortBy: [MediaLibrary.SortBy.creationTime],
+      });
+      const target = result.assets?.[0];
+      if (!target) {
+        console.log("[LOCATION_DIAG] single_asset_compare_empty");
+        return;
+      }
+
+      const infoById = await MediaLibrary.getAssetInfoAsync(target.id);
+      const infoByAsset = await MediaLibrary.getAssetInfoAsync(target as any);
+
+      console.log(
+        "[LOCATION_DIAG] single_asset_compare",
+        JSON.stringify({
+          id: target.id,
+          uri: target.uri,
+          assetHasLocation: !!(target as any).location,
+          infoByIdHasLocation: !!infoById.location,
+          infoByAssetHasLocation: !!infoByAsset.location,
+          infoByIdLocation: infoById.location
+            ? {
+                latitude: infoById.location.latitude,
+                longitude: infoById.location.longitude,
+              }
+            : null,
+          infoByAssetLocation: infoByAsset.location
+            ? {
+                latitude: infoByAsset.location.latitude,
+                longitude: infoByAsset.location.longitude,
+              }
+            : null,
+        })
+      );
+    } catch (err) {
+      console.log("[LOCATION_DIAG] single_asset_compare_error", err);
+    }
+  }, []);
+
   /* 2026.04.15 초기 화면 렌더 이후 메타데이터 인덱싱을 점진적으로 누적해 차기 DB 조회 전환을 준비하기 위해 추가 by June */
   useEffect(() => {
     void triggerPhotoMetadataSync();
     /* 2026.04.22 화면 진입 시 인덱싱 상태를 즉시 표시하기 위해 초기 진행 상태 조회를 함께 실행 by June */
     void refreshIndexingProgress();
-  }, [refreshIndexingProgress, triggerPhotoMetadataSync]);
+    /* 2026.05.06 단건 비교 진단을 함께 실행해 위치 메타가 호출 경로에서 실제로 반환되는지 즉시 확인하기 위해 추가 by June */
+    void runSingleAssetLocationCompare();
+  }, [refreshIndexingProgress, runSingleAssetLocationCompare, triggerPhotoMetadataSync]);
 
   /* 2026.04.22 geocode 작업 큐를 주기적으로 처리해 위치 캐시를 점진 보강하고 대기 작업을 줄이기 위해 워커 루프를 추가 by June */
   useEffect(() => {
@@ -826,6 +887,256 @@ export default function HomeScreen() {
     return hasLocationFilter;
   };
 
+  /* 2026.05.06 좌표 포맷 키 생성을 공통화해 geocode 캐시 hit율을 안정적으로 유지하기 위해 헬퍼를 추가 by Codex */
+  /* 2026.05.06 우선 로딩/배치 로딩 모두 동일 좌표 키 규칙을 쓰게 해 geocode 캐시 hit 일관성을 유지하기 위해 공통화 by June */
+  const toGeoKey = (latitude: number, longitude: number, precision = 2) =>
+    `${latitude.toFixed(precision)},${longitude.toFixed(precision)}`;
+
+  /* 2026.05.06 사용자가 탭/스와이프로 선택한 단일 사진은 즉시 위치를 우선 보강해 체감 지연을 줄이기 위해 추가 by Codex */
+  /* 2026.05.06 선택된 사진은 백그라운드 순서와 무관하게 즉시 위치를 보강해 상세 진입 직후 위치 공백 시간을 줄이기 위해 추가 by June */
+  const prioritizePhotoLocation = useCallback(async (photo: Photo | undefined) => {
+    if (!photo?.uri) return;
+    if (photo.city || photo.country) return;
+    if (priorityLocationInFlightRef.current.has(photo.uri)) return;
+
+    priorityLocationInFlightRef.current.add(photo.uri);
+    try {
+      let latitude: number | null =
+        photo.location ? Number(photo.location.latitude) : null;
+      let longitude: number | null =
+        photo.location ? Number(photo.location.longitude) : null;
+
+      const hasValidCoords =
+        typeof latitude === "number" &&
+        typeof longitude === "number" &&
+        Number.isFinite(latitude) &&
+        Number.isFinite(longitude);
+
+      if (!hasValidCoords && photo.uri.startsWith("ph://")) {
+        try {
+          const info = await MediaLibrary.getAssetInfoAsync(photo.uri.replace("ph://", ""));
+          if (info.location) {
+            const lat = Number(info.location.latitude);
+            const lon = Number(info.location.longitude);
+            if (Number.isFinite(lat) && Number.isFinite(lon)) {
+              latitude = lat;
+              longitude = lon;
+            }
+          }
+        } catch (e) {
+          console.log("priority location asset info error:", e);
+        }
+      }
+
+      if (
+        typeof latitude !== "number" ||
+        typeof longitude !== "number" ||
+        !Number.isFinite(latitude) ||
+        !Number.isFinite(longitude)
+      ) {
+        return;
+      }
+
+      let city: string | null = null;
+      let country: string | null = null;
+      const geoKey = toGeoKey(latitude, longitude, 2);
+
+      try {
+        const cached = await getGeocodeCacheByKey(geoKey);
+        if (cached) {
+          city = cached.city ?? null;
+          country = cached.country ?? null;
+        }
+      } catch (e) {
+        console.log("priority geocode cache read error:", e);
+      }
+
+      if (!city && !country) {
+        try {
+          const [res] = await Location.reverseGeocodeAsync({
+            latitude,
+            longitude,
+          });
+          country = res?.country ?? null;
+          city = res?.city ?? res?.subregion ?? null;
+
+          await upsertGeocodeCacheRows([
+            {
+              geoKey,
+              latitude,
+              longitude,
+              country,
+              city,
+              updatedAt: Date.now(),
+            },
+          ]);
+        } catch (e) {
+          console.log("priority reverse geocode error:", e);
+        }
+      }
+
+      setPhotos((prev) =>
+        prev.map((p) =>
+          p.uri === photo.uri
+            ? {
+                ...p,
+                location: p.location ?? { latitude, longitude },
+                city: city ?? p.city,
+                country: country ?? p.country,
+              }
+            : p
+        )
+      );
+      setPhotosAll((prev) =>
+        prev.map((p) =>
+          p.uri === photo.uri
+            ? {
+                ...p,
+                location: p.location ?? { latitude, longitude },
+                city: city ?? p.city,
+                country: country ?? p.country,
+              }
+            : p
+        )
+      );
+    } finally {
+      priorityLocationInFlightRef.current.delete(photo.uri);
+    }
+  }, []);
+
+  /* 2026.05.06 초기 썸네일 선노출 후 위치(좌표→도시/국가)를 백그라운드에서 보강해 위치 누락 체감을 줄이기 위해 팔로업 함수를 추가 by Codex */
+  /* 2026.05.06 초기 썸네일 노출 후 화면 상단 가시 범위 후보를 점진 보강해 썸네일 속도는 유지하면서 위치 누락을 줄이기 위해 추가 by June */
+  const followUpVisibleLocations = useCallback(async () => {
+    if (locationFollowUpInFlightRef.current) return;
+    if (photosRef.current.length === 0) return;
+
+    const candidates = photosRef.current
+      .slice(0, 40)
+      .filter((p) => !p.city && !p.country);
+
+    if (candidates.length === 0) return;
+
+    const signature = candidates.map((p) => p.uri).join("|");
+    if (locationFollowUpSignatureRef.current === signature) return;
+
+    locationFollowUpInFlightRef.current = true;
+    locationFollowUpSignatureRef.current = signature;
+
+    try {
+      const withCoordinates: Photo[] = await Promise.all(
+        candidates.map(async (photo) => {
+          if (photo.location) return photo;
+          if (!photo.uri.startsWith("ph://")) return photo;
+
+          try {
+            const assetId = photo.uri.replace("ph://", "");
+            const info = await MediaLibrary.getAssetInfoAsync(assetId);
+            if (!info.location) return photo;
+
+            const latitude = Number(info.location.latitude);
+            const longitude = Number(info.location.longitude);
+
+            if (!Number.isFinite(latitude) || !Number.isFinite(longitude)) {
+              return photo;
+            }
+
+            return {
+              ...photo,
+              location: { latitude, longitude },
+            };
+          } catch {
+            return photo;
+          }
+        })
+      );
+
+      const withPlaces = await imagesWithLocation(withCoordinates, {
+        maxLookups: 20,
+        precision: 2,
+        delayMs: 80,
+      });
+
+      const byUri = new Map(withPlaces.map((p: Photo) => [p.uri, p]));
+      setPhotos((prev) =>
+        prev.map((photo) => {
+          const next = byUri.get(photo.uri);
+          return next
+            ? {
+                ...photo,
+                location: next.location ?? photo.location ?? null,
+                city: next.city ?? photo.city,
+                country: next.country ?? photo.country,
+              }
+            : photo;
+        })
+      );
+      setPhotosAll((prev) =>
+        prev.map((photo) => {
+          const next = byUri.get(photo.uri);
+          return next
+            ? {
+                ...photo,
+                location: next.location ?? photo.location ?? null,
+                city: next.city ?? photo.city,
+                country: next.country ?? photo.country,
+              }
+            : photo;
+        })
+      );
+    } finally {
+      locationFollowUpInFlightRef.current = false;
+    }
+  }, []);
+
+  /* 2026.05.06 ShowOnMap 입력값의 좌표 밀도를 높이기 위해 지도 전용으로 선택 사진 일부의 location을 선보강하는 준비 함수를 추가 by June */
+  const prepareMapReadyPhotos = useCallback(async () => {
+    if (mapPrepareInFlightRef.current) return;
+    if (photosRef.current.length === 0) return;
+
+    const source = photosRef.current.slice(0, 120);
+    const signature = source
+      .map((p) => {
+        const lat = p.location ? Number(p.location.latitude) : "";
+        const lon = p.location ? Number(p.location.longitude) : "";
+        return `${p.uri}|${lat}|${lon}`;
+      })
+      .join("||");
+
+    if (mapPrepareSignatureRef.current === signature) return;
+    mapPrepareSignatureRef.current = signature;
+    mapPrepareInFlightRef.current = true;
+
+    try {
+      const enriched = await Promise.all(
+        source.map(async (photo) => {
+          if (photo.location) return photo;
+          if (!photo.uri.startsWith("ph://")) return photo;
+
+          try {
+            const assetId = photo.uri.replace("ph://", "");
+            const info = await MediaLibrary.getAssetInfoAsync(assetId);
+            if (!info.location) return photo;
+
+            const latitude = Number(info.location.latitude);
+            const longitude = Number(info.location.longitude);
+            if (!Number.isFinite(latitude) || !Number.isFinite(longitude)) return photo;
+
+            return {
+              ...photo,
+              location: { latitude, longitude },
+            };
+          } catch {
+            return photo;
+          }
+        })
+      );
+
+      setMapReadyPhotos(enriched.filter((p) => !!p.location));
+    } finally {
+      mapPrepareInFlightRef.current = false;
+    }
+  }, []);
+
   /** 사진 정렬 처리: 오래된 순 + timestamp 없는 사진 최하단 표출 */
   /* 2026.04.15 정렬 함수 참조를 고정해 DB 조회 콜백이 렌더마다 재생성되지 않도록 하기 위해 useCallback 적용 by June */
   const sortPhotosForDisplay = useCallback((items: Photo[]) => {
@@ -923,6 +1234,34 @@ export default function HomeScreen() {
       cancelled = true;
     };
   }, [displayUriMap, photos, resolveDisplayUri]);
+
+  /* 2026.05.06 위치 필터 미사용 기본 화면에서도 위치 정보가 지연 보강되도록 목록 변경 후 백그라운드 팔로업을 수행하기 위해 추가 by Codex */
+  useEffect(() => {
+    const hasLocationFilter = filter.countries.length > 0 || filter.cities.length > 0;
+    if (hasLocationFilter) return;
+    if (initialLoading || filterLoading || appendLoading) return;
+    if (photos.length === 0) return;
+
+    void followUpVisibleLocations();
+  }, [
+    appendLoading,
+    filter.cities.length,
+    filter.countries.length,
+    filterLoading,
+    followUpVisibleLocations,
+    initialLoading,
+    photos,
+  ]);
+
+  /* 2026.05.06 photos 변경 시 지도에서 즉시 사용할 좌표본을 백그라운드 준비해 지도 진입 시 빈 마커 확률을 줄이기 위해 추가 by June */
+  useEffect(() => {
+    if (photos.length === 0) {
+      setMapReadyPhotos([]);
+      mapPrepareSignatureRef.current = "";
+      return;
+    }
+    void prepareMapReadyPhotos();
+  }, [photos, prepareMapReadyPhotos]);
 
   /* 2026.04.15 DB 조회 결과를 기존 화면 Photo 타입으로 안전하게 변환해 기존 렌더링/로케이션 코드와 호환시키기 위해 추가 by June */
   const mapDbRowsToPhotos = useCallback(
@@ -2076,6 +2415,8 @@ export default function HomeScreen() {
           setViewerVisible(true);
           /* 2026.04.22 상세 보기 진입 시 선택 사진만 고해상도 URI를 비동기 보강해 리스트 전체 메모리 사용 없이 상세 품질을 확보하기 위해 추가 by June */
           void resolveViewerDetailUri(item.uri);
+          /* 2026.05.06 사용자가 선택한 사진의 위치정보는 즉시 우선 보강해 상세 진입 직후 공백 시간을 줄이기 위해 추가 by Codex */
+          void prioritizePhotoLocation(item);
           /* 2026.04.22 좌우 스와이프 첫 체감을 개선하기 위해 인접 1장의 URI도 선행 보강하되 범위를 최소화해 메모리 피크를 제한 by June */
           const next = photosRef.current[index + 1];
           if (next?.uri) {
@@ -2166,6 +2507,8 @@ export default function HomeScreen() {
       ? `${current.city}, ${current.country}`
       : current?.country
       ? current.country
+      : !current?.location
+      ? "No location info"
       : current?.location
       /* 2026.04.22 위치 보강 중 안내 문구를 다국어 처리해 로딩 상태 텍스트도 언어 설정을 따르도록 수정 by June */
       ? t("loadingLocationInfo", "Loading location info...")
@@ -2319,7 +2662,7 @@ export default function HomeScreen() {
                 style={styles.mapButtonSlot}
                 activeOpacity={0.9}
               >
-                <ShowOnMap images={photos} />
+                <ShowOnMap images={mapReadyPhotos.length > 0 ? mapReadyPhotos : photos} />
               </TouchableOpacity>
 
               {/* Settings 버튼 */}
@@ -2523,6 +2866,8 @@ export default function HomeScreen() {
               dwell_ms,
             });
           }
+          /* 2026.05.06 뷰어 스와이프 시 새로 선택된 사진도 우선 위치 보강 대상으로 즉시 요청하도록 추가 by Codex */
+          void prioritizePhotoLocation(photosRef.current[i]);
         }}
         images={viewerImages}
         imageIndex={viewerIndex}
