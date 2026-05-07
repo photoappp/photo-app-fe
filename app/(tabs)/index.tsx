@@ -181,12 +181,6 @@ export default function HomeScreen() {
   });
   const [filterLoading, setFilterLoading] = useState(false);
   const [appendLoading, setAppendLoading] = useState(false);
-  /* 2026.05.06 지도 표시 안정화를 위해 지도 전용 좌표 준비본을 별도 상태로 유지 by June */
-  const [mapReadyPhotos, setMapReadyPhotos] = useState<Photo[]>([]);
-  /* 2026.05.06 지도용 좌표 준비 작업 중복 실행을 막기 위한 가드 ref by June */
-  const mapPrepareInFlightRef = useRef(false);
-  /* 2026.05.06 동일 사진 집합에서 지도용 좌표 재준비를 건너뛰기 위한 시그니처 ref by June */
-  const mapPrepareSignatureRef = useRef<string>("");
   /** 2026.03.26 By June */
 
   // ImageViewing 에 넘길 images 배열 (형식: { uri: string }[])
@@ -1088,55 +1082,6 @@ export default function HomeScreen() {
     }
   }, []);
 
-  /* 2026.05.06 ShowOnMap 입력값의 좌표 밀도를 높이기 위해 지도 전용으로 선택 사진 일부의 location을 선보강하는 준비 함수를 추가 by June */
-  const prepareMapReadyPhotos = useCallback(async () => {
-    if (mapPrepareInFlightRef.current) return;
-    if (photosRef.current.length === 0) return;
-
-    const source = photosRef.current.slice(0, 120);
-    const signature = source
-      .map((p) => {
-        const lat = p.location ? Number(p.location.latitude) : "";
-        const lon = p.location ? Number(p.location.longitude) : "";
-        return `${p.uri}|${lat}|${lon}`;
-      })
-      .join("||");
-
-    if (mapPrepareSignatureRef.current === signature) return;
-    mapPrepareSignatureRef.current = signature;
-    mapPrepareInFlightRef.current = true;
-
-    try {
-      const enriched = await Promise.all(
-        source.map(async (photo) => {
-          if (photo.location) return photo;
-          if (!photo.uri.startsWith("ph://")) return photo;
-
-          try {
-            const assetId = photo.uri.replace("ph://", "");
-            const info = await MediaLibrary.getAssetInfoAsync(assetId);
-            if (!info.location) return photo;
-
-            const latitude = Number(info.location.latitude);
-            const longitude = Number(info.location.longitude);
-            if (!Number.isFinite(latitude) || !Number.isFinite(longitude)) return photo;
-
-            return {
-              ...photo,
-              location: { latitude, longitude },
-            };
-          } catch {
-            return photo;
-          }
-        })
-      );
-
-      setMapReadyPhotos(enriched.filter((p) => !!p.location));
-    } finally {
-      mapPrepareInFlightRef.current = false;
-    }
-  }, []);
-
   /** 사진 정렬 처리: 오래된 순 + timestamp 없는 사진 최하단 표출 */
   /* 2026.04.15 정렬 함수 참조를 고정해 DB 조회 콜백이 렌더마다 재생성되지 않도록 하기 위해 useCallback 적용 by June */
   const sortPhotosForDisplay = useCallback((items: Photo[]) => {
@@ -1252,16 +1197,6 @@ export default function HomeScreen() {
     initialLoading,
     photos,
   ]);
-
-  /* 2026.05.06 photos 변경 시 지도에서 즉시 사용할 좌표본을 백그라운드 준비해 지도 진입 시 빈 마커 확률을 줄이기 위해 추가 by June */
-  useEffect(() => {
-    if (photos.length === 0) {
-      setMapReadyPhotos([]);
-      mapPrepareSignatureRef.current = "";
-      return;
-    }
-    void prepareMapReadyPhotos();
-  }, [photos, prepareMapReadyPhotos]);
 
   /* 2026.04.15 DB 조회 결과를 기존 화면 Photo 타입으로 안전하게 변환해 기존 렌더링/로케이션 코드와 호환시키기 위해 추가 by June */
   const mapDbRowsToPhotos = useCallback(
@@ -2662,7 +2597,7 @@ export default function HomeScreen() {
                 style={styles.mapButtonSlot}
                 activeOpacity={0.9}
               >
-                <ShowOnMap images={mapReadyPhotos.length > 0 ? mapReadyPhotos : photos} />
+                <ShowOnMap images={photos} />
               </TouchableOpacity>
 
               {/* Settings 버튼 */}
