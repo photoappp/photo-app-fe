@@ -1,7 +1,7 @@
 import { useLanguage } from "@/components/context/LanguageContext";
 import { TRANSLATIONS } from "@/constants/Translations";
 import * as amplitude from "@amplitude/analytics-react-native";
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import IconMapPin from "@/assets/icons/ic_map_pin.svg";
 import {
   Dimensions,
@@ -38,8 +38,25 @@ export default function MapView({ images }: Props) {
   // 2026-03-18 get proper coordinates by yen
   const [coordinates, setCoordinates] = useState<any[]>([]); // store base64 coords
   const [loading, setLoading] = useState(true);
+  /* 2026.04.15 동일 이미지 입력에서 좌표 재계산/재설정 루프를 막기 위해 마지막 처리 시그니처를 저장 by June */
+  const lastImagesSigRef = useRef<string>("");
+
+  /* 2026.04.15 이미지 값 기준 시그니처를 만들어 부모 리렌더 시 불필요한 좌표 로딩을 건너뛰기 위해 추가 by June */
+  const imagesSignature = useMemo(() => {
+    return images
+      .map((img) => {
+        const lat = img.location ? Number(img.location.latitude) : "";
+        const lng = img.location ? Number(img.location.longitude) : "";
+        return `${img.uri}|${lat}|${lng}`;
+      })
+      .join("||");
+  }, [images]);
 
   useEffect(() => {
+    /* 2026.04.15 동일 시그니처에서는 setCoordinates를 생략해 Maximum update depth 재발 가능성을 낮추기 위해 가드 추가 by June */
+    if (lastImagesSigRef.current === imagesSignature) return;
+    lastImagesSigRef.current = imagesSignature;
+
     const loadCoordinates = async () => {
       try {
         const coords = await Promise.all(
@@ -58,7 +75,14 @@ export default function MapView({ images }: Props) {
               };
             }),
         );
-        setCoordinates(coords.filter(Boolean));
+        /* 2026.04.15 동일 좌표 배열을 반복 설정하지 않도록 이전 상태와 비교 후에만 setState 하도록 수정 by June */
+        setCoordinates((prev) => {
+          const next = coords.filter(Boolean);
+          const prevSig = JSON.stringify(prev);
+          const nextSig = JSON.stringify(next);
+          if (prevSig === nextSig) return prev;
+          return next;
+        });
       } catch (e) {
         console.error("Failed to load images as base64", e);
       } finally {
@@ -67,7 +91,7 @@ export default function MapView({ images }: Props) {
     };
 
     loadCoordinates();
-  }, [images]);
+  }, [imagesSignature, images]);
   // Pass coordinates to WebView as JSON
   const coordJSON = JSON.stringify(coordinates);
 

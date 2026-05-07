@@ -1,6 +1,7 @@
 //  Translations.ts
-export const TRANSLATIONS: Record<string, Record<string, string>> = {
-	en: {
+/* 2026.04.22 번역 키/언어 타입을 코드에서 재사용 가능하게 만들기 위해 객체 리터럴 기반 상수로 구조를 고정 by June */
+export const TRANSLATIONS = {
+		en: {
 		settings: 'Settings',
 		userData: 'User Data',
 		startDate: 'Start Date',
@@ -22,8 +23,9 @@ export const TRANSLATIONS: Record<string, Record<string, string>> = {
 		date: 'Date',
 		time: 'Time',
 		location: 'Location',
-		all_day: 'All Dates',
-		all_times: 'All Times',
+		all_day: 'All Times',   // 2026.03.27 by June - 00:00~23:59를 칭하는 기획이 기존에는 All Day였는데 All Times 로 바뀜. 
+		all_times: 'All Dates', // 2026.03.27 by June - 1970년 1월 1일부터 오늘까지를 칭하는 개념이 All Times였는데 All Dates 로 바뀜.
+		/** 2026.03.27 All Times, All Dates 관련 => 영어 및 다른 언어들에도 모두 변경 적용함 by June */
 		allLocations: 'All Locations',
 		play: 'Play',
 		map: 'Map',
@@ -38,11 +40,44 @@ export const TRANSLATIONS: Record<string, Record<string, string>> = {
 		past_12_months: 'Past 12 Months',
 		past_30_days: 'Past 30 Days',
 		past_7_days: 'Past 7 Days',
-		selectDate: "Select Date",
-		selectTime: "Select Time",
-		selectLocation: "Select Location",
-		all: "All"
-	},
+			selectDate: "Select Date",
+			selectTime: "Select Time",
+			selectLocation: "Select Location",
+			all: "All",
+			/* 2026.04.22 홈/뷰어 공용 UI 문구를 다국어 처리하기 위해 번역 키를 확장 by June */
+			anywhere: "Anywhere",
+			noPhotosFound: "No photos found",
+			tryExpandingFilters: "Try expanding the filters.",
+			noDateInfo: "No date info",
+			loadingLocationInfo: "Loading location info...",
+			permissionRequiredTitle: "Permission Required",
+			photoPermissionRequired: "Photo access permission is required.",
+			photoPermissionSettingsMessage:
+				"To display photos, allow photo access in Settings.",
+			goToSettings: "Open Settings",
+			cancel: "Cancel",
+			delete: "Delete",
+			deletePhotoTitle: "Delete Photo",
+			deletePhotoConfirm: "Are you sure you want to delete this photo?",
+			errorTitle: "Error",
+			loadPhotosError: "There was a problem while loading photos.",
+			reloadPhotosError: "There was a problem while reloading photos.",
+			shareFailedMessage: "Failed to share the photo.",
+			sharePhotoMessagePrefix: "Check out this photo!",
+			loadingPhotos: "Loading photos...",
+			/* 2026.04.22 날짜 필터 로딩 프로그레스에 표출/총 건수 라벨을 표시하기 위해 번역 키를 추가 by June */
+			filteredPhotos: "Filtered photos",
+			/* 2026.04.22 하단 명시적 append UX를 위해 더 불러오기/로딩/완료 안내 문구 키를 추가 by June */
+			loadMorePhotos: "Load more photos",
+			loadingMorePhotos: "Loading more photos...",
+			allFilteredPhotosLoaded: "All filtered photos are loaded",
+			photoIndexing: "Photo indexing",
+			syncing: "syncing",
+			complete: "complete",
+			geocodeCache: "Geocode cache",
+			queue: "Queue",
+			noRecent3YearsPhotos: "No photos in the last 3 years."
+		},
 	ko: {
 		settings: '설정',
 		userData: '사용자 데이터',
@@ -65,8 +100,8 @@ export const TRANSLATIONS: Record<string, Record<string, string>> = {
 		date: '날짜',
 		time: '시간',
 		location: '위치',
-		all_day: '모든 날짜',
-		all_times: '모든 시간',
+		all_day: '모든 시간',
+		all_times: '모든 날짜',
 		allLocations: '모든 위치',
 		play: '플레이',
 		map: '지도',
@@ -108,8 +143,8 @@ export const TRANSLATIONS: Record<string, Record<string, string>> = {
 		date: '日付',
 		time: '時間',
 		location: '場所',
-		all_day: 'すべての日付',
-		all_times: 'すべての時間',
+		all_day: 'すべての時間',
+		all_times: 'すべての日付',
 		allLocations: 'すべての場所',
 		play: 'プレイ',
 		map: '地図',
@@ -151,8 +186,8 @@ export const TRANSLATIONS: Record<string, Record<string, string>> = {
 		date: '日期',
 		time: '時間',
 		location: '位置',
-		all_day: '所有日期',
-		all_times: '所有時間',
+		all_day: '所有時間',
+		all_times: '所有日期',
 		allLocations: '所有位置',
 		play: '播放',
 		map: '地圖',
@@ -194,8 +229,8 @@ export const TRANSLATIONS: Record<string, Record<string, string>> = {
 		date: '日期',
 		time: '时间',
 		location: '位置',
-		all_day: '所有日期',
-		all_times: '所有时间',
+		all_day: '所有时间',
+		all_times: '所有日期',
 		allLocations: '所有位置',
 		play: '播放',
 		map: '地图',
@@ -237,8 +272,8 @@ export const TRANSLATIONS: Record<string, Record<string, string>> = {
 		date: 'Date',
 		time: 'Heure',
 		location: 'Lieu',
-		all_day: 'Toutes les dates',
-		all_times: 'Toutes les heures',
+		all_day: 'Toutes les heures',
+		all_times: 'Toutes les dates',
 		allLocations: 'Tous les lieux',
 		play: 'Lecture',
 		map: 'Carte',
@@ -280,8 +315,8 @@ export const TRANSLATIONS: Record<string, Record<string, string>> = {
 		date: 'Fecha',
 		time: 'Hora',
 		location: 'Ubicación',
-		all_day: 'Todas las fechas',
-		all_times: 'Todas las horas',
+		all_day: 'Todas las horas',
+		all_times: 'Todas las fechas',
 		allLocations: 'Todas las ubicaciones',
 		play: 'Reproducir',
 		map: 'Mapa',
@@ -301,6 +336,29 @@ export const TRANSLATIONS: Record<string, Record<string, string>> = {
 		selectLocation: "Seleccionar ubicación",
 		all: "Todo"
 	},
+} as const;
+
+/* 2026.04.22 지원 언어 목록을 단일 원천으로 관리해 언어 컨텍스트/번역 훅에서 동일 기준을 사용하도록 추가 by June */
+export const SUPPORTED_LANGUAGES = Object.keys(TRANSLATIONS) as Array<keyof typeof TRANSLATIONS>;
+/* 2026.04.22 언어 타입을 상수에서 추론해 문자열 오타로 인한 런타임 fallback을 줄이기 위해 타입을 추가 by June */
+export type SupportedLanguage = keyof typeof TRANSLATIONS;
+/* 2026.04.22 번역 키 타입을 공통 노출해 컴포넌트에서 안전한 key 접근을 보장하기 위해 타입을 추가 by June */
+export type TranslationKey = keyof typeof TRANSLATIONS.en;
+
+/* 2026.04.22 임의 언어 입력을 지원 언어로 정규화해 컨텍스트 초기화/설정 저장 시 예외를 줄이기 위해 헬퍼를 추가 by June */
+export const normalizeLanguage = (language: string): SupportedLanguage => {
+	const found = SUPPORTED_LANGUAGES.find((lang) => lang === language);
+	return found ?? "en";
 };
 
-
+/* 2026.04.22 모든 화면에서 동일 fallback 정책을 사용하도록 공용 번역 조회 함수를 추가 by June */
+export const translateText = (
+	language: string,
+	key: TranslationKey,
+	fallback?: string
+) => {
+	const normalized = normalizeLanguage(language);
+	/* 2026.04.22 일부 언어에서 신규 키가 아직 비어있을 수 있어 런타임에 안전하게 en fallback 하도록 레코드 캐스팅을 적용 by June */
+	const table = TRANSLATIONS[normalized] as Record<string, string>;
+	return table[key] ?? fallback ?? TRANSLATIONS.en[key];
+};
