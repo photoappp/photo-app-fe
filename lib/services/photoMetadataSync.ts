@@ -13,6 +13,9 @@ import { recordPerfMetric } from "@/lib/services/perfMetrics";
 /* 2026.04.15 동기화 페이지 크기를 상수화해 앱 성능 이슈 시 운영값을 안전하게 조정하기 위해 추가 by June */
 const SYNC_PAGE_SIZE = 300;
 
+/* 2026.05.06 백그라운드 동기화 시 위치 메타 재수집 비용을 제어하기 위해 페이지당 상세조회 상한을 추가 by Codex */
+const LOCATION_ENRICH_PER_PAGE = 80;
+
 /* 2026.04.15 동기화 중복 실행을 막아 같은 시점 다중 동기화로 인한 성능 저하를 방지하기 위해 추가 by June */
 let inFlightSync: Promise<void> | null = null;
 
@@ -31,18 +34,36 @@ const getTakenMinute = (takenAt: number | null) => {
   return local.getHours() * 60 + local.getMinutes();
 };
 
+/* 2026.05.06 Asset/AssetInfo의 위치값 파싱 로직을 공통화해 동기화 경로별 누락을 줄이기 위해 추가 by Codex */
+const readLocation = (location: any) => {
+  if (!location) return { latitude: null, longitude: null };
+
+  const latitude = Number(location.latitude);
+  const longitude = Number(location.longitude);
+
+  if (!Number.isFinite(latitude) || !Number.isFinite(longitude)) {
+    return { latitude: null, longitude: null };
+  }
+
+  return { latitude, longitude };
+};
+
 /* 2026.04.15 Asset 기본 메타를 DB row로 정규화해 동기화/업서트 입력 구조를 고정하기 위해 추가 by June */
-const toMetadataRow = (asset: MediaLibrary.Asset): PhotoMetadataRow => {
+const toMetadataRow = (
+  asset: MediaLibrary.Asset,
+  locationOverride?: { latitude: number | null; longitude: number | null }
+): PhotoMetadataRow => {
   const now = Date.now();
   const takenAt = getAssetTakenAt(asset);
+  const location = locationOverride ?? readLocation((asset as any).location);
 
   return {
     assetId: asset.id,
     uri: asset.uri,
     takenAt,
     takenMinute: getTakenMinute(takenAt),
-    latitude: null,
-    longitude: null,
+    latitude: location.latitude,
+    longitude: location.longitude,
     createdAt: now,
     updatedAt: now,
     isDeleted: 0,
@@ -58,7 +79,7 @@ export const upsertPhotoMetadataFromAssets = async (
   /* 2026.04.22 실시간 업서트 지연을 계측해 메타데이터 누적 처리의 병목 구간을 p50/p95로 확인하기 위해 타이머를 추가 by June */
   const startedAt = Date.now();
   await initPhotoMetadataDb();
-  const rows = assets.map(toMetadataRow);
+  const rows = assets.map((asset) => toMetadataRow(asset));
   await upsertPhotoMetadataRows(rows);
   /* 2026.04.22 업서트 배치 크기별 처리 시간을 추적해 동기화 페이지 크기 조정 근거를 확보하기 위해 계측 로그를 추가 by June */
   recordPerfMetric(
@@ -111,7 +132,30 @@ export const syncPhotoMetadataInBackground = async (params?: {
       const assets = result.assets ?? [];
 
       if (assets.length > 0) {
-        await upsertPhotoMetadataRows(assets.map(toMetadataRow));
+        let enrichedCount = 0;
+        const rows: PhotoMetadataRow[] = [];
+
+        for (const asset of assets) {
+          let location = readLocation((asset as any).location);
+
+          if (
+            enrichedCount < LOCATION_ENRICH_PER_PAGE &&
+            location.latitude === null &&
+            location.longitude === null
+          ) {
+            try {
+              const info = await MediaLibrary.getAssetInfoAsync(asset.id);
+              location = readLocation(info.location);
+            } catch {
+              // 상세조회 실패 시 해당 자산은 기본 row로 유지
+            }
+            enrichedCount += 1;
+          }
+
+          rows.push(toMetadataRow(asset, location));
+        }
+
+        await upsertPhotoMetadataRows(rows);
       }
 
       cursor = result.endCursor ?? null;

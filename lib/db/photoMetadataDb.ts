@@ -230,8 +230,9 @@ export const upsertPhotoMetadataRows = async (rows: PhotoMetadataRow[]) => {
           uri = excluded.uri,
           taken_at = excluded.taken_at,
           taken_minute = excluded.taken_minute,
-          latitude = excluded.latitude,
-          longitude = excluded.longitude,
+          /* 2026.05.06 sync 경로에서 위치값이 null일 때 기존 위치 메타를 보존해 회귀 덮어쓰기를 방지하기 위해 COALESCE 적용 by Codex */
+          latitude = COALESCE(excluded.latitude, photo_metadata.latitude),
+          longitude = COALESCE(excluded.longitude, photo_metadata.longitude),
           updated_at = excluded.updated_at,
           is_deleted = excluded.is_deleted
         `,
