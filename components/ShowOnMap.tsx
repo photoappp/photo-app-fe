@@ -4,16 +4,19 @@ import * as amplitude from "@amplitude/analytics-react-native";
 import { useEffect, useMemo, useRef, useState } from "react";
 import IconMapPin from "@/assets/icons/ic_map_pin.svg";
 import {
+  ActivityIndicator,
   Dimensions,
+  Image,
   Modal,
   StyleSheet,
   Text,
   TouchableOpacity,
   View,
 } from "react-native";
-import { WebView } from "react-native-webview";
+import { WebView, type WebViewMessageEvent } from "react-native-webview";
 // 2026-03-18 get proper coordinates by yen
 import * as FileSystem from "expo-file-system/legacy";
+import * as MediaLibrary from "expo-media-library";
 
 type Photo = {
   uri: string;
@@ -35,9 +38,19 @@ type Props = {
 export default function MapView({ images }: Props) {
   const { language } = useLanguage();
   const [visible, setVisible] = useState(false);
+  const [detailVisible, setDetailVisible] = useState(false);
+  const [detailUri, setDetailUri] = useState<string | null>(null);
+  const [detailLoading, setDetailLoading] = useState(false);
+  const [detailPlace, setDetailPlace] = useState<string>("");
   // 2026-03-18 get proper coordinates by yen
   const [coordinates, setCoordinates] = useState<any[]>([]); // store base64 coords
   const [loading, setLoading] = useState(true);
+  /* 2026.05.12 이미지 로드 실패 시에도 좌표 마커는 유지하기 위해 공통 placeholder 이미지를 정의 by June */
+  const FALLBACK_MARKER_URI =
+    "data:image/svg+xml;utf8," +
+    encodeURIComponent(
+      "<svg xmlns='http://www.w3.org/2000/svg' width='80' height='80'><rect width='100%' height='100%' rx='16' ry='16' fill='#EEF2FF'/><circle cx='40' cy='40' r='14' fill='#6366F1'/></svg>"
+    );
   /* 2026.04.15 동일 이미지 입력에서 좌표 재계산/재설정 루프를 막기 위해 마지막 처리 시그니처를 저장 by June */
   const lastImagesSigRef = useRef<string>("");
 
@@ -59,22 +72,45 @@ export default function MapView({ images }: Props) {
 
     const loadCoordinates = async () => {
       try {
-        const coords = await Promise.all(
+        const settled = await Promise.allSettled(
           images
             .filter((img) => img.location)
             .map(async (img) => {
-              const base64 = await FileSystem.readAsStringAsync(img.uri, {
-                encoding: "base64",
-              });
+              const latitude = Number(img.location!.latitude);
+              const longitude = Number(img.location!.longitude);
+              if (!Number.isFinite(latitude) || !Number.isFinite(longitude)) {
+                return null;
+              }
+
+              let markerUri = FALLBACK_MARKER_URI;
+              if (typeof img.uri === "string" && img.uri.startsWith("file://")) {
+                try {
+                  const base64 = await FileSystem.readAsStringAsync(img.uri, {
+                    encoding: "base64",
+                  });
+                  markerUri = `data:image/jpeg;base64,${base64}`;
+                } catch {
+                  markerUri = FALLBACK_MARKER_URI;
+                }
+              }
+
               return {
-                uri: `data:image/jpeg;base64,${base64}`,
-                latitude: Number(img.location!.latitude),
-                longitude: Number(img.location!.longitude),
+                markerUri,
+                sourceUri: img.uri,
+                latitude,
+                longitude,
                 city: img.city,
                 country: img.country,
               };
             }),
         );
+
+        const coords = settled
+          .filter(
+            (r): r is PromiseFulfilledResult<any> =>
+              r.status === "fulfilled" && !!r.value
+          )
+          .map((r) => r.value);
         /* 2026.04.15 동일 좌표 배열을 반복 설정하지 않도록 이전 상태와 비교 후에만 setState 하도록 수정 by June */
         setCoordinates((prev) => {
           const next = coords.filter(Boolean);
@@ -222,7 +258,7 @@ export default function MapView({ images }: Props) {
           // 2026-03-18 custom marker HTML by yen
             const iconHtml = '<div class="custom-marker">' +
               '<div class="photo-frame">' +
-                '<img src="' + c.uri + '">' +
+                '<img src="' + c.markerUri + '">' +
               '</div>' +
               '<div class="connector-line"></div>' +
               '<div class="target-container">' +
@@ -249,7 +285,9 @@ export default function MapView({ images }: Props) {
                 // Send message to React Native
                 window.ReactNativeWebView.postMessage(JSON.stringify({
                   type: 'marker_click',
-                  city: c.city
+                  sourceUri: c.sourceUri,
+                  city: c.city,
+                  country: c.country
                 }));
               });
           });
@@ -270,10 +308,32 @@ export default function MapView({ images }: Props) {
       const data = JSON.parse(event.nativeEvent.data);
       if (data.type === "marker_click") {
         amplitude.track("Location_Clicked", {
-          uri: data.uri,
+          uri: data.sourceUri,
           city: data.city,
           country: data.country,
         });
+
+        setDetailPlace([data.city, data.country].filter(Boolean).join(", "));
+        setDetailVisible(true);
+        setDetailLoading(true);
+        setDetailUri(null);
+
+        void (async () => {
+          try {
+            const sourceUri = String(data.sourceUri ?? "");
+            if (sourceUri.startsWith("ph://")) {
+              const assetId = sourceUri.replace("ph://", "");
+              const info = await MediaLibrary.getAssetInfoAsync(assetId);
+              setDetailUri(info.localUri ?? info.uri ?? sourceUri);
+            } else {
+              setDetailUri(sourceUri);
+            }
+          } catch {
+            setDetailUri(String(data.sourceUri ?? ""));
+          } finally {
+            setDetailLoading(false);
+          }
+        })();
       }
     } catch (e) {
       console.error("WebView message parse error", e);
@@ -324,6 +384,28 @@ export default function MapView({ images }: Props) {
               </Text>
             </TouchableOpacity>
           </View>
+
+          {/* 2026.05.12 지도 모달 위에 상세를 같은 레이어로 오버레이해 즉시 표출/복귀 동작을 안정화 by June */}
+          {detailVisible ? (
+            <View style={styles.detailContainer}>
+              <TouchableOpacity
+                onPress={() => setDetailVisible(false)}
+                style={styles.detailCloseButton}
+              >
+                <Text style={styles.detailCloseText}>X</Text>
+              </TouchableOpacity>
+
+              {detailLoading ? (
+                <ActivityIndicator size="large" color="#fff" />
+              ) : detailUri ? (
+                <Image source={{ uri: detailUri }} style={styles.detailImage} resizeMode="contain" />
+              ) : (
+                <Text style={styles.detailFallbackText}>Unable to load image</Text>
+              )}
+
+              {detailPlace ? <Text style={styles.detailMetaText}>{detailPlace}</Text> : null}
+            </View>
+          ) : null}
         </View>
       </Modal>
     </View>
@@ -359,5 +441,44 @@ const styles = StyleSheet.create({
     shadowOpacity: 0.10,
     shadowRadius: 16,
     shadowOffset: { width: 0, height: 8 },
+  },
+  detailContainer: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: "#000",
+    alignItems: "center",
+    justifyContent: "center",
+    zIndex: 20,
+  },
+  detailImage: {
+    width: "100%",
+    height: "100%",
+  },
+  detailCloseButton: {
+    position: "absolute",
+    top: "6%",
+    right: "6%",
+    zIndex: 10,
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    backgroundColor: "rgba(255,255,255,0.2)",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  detailCloseText: {
+    color: "#fff",
+    fontSize: 18,
+    fontWeight: "700",
+  },
+  detailFallbackText: {
+    color: "#fff",
+    fontSize: 16,
+  },
+  detailMetaText: {
+    position: "absolute",
+    bottom: "6%",
+    color: "#fff",
+    fontSize: 16,
+    fontWeight: "600",
   },
 });

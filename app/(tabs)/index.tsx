@@ -142,13 +142,13 @@ export default function HomeScreen() {
 
   /* 2026.04.15 DB 동기화 작업의 중복 실행을 막아 기존 로딩/필터 플로우에 성능 영향을 최소화하기 위해 추가 by June */
   const dbSyncInFlightRef = useRef(false);
-  /* 2026.05.06 썸네일 선노출 이후 위치 팔로업 작업의 중복 실행을 막기 위해 in-flight ref를 추가 by Codex */
+  /* 2026.05.06 썸네일 선노출 이후 위치 팔로업 작업의 중복 실행을 막기 위해 in-flight ref를 추가 by June */
   /* 2026.05.06 기본 화면 위치 팔로업이 겹쳐 돌며 state 갱신 순서가 꼬이지 않도록 단일 실행 가드를 두기 위해 추가 by June */
   const locationFollowUpInFlightRef = useRef(false);
-  /* 2026.05.06 동일 목록에 대한 위치 팔로업 반복 실행을 줄이기 위해 최근 처리 시그니처를 저장하는 ref를 추가 by Codex */
+  /* 2026.05.06 동일 목록에 대한 위치 팔로업 반복 실행을 줄이기 위해 최근 처리 시그니처를 저장하는 ref를 추가 by June */
   /* 2026.05.06 동일 후보 목록에 대한 위치 팔로업 재실행을 건너뛰어 불필요한 OS 메타 조회/지오코딩 반복을 줄이기 위해 추가 by June */
   const locationFollowUpSignatureRef = useRef<string>("");
-  /* 2026.05.06 사용자가 선택한 사진의 우선 위치 로딩 중복 실행을 막기 위해 URI 기준 in-flight 집합을 추가 by Codex */
+  /* 2026.05.06 사용자가 선택한 사진의 우선 위치 로딩 중복 실행을 막기 위해 URI 기준 in-flight 집합을 추가 by June */
   /* 2026.05.06 사용자가 연속 탭/스와이프할 때 같은 URI 우선 로딩 중복 요청을 막아 체감 지연과 배터리 소모를 줄이기 위해 추가 by June */
   const priorityLocationInFlightRef = useRef<Set<string>>(new Set());
   /* 2026.04.15 iOS ph:// URI를 localUri로 변환한 결과를 재사용해 반복 조회 비용과 이미지 로더 충돌 노출을 줄이기 위해 캐시 추가 by June */
@@ -904,12 +904,12 @@ export default function HomeScreen() {
     return hasLocationFilter;
   };
 
-  /* 2026.05.06 좌표 포맷 키 생성을 공통화해 geocode 캐시 hit율을 안정적으로 유지하기 위해 헬퍼를 추가 by Codex */
+  /* 2026.05.06 좌표 포맷 키 생성을 공통화해 geocode 캐시 hit율을 안정적으로 유지하기 위해 헬퍼를 추가 by June */
   /* 2026.05.06 우선 로딩/배치 로딩 모두 동일 좌표 키 규칙을 쓰게 해 geocode 캐시 hit 일관성을 유지하기 위해 공통화 by June */
   const toGeoKey = (latitude: number, longitude: number, precision = 2) =>
     `${latitude.toFixed(precision)},${longitude.toFixed(precision)}`;
 
-  /* 2026.05.06 사용자가 탭/스와이프로 선택한 단일 사진은 즉시 위치를 우선 보강해 체감 지연을 줄이기 위해 추가 by Codex */
+  /* 2026.05.06 사용자가 탭/스와이프로 선택한 단일 사진은 즉시 위치를 우선 보강해 체감 지연을 줄이기 위해 추가 by June */
   /* 2026.05.06 선택된 사진은 백그라운드 순서와 무관하게 즉시 위치를 보강해 상세 진입 직후 위치 공백 시간을 줄이기 위해 추가 by June */
   const prioritizePhotoLocation = useCallback(async (photo: Photo | undefined) => {
     if (!photo?.uri) return;
@@ -1021,7 +1021,7 @@ export default function HomeScreen() {
     }
   }, []);
 
-  /* 2026.05.06 초기 썸네일 선노출 후 위치(좌표→도시/국가)를 백그라운드에서 보강해 위치 누락 체감을 줄이기 위해 팔로업 함수를 추가 by Codex */
+  /* 2026.05.06 초기 썸네일 선노출 후 위치(좌표→도시/국가)를 백그라운드에서 보강해 위치 누락 체감을 줄이기 위해 팔로업 함수를 추가 by June */
   /* 2026.05.06 초기 썸네일 노출 후 화면 상단 가시 범위 후보를 점진 보강해 썸네일 속도는 유지하면서 위치 누락을 줄이기 위해 추가 by June */
   const followUpVisibleLocations = useCallback(async () => {
     if (locationFollowUpInFlightRef.current) return;
@@ -1203,7 +1203,7 @@ export default function HomeScreen() {
     };
   }, [displayUriMap, photos, resolveDisplayUri]);
 
-  /* 2026.05.06 위치 필터 미사용 기본 화면에서도 위치 정보가 지연 보강되도록 목록 변경 후 백그라운드 팔로업을 수행하기 위해 추가 by Codex */
+  /* 2026.05.06 위치 필터 미사용 기본 화면에서도 위치 정보가 지연 보강되도록 목록 변경 후 백그라운드 팔로업을 수행하기 위해 추가 by June */
   useEffect(() => {
     const hasLocationFilter = filter.countries.length > 0 || filter.cities.length > 0;
     if (hasLocationFilter) return;
@@ -2383,7 +2383,7 @@ export default function HomeScreen() {
           setViewerVisible(true);
           /* 2026.04.22 상세 보기 진입 시 선택 사진만 고해상도 URI를 비동기 보강해 리스트 전체 메모리 사용 없이 상세 품질을 확보하기 위해 추가 by June */
           void resolveViewerDetailUri(item.uri);
-          /* 2026.05.06 사용자가 선택한 사진의 위치정보는 즉시 우선 보강해 상세 진입 직후 공백 시간을 줄이기 위해 추가 by Codex */
+          /* 2026.05.06 사용자가 선택한 사진의 위치정보는 즉시 우선 보강해 상세 진입 직후 공백 시간을 줄이기 위해 추가 by June */
           void prioritizePhotoLocation(item);
           /* 2026.04.22 좌우 스와이프 첫 체감을 개선하기 위해 인접 1장의 URI도 선행 보강하되 범위를 최소화해 메모리 피크를 제한 by June */
           const next = photosRef.current[index + 1];
@@ -2834,7 +2834,7 @@ export default function HomeScreen() {
               dwell_ms,
             });
           }
-          /* 2026.05.06 뷰어 스와이프 시 새로 선택된 사진도 우선 위치 보강 대상으로 즉시 요청하도록 추가 by Codex */
+          /* 2026.05.06 뷰어 스와이프 시 새로 선택된 사진도 우선 위치 보강 대상으로 즉시 요청하도록 추가 by June */
           void prioritizePhotoLocation(photosRef.current[i]);
         }}
         images={viewerImages}

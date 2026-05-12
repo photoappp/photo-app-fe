@@ -1,20 +1,35 @@
-import { DarkTheme, DefaultTheme } from '@react-navigation/native';
 import { useFonts } from 'expo-font';
-import { Stack, router } from 'expo-router';
+import { Stack } from 'expo-router';
+import * as SplashScreen from 'expo-splash-screen';
 import { StatusBar } from 'expo-status-bar';
+import { useEffect } from 'react';
 import 'react-native-reanimated';
 
-import { useColorScheme } from '@/hooks/useColorScheme';
-import { ThemeProvider } from '@/components/context/ThemeContext';
 import { LanguageProvider } from '@/components/context/LanguageContext';
-import { UserDataProvider } from '@/components/context/UserDataContext';
 import { SlideshowTimeProvider } from '@/components/context/SlideshowTimeContext';
+import { ThemeProvider } from '@/components/context/ThemeContext';
+import { UserDataProvider } from '@/components/context/UserDataContext';
+import { useColorScheme } from '@/hooks/useColorScheme';
+
+/* 2026.05.12 스플래시가 즉시 사라지지 않도록 자동 숨김을 비활성화 by June */
+void SplashScreen.preventAutoHideAsync();
 
 export default function RootLayout() {
   const colorScheme = useColorScheme();
   const [loaded] = useFonts({
     SpaceMono: require('../assets/fonts/SpaceMono-Regular.ttf'),
   });
+
+  useEffect(() => {
+    if (!loaded) return;
+
+    /* 2026.05.12 앱 시작 시 스플래시를 1.5초 유지 후 숨기도록 지연 처리 by June */
+    const timer = setTimeout(() => {
+      void SplashScreen.hideAsync();
+    }, 1500);
+
+    return () => clearTimeout(timer);
+  }, [loaded]);
 
   if (!loaded) {
     // Async font loading only occurs in development.
