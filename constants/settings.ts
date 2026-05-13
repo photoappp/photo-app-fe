@@ -114,6 +114,7 @@ export const OPEN_SOURCE_ITEMS = [
   { id: "35", title: "react-native-worklets", value: "0.5.1" },
 ];
 
+// 2026-05-12 add more apps by yen
 export const APPS_LIST = [
   {
     name: "Sky Peacemaker - Finger Force",
