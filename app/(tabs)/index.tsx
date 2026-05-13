@@ -684,13 +684,27 @@ export default function HomeScreen() {
     let dbCacheHits = 0;
 
     for (const img of images) {
-      if (!img.location) {
+      // 2026-05-12: location이 비어 있으면 ph:// URI로 좌표를 보강해 위치 필터 적용 시 모든 사진이 사라지는 버그 수정 by yen
+      let imgLocation = img.location;
+      if (!imgLocation && typeof img.uri === "string" && img.uri.startsWith("ph://")) {
+        try {
+          const info = await MediaLibrary.getAssetInfoAsync(img.uri.replace("ph://", ""));
+          if (info.location) {
+            const lat0 = Number(info.location.latitude);
+            const lon0 = Number(info.location.longitude);
+            if (Number.isFinite(lat0) && Number.isFinite(lon0)) {
+              imgLocation = { latitude: lat0, longitude: lon0 };
+            }
+          }
+        } catch {}
+      }
+      if (!imgLocation) {
         updated.push({ ...img, country: null, city: null });
         continue;
       }
 
-      const lat = Number(img.location.latitude);
-      const lon = Number(img.location.longitude);
+      const lat = Number(imgLocation.latitude);
+      const lon = Number(imgLocation.longitude);
       const key = `${lat.toFixed(precision)},${lon.toFixed(precision)}`;
       let place = cache.get(key);
       if (place) {
@@ -858,16 +872,25 @@ export default function HomeScreen() {
   /** 위치 필터 */
   const applyLocationFilter = (items: Photo[], currentFilter: FilterState) => {
     const { countries, cities } = currentFilter;
-  
+
     if (countries.length === 0 && cities.length === 0) {
       return items;
     }
-  
+
+    // 2026-05-12: '모든 위치' 선택 시 사진이 모두 사라지는 버그 수정 - "All" 센티널은 해당 축에 위치값이 있는 사진을 의미하도록 처리 by yen
     if (cities.length > 0) {
-      return items.filter((photo) => cities.includes(photo.city ?? ""));
+      const allowAnyCity = cities.includes("All");
+      return items.filter((photo) => {
+        const city = photo.city ?? "";
+        return allowAnyCity ? city !== "" : cities.includes(city);
+      });
     }
-  
-    return items.filter((photo) => countries.includes(photo.country ?? ""));
+
+    const allowAnyCountry = countries.includes("All");
+    return items.filter((photo) => {
+      const country = photo.country ?? "";
+      return allowAnyCountry ? country !== "" : countries.includes(country);
+    });
   };
 
   /** geocoding 필요 여부 판별 */
@@ -2039,10 +2062,15 @@ export default function HomeScreen() {
           if (countries.length === 0 && cities.length === 0) {
             return true;
           }
+          // 2026-05-12: '모든 위치' 선택 시 사진이 모두 사라지는 버그 수정 - "All" 센티널은 해당 축에 위치값이 있는 사진을 의미하도록 처리 by yen
           if (cities.length > 0) {
-            return cities.includes(photo.city ?? "");
+            const city = photo.city ?? "";
+            return cities.includes("All") ? city !== "" : cities.includes(city);
           }
-          return countries.includes(photo.country ?? "");
+          const country = photo.country ?? "";
+          return countries.includes("All")
+            ? country !== ""
+            : countries.includes(country);
         });
         // 7) 상태 업데이트
         setPhotos((prev) => {
@@ -2167,10 +2195,15 @@ export default function HomeScreen() {
           if (countries.length === 0 && cities.length === 0) {
             return true;
           }
+          // 2026-05-12: '모든 위치' 선택 시 사진이 모두 사라지는 버그 수정 - "All" 센티널은 해당 축에 위치값이 있는 사진을 의미하도록 처리 by yen
           if (cities.length > 0) {
-            return cities.includes(photo.city ?? "");
+            const city = photo.city ?? "";
+            return cities.includes("All") ? city !== "" : cities.includes(city);
           }
-          return countries.includes(photo.country ?? "");
+          const country = photo.country ?? "";
+          return countries.includes("All")
+            ? country !== ""
+            : countries.includes(country);
         });
   
         collected = [...collected, ...filteredWithLocation];
