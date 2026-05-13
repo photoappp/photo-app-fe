@@ -172,39 +172,32 @@ const LocationSelector = forwardRef<LocationSelectorHandle, Props>(
     };
 
     const getButtonTitle = () => {
+      // 2026-05-12: 위치 라벨을 'All Locations' 하나로 통일하고 한쪽만 전체인 경우 'All Countries'/'All Cities'로 표기하도록 변경 by yen
+      const countryIsAll =
+        tempCountries.length === 0 || tempCountries.includes("All");
+      const cityIsAll = tempCities.length === 0 || tempCities.includes("All");
 
-			if (tempCountries.length == 0 && tempCities.length == 0) {
-					return t("all");
-				}
-//      if (tempCountries.length == 0 && tempCities.length == 0) return "None";
+      if (countryIsAll && cityIsAll) {
+        return t("allLocations");
+      }
 
-				const getTranslatedCountry = (item: string) => {
-					if (item === "All") return t("all");
+      const getTranslatedCountry = (item: string) =>
+        locationMap[item]?.country[language] ??
+        locationMap[item]?.country.en ??
+        item;
 
-					return (
-						locationMap[item]?.country[language] ??
-					locationMap[item]?.country.en ??
-					item
-				);
-			};
-			
-      const formatLabel = (items: string[]) => {
-        if (!items.includes("All")) {
-          return items.length === 1
-						? getTranslatedCountry(items[0])
-						: `${getTranslatedCountry(items[1])}+${items.length - 1}`;
-        }
-					return t("all");
-//        return items[0];
+      const formatLabel = (items: string[], allLabel: string) => {
+        if (items.length === 0 || items.includes("All")) return allLabel;
+        return items.length === 1
+          ? getTranslatedCountry(items[0])
+          : `${getTranslatedCountry(items[1])}+${items.length - 1}`;
       };
 
-      const countryLabel = tempCountries.length
-        ? formatLabel([...tempCountries].sort())
-        : "";
-
-      const cityLabel = tempCities.length
-        ? formatLabel([...tempCities].sort())
-        : "";
+      const countryLabel = formatLabel(
+        [...tempCountries].sort(),
+        t("allCountries")
+      );
+      const cityLabel = formatLabel([...tempCities].sort(), t("allCities"));
 
       return [countryLabel, cityLabel].filter(Boolean).join(", ");
     };
@@ -218,8 +211,8 @@ const LocationSelector = forwardRef<LocationSelectorHandle, Props>(
       onSelectionChange?.({
         countries: [],
         cities: [],
-					
-        locationLabel: t("all"),
+        // 2026-05-12: 리셋 시 라벨도 통일된 'All Locations'로 표시되도록 변경 by yen
+        locationLabel: t("allLocations"),
       });
     };
     // 2026-03-04 to reset location selection by yen

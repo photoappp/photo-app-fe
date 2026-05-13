@@ -573,8 +573,8 @@ export default function DateTimeFilter({
           >
 	            <View style={styles.filterValueArea}>
 	              <Text style={styles.filterValue} numberOfLines={1}>
-	                {/* 2026.04.22 선택 위치가 없을 때 현재 언어의 기본 라벨을 표시하도록 fallback을 적용 by June */}
-	                {locationLabel || t("anywhere", "Anywhere")}
+	                {/* 2026-05-12: 'Anywhere' 표기를 폐기하고 'All Locations' 하나로 통일 by yen */}
+	                {locationLabel || t("allLocations")}
 	              </Text>
               {/* 2026-02-21 location reset function trigger added by yen*/}
               <TouchableOpacity
