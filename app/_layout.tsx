@@ -3,6 +3,7 @@ import { Stack } from 'expo-router';
 import * as SplashScreen from 'expo-splash-screen';
 import { StatusBar } from 'expo-status-bar';
 import { useEffect } from 'react';
+import { AppState, Platform } from 'react-native';
 import 'react-native-reanimated';
 
 import { LanguageProvider } from '@/components/context/LanguageContext';
@@ -30,6 +31,39 @@ export default function RootLayout() {
 
     return () => clearTimeout(timer);
   }, [loaded]);
+
+  useEffect(() => {
+    if (Platform.OS !== "android") return;
+
+    let isMounted = true;
+    let NavigationBarModule: any = null;
+
+    const applyImmersive = async () => {
+      try {
+        if (!NavigationBarModule) {
+          NavigationBarModule = require("expo-navigation-bar");
+        }
+        await NavigationBarModule.setBehaviorAsync("overlay-swipe");
+        await NavigationBarModule.setVisibilityAsync("hidden");
+      } catch {
+        // expo-navigation-bar 미설치/미지원 환경에서는 무시
+      }
+    };
+
+    void applyImmersive();
+
+    const sub = AppState.addEventListener("change", (state) => {
+      if (!isMounted) return;
+      if (state === "active") {
+        void applyImmersive();
+      }
+    });
+
+    return () => {
+      isMounted = false;
+      sub.remove();
+    };
+  }, []);
 
   if (!loaded) {
     // Async font loading only occurs in development.
