@@ -52,7 +52,6 @@ export const CREDITS_ITEMS = [
     title: "Programmers",
     value: "Yen Han, June Chun",
     align: "right",
-    multiline: true,
   },
   {
     id: "designer",
@@ -115,6 +114,7 @@ export const OPEN_SOURCE_ITEMS = [
   { id: "35", title: "react-native-worklets", value: "0.5.1" },
 ];
 
+// 2026-05-12 add more apps by yen
 export const APPS_LIST = [
   {
     name: "Sky Peacemaker - Finger Force",
@@ -142,14 +142,29 @@ export const APPS_LIST = [
     url: "https://wisdomqclock.onelink.me/SVr2/b7gs4og1",
   },
   {
-    name: "Find Four",
-    image: require("@/assets/images/find_four.png"),
-    url: "https://findfour.onelink.me/vurA/0tfteiuf",
-  },
-  {
     name: "Dual Flashlight",
     image: require("@/assets/images/dual_flashlight.png"),
     url: "https://dualflashlight.onelink.me/7gkq/qpbc8y65",
+  },
+  {
+    name: "Histree",
+    image: require("@/assets/images/histree.png"),
+    url: "https://histree.onelink.me/c9TM/bfbeczqo",
+  },
+  {
+    name: "Scanatory",
+    image: require("@/assets/images/scanatory.png"),
+    url: "https://scanatory.onelink.me/zzpK/2tr21jtp",
+  },
+  {
+    name: "Play Memo",
+    image: require("@/assets/images/play_memo.png"),
+    url: "https://playmemo.onelink.me/LdOZ/6bbfoohf",
+  },
+  {
+    name: "Find Four",
+    image: require("@/assets/images/find_four.png"),
+    url: "https://findfour.onelink.me/vurA/0tfteiuf",
   },
   {
     name: "decibella",

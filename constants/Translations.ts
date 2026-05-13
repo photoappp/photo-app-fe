@@ -27,6 +27,9 @@ export const TRANSLATIONS = {
 		all_times: 'All Dates', // 2026.03.27 by June - 1970년 1월 1일부터 오늘까지를 칭하는 개념이 All Times였는데 All Dates 로 바뀜.
 		/** 2026.03.27 All Times, All Dates 관련 => 영어 및 다른 언어들에도 모두 변경 적용함 by June */
 		allLocations: 'All Locations',
+		// 2026-05-12: 위치 라벨을 'All Locations'로 통일하고 한쪽 축만 전체일 때 'All Countries'/'All Cities'로 표기하기 위해 추가 by yen
+		allCountries: 'All Countries',
+		allCities: 'All Cities',
 		play: 'Play',
 		map: 'Map',
 		country: 'Country',
@@ -45,7 +48,6 @@ export const TRANSLATIONS = {
 			selectLocation: "Select Location",
 			all: "All",
 			/* 2026.04.22 홈/뷰어 공용 UI 문구를 다국어 처리하기 위해 번역 키를 확장 by June */
-			anywhere: "Anywhere",
 			noPhotosFound: "No photos found",
 			tryExpandingFilters: "Try expanding the filters.",
 			noDateInfo: "No date info",
@@ -103,6 +105,9 @@ export const TRANSLATIONS = {
 		all_day: '모든 시간',
 		all_times: '모든 날짜',
 		allLocations: '모든 위치',
+		// 2026-05-12: 위치 라벨을 '모든 위치'로 통일하고 한쪽 축만 전체일 때 '모든 국가'/'모든 도시'로 표기하기 위해 추가 by yen
+		allCountries: '모든 국가',
+		allCities: '모든 도시',
 		play: '플레이',
 		map: '지도',
 		country: '국가',
@@ -146,6 +151,9 @@ export const TRANSLATIONS = {
 		all_day: 'すべての時間',
 		all_times: 'すべての日付',
 		allLocations: 'すべての場所',
+		// 2026-05-12: 위치 라벨을 'すべての場所'로 통일하고 한쪽 축만 전체일 때 'すべての国'/'すべての都市'로 표기하기 위해 추가 by yen
+		allCountries: 'すべての国',
+		allCities: 'すべての都市',
 		play: 'プレイ',
 		map: '地図',
 		country: '国',
@@ -189,6 +197,9 @@ export const TRANSLATIONS = {
 		all_day: '所有時間',
 		all_times: '所有日期',
 		allLocations: '所有位置',
+		// 2026-05-12: 위치 라벨을 '所有位置'로 통일하고 한쪽 축만 전체일 때 '所有國家'/'所有城市'로 표기하기 위해 추가 by yen
+		allCountries: '所有國家',
+		allCities: '所有城市',
 		play: '播放',
 		map: '地圖',
 		country: '國家',
@@ -232,6 +243,9 @@ export const TRANSLATIONS = {
 		all_day: '所有时间',
 		all_times: '所有日期',
 		allLocations: '所有位置',
+		// 2026-05-12: 위치 라벨을 '所有位置'로 통일하고 한쪽 축만 전체일 때 '所有国家'/'所有城市'로 표기하기 위해 추가 by yen
+		allCountries: '所有国家',
+		allCities: '所有城市',
 		play: '播放',
 		map: '地图',
 		country: '国家',
@@ -275,6 +289,9 @@ export const TRANSLATIONS = {
 		all_day: 'Toutes les heures',
 		all_times: 'Toutes les dates',
 		allLocations: 'Tous les lieux',
+		// 2026-05-12: 위치 라벨을 'Tous les lieux'로 통일하고 한쪽 축만 전체일 때 'Tous les pays'/'Toutes les villes'로 표기하기 위해 추가 by yen
+		allCountries: 'Tous les pays',
+		allCities: 'Toutes les villes',
 		play: 'Lecture',
 		map: 'Carte',
 		country: 'Pays',
@@ -318,6 +335,9 @@ export const TRANSLATIONS = {
 		all_day: 'Todas las horas',
 		all_times: 'Todas las fechas',
 		allLocations: 'Todas las ubicaciones',
+		// 2026-05-12: 위치 라벨을 'Todas las ubicaciones'로 통일하고 한쪽 축만 전체일 때 'Todos los países'/'Todas las ciudades'로 표기하기 위해 추가 by yen
+		allCountries: 'Todos los países',
+		allCities: 'Todas las ciudades',
 		play: 'Reproducir',
 		map: 'Mapa',
 		country: 'País',

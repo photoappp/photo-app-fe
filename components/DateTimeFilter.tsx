@@ -332,7 +332,7 @@ export default function DateTimeFilter({
   const applyDatePreset = async (key: DatePreset["key"]) => {
     const preset = DATE_PRESETS.find((p) => p.key === key);
     if (!preset) return;
-  
+
     const now = new Date();
     let { start, end } = preset.getRange(now);
 
@@ -351,7 +351,7 @@ export default function DateTimeFilter({
           start = new Date(
             oldestDate.getFullYear(),
             oldestDate.getMonth(),
-            oldestDate.getDate()
+            oldestDate.getDate(),
           );
         }
       } catch (error) {
@@ -366,7 +366,7 @@ export default function DateTimeFilter({
       start_ms: start.getTime(),
       end_ms: end.getTime(),
     });
-  
+
     bypassDebounceRef.current = true;
     setDateStart(start);
     setDateEnd(end);
@@ -571,11 +571,12 @@ export default function DateTimeFilter({
             activeOpacity={0.8}
             style={styles.filterCard}
           >
-	            <View style={styles.filterValueArea}>
-	              <Text style={styles.filterValue} numberOfLines={1}>
-	                {/* 2026.04.22 선택 위치가 없을 때 현재 언어의 기본 라벨을 표시하도록 fallback을 적용 by June */}
-	                {locationLabel || t("anywhere", "Anywhere")}
-	              </Text>
+            <View style={styles.filterValueArea}>
+              <Text style={styles.filterValue} numberOfLines={1}>
+                {/* 2026.04.22 선택 위치가 없을 때 현재 언어의 기본 라벨을 표시하도록 fallback을 적용 by June */}
+                {/* 2026-05-12: 'Anywhere' 표기를 폐기하고 'All Locations' 하나로 통일 by yen */}
+                {locationLabel || t("allLocations")}
+              </Text>
               {/* 2026-02-21 location reset function trigger added by yen*/}
               <TouchableOpacity
                 onPress={() => {
@@ -597,10 +598,9 @@ export default function DateTimeFilter({
         transparent
         animationType="slide"
         onRequestClose={() => {
-          flushPendingChange(); 
-          setDateModalVisible(false)
-        }
-      }
+          flushPendingChange();
+          setDateModalVisible(false);
+        }}
       >
         <Pressable
           style={styles.modalBackdrop}
@@ -612,16 +612,16 @@ export default function DateTimeFilter({
           <View
             style={[
               styles.sheet,
-              { paddingBottom: 12 + Math.max(insets.bottom, Platform.OS === "android" ? 16 : 0) },
+              {
+                paddingBottom:
+                  12 +
+                  Math.max(insets.bottom, Platform.OS === "android" ? 16 : 0),
+              },
             ]}
           >
-            <ScrollView
-              bounces={false}
-              showsVerticalScrollIndicator={false}
-            >
+            <ScrollView bounces={false} showsVerticalScrollIndicator={false}>
               {/* 헤더 */}
               <View style={styles.sheetHeader}>
-                
                 <Text style={styles.sheetTitle}>{t("selectDate")}</Text>
                 <View style={{ flexDirection: "row" }}>
                   <TouchableOpacity
@@ -667,7 +667,6 @@ export default function DateTimeFilter({
                       end={{ x: 1, y: 0 }}
                       style={styles.rangeBtnGradient}
                     >
-                      
                       <Text style={styles.presetTxt}>{t(p.key, p.label)}</Text>
                     </LinearGradient>
                   </TouchableOpacity>
@@ -696,17 +695,17 @@ export default function DateTimeFilter({
           <View
             style={[
               styles.sheet,
-              { paddingBottom: 12 + Math.max(insets.bottom, Platform.OS === "android" ? 16 : 0) },
+              {
+                paddingBottom:
+                  12 +
+                  Math.max(insets.bottom, Platform.OS === "android" ? 16 : 0),
+              },
             ]}
           >
-            <ScrollView
-              bounces={false}
-              showsVerticalScrollIndicator={false}
-            >
+            <ScrollView bounces={false} showsVerticalScrollIndicator={false}>
               {/* 헤더 */}
               <View style={styles.sheetHeader}>
-              
-              <Text style={styles.sheetTitle}>{t("selectTime")}</Text>
+                <Text style={styles.sheetTitle}>{t("selectTime")}</Text>
                 <View style={{ flexDirection: "row" }}>
                   <TouchableOpacity
                     onPress={() => {
@@ -744,7 +743,13 @@ export default function DateTimeFilter({
                   <DateTimePicker
                     mode="time"
                     value={
-                      new Date(2000, 0, 1, Math.floor(timeEnd / 60), timeEnd % 60)
+                      new Date(
+                        2000,
+                        0,
+                        1,
+                        Math.floor(timeEnd / 60),
+                        timeEnd % 60,
+                      )
                     }
                     onChange={(d) =>
                       setTimeHM("end", d.getHours(), d.getMinutes())
@@ -802,8 +807,9 @@ export default function DateTimeFilter({
                   end={{ x: 1, y: 0 }}
                   style={styles.rangeBtnGradient}
                 >
-                  
-                  <Text style={styles.presetTxt}>{t("all_day", "All Times")}</Text>
+                  <Text style={styles.presetTxt}>
+                    {t("all_day", "All Times")}
+                  </Text>
                 </LinearGradient>
               </TouchableOpacity>
             </ScrollView>
