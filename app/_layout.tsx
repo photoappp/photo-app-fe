@@ -5,6 +5,7 @@ import { StatusBar } from 'expo-status-bar';
 import { useEffect } from 'react';
 import { AppState, Platform } from 'react-native';
 import 'react-native-reanimated';
+import mobileAds from "react-native-google-mobile-ads";
 
 import { LanguageProvider } from '@/components/context/LanguageContext';
 import { SlideshowTimeProvider } from '@/components/context/SlideshowTimeContext';
@@ -31,6 +32,12 @@ export default function RootLayout() {
 
     return () => clearTimeout(timer);
   }, [loaded]);
+
+  useEffect(() => {
+    void mobileAds().initialize().catch(() => {
+      // no-op
+    });
+  }, []);
 
   useEffect(() => {
     if (Platform.OS !== "android") return;

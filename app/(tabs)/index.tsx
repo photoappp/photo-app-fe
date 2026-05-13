@@ -1,3 +1,4 @@
+import BottomBannerAd from "@/components/ads/BottomBannerAd";
 import DateTimeFilter from "@/components/DateTimeFilter";
 import PhotoDetailViewer from "@/components/PhotoDetailViewer";
 import ShowOnMap from "@/components/ShowOnMap";
@@ -27,6 +28,7 @@ import {
   useColorScheme,
   View
 } from "react-native";
+import { BannerAdSize } from "react-native-google-mobile-ads";
 import { Edges, SafeAreaView } from 'react-native-safe-area-context';
 import Share from 'react-native-share';
 
@@ -2552,6 +2554,13 @@ export default function HomeScreen() {
     <SafeAreaView style={{ flex: 1 }} edges={safeAreaEdges}>
       <View style={{ flex: 1 }}>
         <View style={styles.topArea}>
+          {/* 2026.05.13 홈 상단(노치 아래) 배너 광고를 버튼 영역 위에 배치 by June */}
+          <View style={styles.topBannerWrap}>
+            <BottomBannerAd
+              size={BannerAdSize.ANCHORED_ADAPTIVE_BANNER}
+              withBottomInset={false}
+            />
+          </View>
 
           {/* 상단버튼영역 수정 2026.03.18 by June START */}
           <View style={styles.topButtonsRow}>
@@ -2840,7 +2849,7 @@ const styles = StyleSheet.create({
     flex: 1,
     paddingHorizontal: 20,
     ...Platform.select({
-      // ios: { paddingTop: 20 },
+      //ios: { paddingTop: 0 },
       android: { paddingTop: 50 },
     }),
   },
@@ -3132,6 +3141,10 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     marginBottom: 16,
     width: '100%',
+  },
+  topBannerWrap: {
+    width: "100%",
+    marginBottom: 10,
   },
   
   topLeftSpace: {
