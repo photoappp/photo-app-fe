@@ -1,22 +1,23 @@
 import { useLanguage } from "@/components/context/LanguageContext";
 import { TRANSLATIONS } from "@/constants/Translations";
+import PhotoDetailViewer from "@/components/PhotoDetailViewer";
 import * as amplitude from "@amplitude/analytics-react-native";
 import { useEffect, useMemo, useRef, useState } from "react";
 import IconMapPin from "@/assets/icons/ic_map_pin.svg";
 import {
   ActivityIndicator,
+  Alert,
   Dimensions,
-  Image,
   Modal,
+  Platform,
   StyleSheet,
   Text,
   TouchableOpacity,
   View,
 } from "react-native";
 import { WebView, type WebViewMessageEvent } from "react-native-webview";
-// 2026-03-18 get proper coordinates by yen
-import * as FileSystem from "expo-file-system/legacy";
 import * as MediaLibrary from "expo-media-library";
+import Share from "react-native-share";
 
 type Photo = {
   uri: string;
@@ -33,15 +34,22 @@ type Photo = {
 type Props = {
   //images: Image[];
   images: Photo[];
+  onOpenPhotoFromMap?: (payload: {
+    sourceUri: string;
+    city?: string;
+    country?: string;
+  }) => void;
 };
 
-export default function MapView({ images }: Props) {
+export default function MapView({ images, onOpenPhotoFromMap }: Props) {
   const { language } = useLanguage();
   const [visible, setVisible] = useState(false);
   const [detailVisible, setDetailVisible] = useState(false);
   const [detailUri, setDetailUri] = useState<string | null>(null);
   const [detailLoading, setDetailLoading] = useState(false);
   const [detailPlace, setDetailPlace] = useState<string>("");
+  const [detailTakenAt, setDetailTakenAt] = useState<number | null>(null);
+  const [detailSourceUri, setDetailSourceUri] = useState<string | null>(null);
   // 2026-03-18 get proper coordinates by yen
   const [coordinates, setCoordinates] = useState<any[]>([]); // store base64 coords
   const [loading, setLoading] = useState(true);
@@ -82,13 +90,19 @@ export default function MapView({ images }: Props) {
                 return null;
               }
 
+              const sourceUri = String(img.uri ?? "");
               let markerUri = FALLBACK_MARKER_URI;
-              if (typeof img.uri === "string" && img.uri.startsWith("file://")) {
+
+              if (sourceUri.startsWith("file://")) {
+                markerUri = sourceUri;
+              } else if (sourceUri.startsWith("ph://")) {
                 try {
-                  const base64 = await FileSystem.readAsStringAsync(img.uri, {
-                    encoding: "base64",
-                  });
-                  markerUri = `data:image/jpeg;base64,${base64}`;
+                  const assetId = sourceUri.replace("ph://", "");
+                  const info = await MediaLibrary.getAssetInfoAsync(assetId);
+                  const resolved = info.localUri ?? info.uri ?? "";
+                  if (typeof resolved === "string" && resolved.startsWith("file://")) {
+                    markerUri = resolved;
+                  }
                 } catch {
                   markerUri = FALLBACK_MARKER_URI;
                 }
@@ -96,11 +110,12 @@ export default function MapView({ images }: Props) {
 
               return {
                 markerUri,
-                sourceUri: img.uri,
+                sourceUri,
                 latitude,
                 longitude,
                 city: img.city,
                 country: img.country,
+                takenAt: img.takenAt ?? null,
               };
             }),
         );
@@ -287,7 +302,8 @@ export default function MapView({ images }: Props) {
                   type: 'marker_click',
                   sourceUri: c.sourceUri,
                   city: c.city,
-                  country: c.country
+                  country: c.country,
+                  takenAt: c.takenAt ?? null
                 }));
               });
           });
@@ -312,15 +328,20 @@ export default function MapView({ images }: Props) {
           city: data.city,
           country: data.country,
         });
-
+        const sourceUri = String(data.sourceUri ?? "");
         setDetailPlace([data.city, data.country].filter(Boolean).join(", "));
+        setDetailTakenAt(
+          typeof data.takenAt === "number" && Number.isFinite(data.takenAt)
+            ? data.takenAt
+            : null
+        );
+        setDetailSourceUri(sourceUri);
         setDetailVisible(true);
         setDetailLoading(true);
         setDetailUri(null);
 
         void (async () => {
           try {
-            const sourceUri = String(data.sourceUri ?? "");
             if (sourceUri.startsWith("ph://")) {
               const assetId = sourceUri.replace("ph://", "");
               const info = await MediaLibrary.getAssetInfoAsync(assetId);
@@ -329,15 +350,67 @@ export default function MapView({ images }: Props) {
               setDetailUri(sourceUri);
             }
           } catch {
-            setDetailUri(String(data.sourceUri ?? ""));
+            setDetailUri(sourceUri);
           } finally {
             setDetailLoading(false);
           }
         })();
+
+        /* 2026.05.12 지도 위 오버레이가 기본이므로 부모 위임 콜백은 보조 경로로만 유지 by June */
+        if (!sourceUri) {
+          onOpenPhotoFromMap?.({
+            sourceUri,
+            city: data.city,
+            country: data.country,
+          });
+        }
       }
     } catch (e) {
       console.error("WebView message parse error", e);
     }
+  };
+
+  const fmtDateTime = (ms: number | null) => {
+    if (!ms) return "";
+    const d = new Date(ms);
+    if (Number.isNaN(d.getTime())) return "";
+    const yyyy = d.getFullYear();
+    const MM = `${d.getMonth() + 1}`.padStart(2, "0");
+    const DD = `${d.getDate()}`.padStart(2, "0");
+    const hh = `${d.getHours()}`.padStart(2, "0");
+    const mm = `${d.getMinutes()}`.padStart(2, "0");
+    return `${yyyy}/${MM}/${DD} ${hh}:${mm}`;
+  };
+
+  const onPressShare = async () => {
+    if (!detailUri) return;
+    try {
+      await Share.open({
+        message: detailPlace ? `Check out this photo! ${detailPlace}` : "Check out this photo!",
+        url: Platform.OS === "android" ? `file://${detailUri}` : detailUri,
+        type: "image/jpeg",
+      });
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : "";
+      if (msg !== "User did not share") {
+        Alert.alert("Error", "Failed to share the photo.");
+      }
+    }
+  };
+
+  const onPressDelete = () => {
+    if (!detailSourceUri) return;
+    Alert.alert("Delete Photo", "Are you sure you want to delete this photo?", [
+      { text: "Cancel", style: "cancel" },
+      {
+        text: "Delete",
+        style: "destructive",
+        onPress: () => {
+          setCoordinates((prev) => prev.filter((c) => c.sourceUri !== detailSourceUri));
+          setDetailVisible(false);
+        },
+      },
+    ]);
   };
 
   return (
@@ -385,27 +458,22 @@ export default function MapView({ images }: Props) {
             </TouchableOpacity>
           </View>
 
-          {/* 2026.05.12 지도 모달 위에 상세를 같은 레이어로 오버레이해 즉시 표출/복귀 동작을 안정화 by June */}
-          {detailVisible ? (
-            <View style={styles.detailContainer}>
-              <TouchableOpacity
-                onPress={() => setDetailVisible(false)}
-                style={styles.detailCloseButton}
-              >
-                <Text style={styles.detailCloseText}>X</Text>
-              </TouchableOpacity>
-
-              {detailLoading ? (
-                <ActivityIndicator size="large" color="#fff" />
-              ) : detailUri ? (
-                <Image source={{ uri: detailUri }} style={styles.detailImage} resizeMode="contain" />
-              ) : (
-                <Text style={styles.detailFallbackText}>Unable to load image</Text>
-              )}
-
-              {detailPlace ? <Text style={styles.detailMetaText}>{detailPlace}</Text> : null}
+          {detailVisible && detailLoading ? (
+            <View style={styles.detailLoadingOverlay}>
+              <ActivityIndicator size="large" color="#fff" />
             </View>
           ) : null}
+          <PhotoDetailViewer
+            visible={detailVisible && !detailLoading && !!detailUri}
+            images={detailUri ? [{ uri: detailUri }] : []}
+            imageIndex={0}
+            onRequestClose={() => setDetailVisible(false)}
+            showPlayButton={false}
+            dateText={fmtDateTime(detailTakenAt)}
+            locationText={detailPlace}
+            onPressShare={onPressShare}
+            onPressDelete={onPressDelete}
+          />
         </View>
       </Modal>
     </View>
@@ -442,43 +510,11 @@ const styles = StyleSheet.create({
     shadowRadius: 16,
     shadowOffset: { width: 0, height: 8 },
   },
-  detailContainer: {
+  detailLoadingOverlay: {
     ...StyleSheet.absoluteFillObject,
-    backgroundColor: "#000",
-    alignItems: "center",
-    justifyContent: "center",
     zIndex: 20,
-  },
-  detailImage: {
-    width: "100%",
-    height: "100%",
-  },
-  detailCloseButton: {
-    position: "absolute",
-    top: "6%",
-    right: "6%",
-    zIndex: 10,
-    width: 44,
-    height: 44,
-    borderRadius: 22,
-    backgroundColor: "rgba(255,255,255,0.2)",
     alignItems: "center",
     justifyContent: "center",
-  },
-  detailCloseText: {
-    color: "#fff",
-    fontSize: 18,
-    fontWeight: "700",
-  },
-  detailFallbackText: {
-    color: "#fff",
-    fontSize: 16,
-  },
-  detailMetaText: {
-    position: "absolute",
-    bottom: "6%",
-    color: "#fff",
-    fontSize: 16,
-    fontWeight: "600",
+    backgroundColor: "rgba(0,0,0,0.85)",
   },
 });
