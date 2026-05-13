@@ -620,6 +620,7 @@ const styles = StyleSheet.create({
   appName: { fontSize: 16, textAlign: "center" },
 
   // 푸터 스타일
+  // 2026-05-12: 푸터를 60px 위로 올리기 위해 marginBottom 추가 by yen
   footer: {
     flexDirection: "row",
     justifyContent: "space-evenly",
@@ -629,6 +630,7 @@ const styles = StyleSheet.create({
     borderColor: "#ccc",
     alignItems: "center",
     backgroundColor: "#2c2c2e",
+    marginBottom: 60,
   },
 
   // 로고 스타일
