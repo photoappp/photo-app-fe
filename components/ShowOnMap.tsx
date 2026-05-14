@@ -1,19 +1,23 @@
 import { useLanguage } from "@/components/context/LanguageContext";
 import { TRANSLATIONS } from "@/constants/Translations";
+import PhotoDetailViewer from "@/components/PhotoDetailViewer";
 import * as amplitude from "@amplitude/analytics-react-native";
 import { useEffect, useMemo, useRef, useState } from "react";
 import IconMapPin from "@/assets/icons/ic_map_pin.svg";
 import {
+  ActivityIndicator,
+  Alert,
   Dimensions,
   Modal,
+  Platform,
   StyleSheet,
   Text,
   TouchableOpacity,
   View,
 } from "react-native";
-import { WebView } from "react-native-webview";
-// 2026-03-18 get proper coordinates by yen
-import * as FileSystem from "expo-file-system/legacy";
+import { WebView, type WebViewMessageEvent } from "react-native-webview";
+import * as MediaLibrary from "expo-media-library";
+import Share from "react-native-share";
 
 type Photo = {
   uri: string;
@@ -30,14 +34,31 @@ type Photo = {
 type Props = {
   //images: Image[];
   images: Photo[];
+  onOpenPhotoFromMap?: (payload: {
+    sourceUri: string;
+    city?: string;
+    country?: string;
+  }) => void;
 };
 
-export default function MapView({ images }: Props) {
+export default function MapView({ images, onOpenPhotoFromMap }: Props) {
   const { language } = useLanguage();
   const [visible, setVisible] = useState(false);
+  const [detailVisible, setDetailVisible] = useState(false);
+  const [detailUri, setDetailUri] = useState<string | null>(null);
+  const [detailLoading, setDetailLoading] = useState(false);
+  const [detailPlace, setDetailPlace] = useState<string>("");
+  const [detailTakenAt, setDetailTakenAt] = useState<number | null>(null);
+  const [detailSourceUri, setDetailSourceUri] = useState<string | null>(null);
   // 2026-03-18 get proper coordinates by yen
   const [coordinates, setCoordinates] = useState<any[]>([]); // store base64 coords
   const [loading, setLoading] = useState(true);
+  /* 2026.05.12 이미지 로드 실패 시에도 좌표 마커는 유지하기 위해 공통 placeholder 이미지를 정의 by June */
+  const FALLBACK_MARKER_URI =
+    "data:image/svg+xml;utf8," +
+    encodeURIComponent(
+      "<svg xmlns='http://www.w3.org/2000/svg' width='80' height='80'><rect width='100%' height='100%' rx='16' ry='16' fill='#EEF2FF'/><circle cx='40' cy='40' r='14' fill='#6366F1'/></svg>"
+    );
   /* 2026.04.15 동일 이미지 입력에서 좌표 재계산/재설정 루프를 막기 위해 마지막 처리 시그니처를 저장 by June */
   const lastImagesSigRef = useRef<string>("");
 
@@ -59,22 +80,52 @@ export default function MapView({ images }: Props) {
 
     const loadCoordinates = async () => {
       try {
-        const coords = await Promise.all(
+        const settled = await Promise.allSettled(
           images
             .filter((img) => img.location)
             .map(async (img) => {
-              const base64 = await FileSystem.readAsStringAsync(img.uri, {
-                encoding: "base64",
-              });
+              const latitude = Number(img.location!.latitude);
+              const longitude = Number(img.location!.longitude);
+              if (!Number.isFinite(latitude) || !Number.isFinite(longitude)) {
+                return null;
+              }
+
+              const sourceUri = String(img.uri ?? "");
+              let markerUri = FALLBACK_MARKER_URI;
+
+              if (sourceUri.startsWith("file://")) {
+                markerUri = sourceUri;
+              } else if (sourceUri.startsWith("ph://")) {
+                try {
+                  const assetId = sourceUri.replace("ph://", "");
+                  const info = await MediaLibrary.getAssetInfoAsync(assetId);
+                  const resolved = info.localUri ?? info.uri ?? "";
+                  if (typeof resolved === "string" && resolved.startsWith("file://")) {
+                    markerUri = resolved;
+                  }
+                } catch {
+                  markerUri = FALLBACK_MARKER_URI;
+                }
+              }
+
               return {
-                uri: `data:image/jpeg;base64,${base64}`,
-                latitude: Number(img.location!.latitude),
-                longitude: Number(img.location!.longitude),
+                markerUri,
+                sourceUri,
+                latitude,
+                longitude,
                 city: img.city,
                 country: img.country,
+                takenAt: img.takenAt ?? null,
               };
             }),
         );
+
+        const coords = settled
+          .filter(
+            (r): r is PromiseFulfilledResult<any> =>
+              r.status === "fulfilled" && !!r.value
+          )
+          .map((r) => r.value);
         /* 2026.04.15 동일 좌표 배열을 반복 설정하지 않도록 이전 상태와 비교 후에만 setState 하도록 수정 by June */
         setCoordinates((prev) => {
           const next = coords.filter(Boolean);
@@ -222,7 +273,7 @@ export default function MapView({ images }: Props) {
           // 2026-03-18 custom marker HTML by yen
             const iconHtml = '<div class="custom-marker">' +
               '<div class="photo-frame">' +
-                '<img src="' + c.uri + '">' +
+                '<img src="' + c.markerUri + '">' +
               '</div>' +
               '<div class="connector-line"></div>' +
               '<div class="target-container">' +
@@ -249,7 +300,10 @@ export default function MapView({ images }: Props) {
                 // Send message to React Native
                 window.ReactNativeWebView.postMessage(JSON.stringify({
                   type: 'marker_click',
-                  city: c.city
+                  sourceUri: c.sourceUri,
+                  city: c.city,
+                  country: c.country,
+                  takenAt: c.takenAt ?? null
                 }));
               });
           });
@@ -270,14 +324,93 @@ export default function MapView({ images }: Props) {
       const data = JSON.parse(event.nativeEvent.data);
       if (data.type === "marker_click") {
         amplitude.track("Location_Clicked", {
-          uri: data.uri,
+          uri: data.sourceUri,
           city: data.city,
           country: data.country,
         });
+        const sourceUri = String(data.sourceUri ?? "");
+        setDetailPlace([data.city, data.country].filter(Boolean).join(", "));
+        setDetailTakenAt(
+          typeof data.takenAt === "number" && Number.isFinite(data.takenAt)
+            ? data.takenAt
+            : null
+        );
+        setDetailSourceUri(sourceUri);
+        setDetailVisible(true);
+        setDetailLoading(true);
+        setDetailUri(null);
+
+        void (async () => {
+          try {
+            if (sourceUri.startsWith("ph://")) {
+              const assetId = sourceUri.replace("ph://", "");
+              const info = await MediaLibrary.getAssetInfoAsync(assetId);
+              setDetailUri(info.localUri ?? info.uri ?? sourceUri);
+            } else {
+              setDetailUri(sourceUri);
+            }
+          } catch {
+            setDetailUri(sourceUri);
+          } finally {
+            setDetailLoading(false);
+          }
+        })();
+
+        /* 2026.05.12 지도 위 오버레이가 기본이므로 부모 위임 콜백은 보조 경로로만 유지 by June */
+        if (!sourceUri) {
+          onOpenPhotoFromMap?.({
+            sourceUri,
+            city: data.city,
+            country: data.country,
+          });
+        }
       }
     } catch (e) {
       console.error("WebView message parse error", e);
     }
+  };
+
+  const fmtDateTime = (ms: number | null) => {
+    if (!ms) return "";
+    const d = new Date(ms);
+    if (Number.isNaN(d.getTime())) return "";
+    const yyyy = d.getFullYear();
+    const MM = `${d.getMonth() + 1}`.padStart(2, "0");
+    const DD = `${d.getDate()}`.padStart(2, "0");
+    const hh = `${d.getHours()}`.padStart(2, "0");
+    const mm = `${d.getMinutes()}`.padStart(2, "0");
+    return `${yyyy}/${MM}/${DD} ${hh}:${mm}`;
+  };
+
+  const onPressShare = async () => {
+    if (!detailUri) return;
+    try {
+      await Share.open({
+        message: detailPlace ? `Check out this photo! ${detailPlace}` : "Check out this photo!",
+        url: Platform.OS === "android" ? `file://${detailUri}` : detailUri,
+        type: "image/jpeg",
+      });
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : "";
+      if (msg !== "User did not share") {
+        Alert.alert("Error", "Failed to share the photo.");
+      }
+    }
+  };
+
+  const onPressDelete = () => {
+    if (!detailSourceUri) return;
+    Alert.alert("Delete Photo", "Are you sure you want to delete this photo?", [
+      { text: "Cancel", style: "cancel" },
+      {
+        text: "Delete",
+        style: "destructive",
+        onPress: () => {
+          setCoordinates((prev) => prev.filter((c) => c.sourceUri !== detailSourceUri));
+          setDetailVisible(false);
+        },
+      },
+    ]);
   };
 
   return (
@@ -324,6 +457,23 @@ export default function MapView({ images }: Props) {
               </Text>
             </TouchableOpacity>
           </View>
+
+          {detailVisible && detailLoading ? (
+            <View style={styles.detailLoadingOverlay}>
+              <ActivityIndicator size="large" color="#fff" />
+            </View>
+          ) : null}
+          <PhotoDetailViewer
+            visible={detailVisible && !detailLoading && !!detailUri}
+            images={detailUri ? [{ uri: detailUri }] : []}
+            imageIndex={0}
+            onRequestClose={() => setDetailVisible(false)}
+            showPlayButton={false}
+            dateText={fmtDateTime(detailTakenAt)}
+            locationText={detailPlace}
+            onPressShare={onPressShare}
+            onPressDelete={onPressDelete}
+          />
         </View>
       </Modal>
     </View>
@@ -359,5 +509,12 @@ const styles = StyleSheet.create({
     shadowOpacity: 0.10,
     shadowRadius: 16,
     shadowOffset: { width: 0, height: 8 },
+  },
+  detailLoadingOverlay: {
+    ...StyleSheet.absoluteFillObject,
+    zIndex: 20,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: "rgba(0,0,0,0.85)",
   },
 });

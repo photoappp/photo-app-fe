@@ -1,4 +1,6 @@
+import BottomBannerAd from "@/components/ads/BottomBannerAd";
 import DateTimeFilter from "@/components/DateTimeFilter";
+import PhotoDetailViewer from "@/components/PhotoDetailViewer";
 import ShowOnMap from "@/components/ShowOnMap";
 import { Photo } from "@/types/Photo";
 import { Ionicons } from '@expo/vector-icons';
@@ -26,7 +28,7 @@ import {
   useColorScheme,
   View
 } from "react-native";
-import ImageViewing from 'react-native-image-viewing';
+import { BannerAdSize } from "react-native-google-mobile-ads";
 import { Edges, SafeAreaView } from 'react-native-safe-area-context';
 import Share from 'react-native-share';
 
@@ -142,13 +144,13 @@ export default function HomeScreen() {
 
   /* 2026.04.15 DB 동기화 작업의 중복 실행을 막아 기존 로딩/필터 플로우에 성능 영향을 최소화하기 위해 추가 by June */
   const dbSyncInFlightRef = useRef(false);
-  /* 2026.05.06 썸네일 선노출 이후 위치 팔로업 작업의 중복 실행을 막기 위해 in-flight ref를 추가 by Codex */
+  /* 2026.05.06 썸네일 선노출 이후 위치 팔로업 작업의 중복 실행을 막기 위해 in-flight ref를 추가 by June */
   /* 2026.05.06 기본 화면 위치 팔로업이 겹쳐 돌며 state 갱신 순서가 꼬이지 않도록 단일 실행 가드를 두기 위해 추가 by June */
   const locationFollowUpInFlightRef = useRef(false);
-  /* 2026.05.06 동일 목록에 대한 위치 팔로업 반복 실행을 줄이기 위해 최근 처리 시그니처를 저장하는 ref를 추가 by Codex */
+  /* 2026.05.06 동일 목록에 대한 위치 팔로업 반복 실행을 줄이기 위해 최근 처리 시그니처를 저장하는 ref를 추가 by June */
   /* 2026.05.06 동일 후보 목록에 대한 위치 팔로업 재실행을 건너뛰어 불필요한 OS 메타 조회/지오코딩 반복을 줄이기 위해 추가 by June */
   const locationFollowUpSignatureRef = useRef<string>("");
-  /* 2026.05.06 사용자가 선택한 사진의 우선 위치 로딩 중복 실행을 막기 위해 URI 기준 in-flight 집합을 추가 by Codex */
+  /* 2026.05.06 사용자가 선택한 사진의 우선 위치 로딩 중복 실행을 막기 위해 URI 기준 in-flight 집합을 추가 by June */
   /* 2026.05.06 사용자가 연속 탭/스와이프할 때 같은 URI 우선 로딩 중복 요청을 막아 체감 지연과 배터리 소모를 줄이기 위해 추가 by June */
   const priorityLocationInFlightRef = useRef<Set<string>>(new Set());
   /* 2026.04.15 iOS ph:// URI를 localUri로 변환한 결과를 재사용해 반복 조회 비용과 이미지 로더 충돌 노출을 줄이기 위해 캐시 추가 by June */
@@ -163,6 +165,8 @@ export default function HomeScreen() {
 
   const [viewerVisible, setViewerVisible] = useState(false);
   const [viewerIndex, setViewerIndex] = useState(0);
+  /* 2026.05.12 지도 진입 상세에서는 공통 상세뷰를 재사용하되 슬라이드쇼 버튼만 숨기기 위해 진입 소스를 상태로 분리 by June */
+  const [viewerEntryPoint, setViewerEntryPoint] = useState<"home" | "map">("home");
   /* 2026.04.22 썸네일 리스트는 경량 URI를 유지하고 상세 뷰어에서만 고해상도 URI를 점진 교체하기 위해 뷰어 전용 URI 맵 상태를 추가 by June */
   const [viewerDetailUriMap, setViewerDetailUriMap] = useState<Record<string, string>>({});
   /* 2026.04.28 썸네일 단계에서 ph:// 로더 충돌을 줄이기 위해 표시용 URI 캐시를 별도로 유지하도록 추가 by June */
@@ -620,6 +624,7 @@ export default function HomeScreen() {
   const closeViewer = useCallback(() => {
     stopSlideshow();
     setViewerVisible(false);
+    setViewerEntryPoint("home");
   }, [stopSlideshow]);
 
   /* 2026.04.22 닫기 버튼 동작은 close event를 남겨야 하므로 래퍼 함수를 분리해 추적 일관성을 유지하기 위해 추가 by June */
@@ -904,12 +909,12 @@ export default function HomeScreen() {
     return hasLocationFilter;
   };
 
-  /* 2026.05.06 좌표 포맷 키 생성을 공통화해 geocode 캐시 hit율을 안정적으로 유지하기 위해 헬퍼를 추가 by Codex */
+  /* 2026.05.06 좌표 포맷 키 생성을 공통화해 geocode 캐시 hit율을 안정적으로 유지하기 위해 헬퍼를 추가 by June */
   /* 2026.05.06 우선 로딩/배치 로딩 모두 동일 좌표 키 규칙을 쓰게 해 geocode 캐시 hit 일관성을 유지하기 위해 공통화 by June */
   const toGeoKey = (latitude: number, longitude: number, precision = 2) =>
     `${latitude.toFixed(precision)},${longitude.toFixed(precision)}`;
 
-  /* 2026.05.06 사용자가 탭/스와이프로 선택한 단일 사진은 즉시 위치를 우선 보강해 체감 지연을 줄이기 위해 추가 by Codex */
+  /* 2026.05.06 사용자가 탭/스와이프로 선택한 단일 사진은 즉시 위치를 우선 보강해 체감 지연을 줄이기 위해 추가 by June */
   /* 2026.05.06 선택된 사진은 백그라운드 순서와 무관하게 즉시 위치를 보강해 상세 진입 직후 위치 공백 시간을 줄이기 위해 추가 by June */
   const prioritizePhotoLocation = useCallback(async (photo: Photo | undefined) => {
     if (!photo?.uri) return;
@@ -1021,7 +1026,7 @@ export default function HomeScreen() {
     }
   }, []);
 
-  /* 2026.05.06 초기 썸네일 선노출 후 위치(좌표→도시/국가)를 백그라운드에서 보강해 위치 누락 체감을 줄이기 위해 팔로업 함수를 추가 by Codex */
+  /* 2026.05.06 초기 썸네일 선노출 후 위치(좌표→도시/국가)를 백그라운드에서 보강해 위치 누락 체감을 줄이기 위해 팔로업 함수를 추가 by June */
   /* 2026.05.06 초기 썸네일 노출 후 화면 상단 가시 범위 후보를 점진 보강해 썸네일 속도는 유지하면서 위치 누락을 줄이기 위해 추가 by June */
   const followUpVisibleLocations = useCallback(async () => {
     if (locationFollowUpInFlightRef.current) return;
@@ -1203,7 +1208,7 @@ export default function HomeScreen() {
     };
   }, [displayUriMap, photos, resolveDisplayUri]);
 
-  /* 2026.05.06 위치 필터 미사용 기본 화면에서도 위치 정보가 지연 보강되도록 목록 변경 후 백그라운드 팔로업을 수행하기 위해 추가 by Codex */
+  /* 2026.05.06 위치 필터 미사용 기본 화면에서도 위치 정보가 지연 보강되도록 목록 변경 후 백그라운드 팔로업을 수행하기 위해 추가 by June */
   useEffect(() => {
     const hasLocationFilter = filter.countries.length > 0 || filter.cities.length > 0;
     if (hasLocationFilter) return;
@@ -2379,11 +2384,12 @@ export default function HomeScreen() {
           swipe_count_ref.current = 0;
           swipe_threshold_fired_ref.current = false;
 
+          setViewerEntryPoint("home");
           setViewerIndex(index);
           setViewerVisible(true);
           /* 2026.04.22 상세 보기 진입 시 선택 사진만 고해상도 URI를 비동기 보강해 리스트 전체 메모리 사용 없이 상세 품질을 확보하기 위해 추가 by June */
           void resolveViewerDetailUri(item.uri);
-          /* 2026.05.06 사용자가 선택한 사진의 위치정보는 즉시 우선 보강해 상세 진입 직후 공백 시간을 줄이기 위해 추가 by Codex */
+          /* 2026.05.06 사용자가 선택한 사진의 위치정보는 즉시 우선 보강해 상세 진입 직후 공백 시간을 줄이기 위해 추가 by June */
           void prioritizePhotoLocation(item);
           /* 2026.04.22 좌우 스와이프 첫 체감을 개선하기 위해 인접 1장의 URI도 선행 보강하되 범위를 최소화해 메모리 피크를 제한 by June */
           const next = photosRef.current[index + 1];
@@ -2440,124 +2446,51 @@ export default function HomeScreen() {
     return `${yyyy}/${MM}/${DD} ${hh}:${mm}`;
   };
 
-	const Header = useCallback(() => {
-			return (
-				<View style={styles.header}>
-          {/* 2026.04.22 사진 보기 화면에서도 메인과 동일한 플레이 버튼으로 현재 사진부터 슬라이드쇼를 시작할 수 있도록 헤더 버튼을 추가 by June */}
-          <TouchableOpacity
-            onPress={handleViewerPlayPress}
-            style={styles.viewerHeaderPlaySlot}
-            activeOpacity={0.9}
-          >
-            <LinearGradient
-              colors={['#2B7FFF', '#AD46FF']}
-              start={{ x: 0, y: 0 }}
-              end={{ x: 1, y: 0 }}
-              style={styles.playButtonBg}
-            >
-              <IconPlay width={18} height={18} />
-            </LinearGradient>
-          </TouchableOpacity>
-					<TouchableOpacity
-						onPress={() => setViewerVisible(false)}
-						style={styles.closeBtn}
-					>
-						<Text style={styles.closeTxt}>✕</Text>
-					</TouchableOpacity>
-				</View>
-			);
-		}, [handleViewerPlayPress]);
-
-  const Footer = useCallback(() => {
-    const current = photos[viewerIndex];
-    const locationText = /** 2026.03.27 By June */
-    current?.city && current?.country
-      ? `${current.city}, ${current.country}`
-      : current?.country
-      ? current.country
-      : !current?.location
+  const currentViewerPhoto = photos[viewerIndex];
+  const viewerLocationText =
+    currentViewerPhoto?.city && currentViewerPhoto?.country
+      ? `${currentViewerPhoto.city}, ${currentViewerPhoto.country}`
+      : currentViewerPhoto?.country
+      ? currentViewerPhoto.country
+      : !currentViewerPhoto?.location
       ? "No location info"
-      : current?.location
-      /* 2026.04.22 위치 보강 중 안내 문구를 다국어 처리해 로딩 상태 텍스트도 언어 설정을 따르도록 수정 by June */
-      ? t("loadingLocationInfo", "Loading location info...")
-      : "";
-		
-			const handleShare = async (photoUri: string, message: string) => {
-				try {
-					const shareOptions: Parameters<typeof Share.open>[0] = {
-						message,
-						url: Platform.OS === 'android' ? `file://${photoUri}` : photoUri,
-						type: 'image/jpeg',
-					};
-					await Share.open(shareOptions);
-					} catch (err: unknown) {
-					const errMessage = err instanceof Error ? err.message : "";
-					// 사용자가 공유하기 취소한 경우
-					if (errMessage === 'User did not share') {
-						return; // 아무것도 하지 않음
-					} 
+      : t("loadingLocationInfo", "Loading location info...");
 
-				console.log(err);
-          /* 2026.04.22 공유 실패 알럿을 다국어로 전환해 공유 예외 시에도 언어 일관성을 유지하기 위해 수정 by June */
-					Alert.alert(
-            t("errorTitle", "Error"),
-            t("shareFailedMessage", "Failed to share the photo.")
-          );
-				}
-			};
-			
-			const onPressShare = async () => {
-				if (!current?.uri) return;
-        /* 2026.04.22 공유 메시지 prefix를 번역 키로 치환해 공유 텍스트가 선택 언어를 반영하도록 수정 by June */
-				const messagePrefix = t("sharePhotoMessagePrefix", "Check out this photo!");
-				const message = locationText ? `${messagePrefix} ${locationText}` : messagePrefix;
-				await handleShare(current.uri, message);
-			};
-			
-			const handleDelete = () => {
-          /* 2026.04.22 삭제 확인 다이얼로그(제목/본문/버튼)를 다국어로 변환해 뷰어 액션 문구를 현지화하기 위해 수정 by June */
-					Alert.alert(
-						t("deletePhotoTitle", "Delete Photo"),
-						t("deletePhotoConfirm", "Are you sure you want to delete this photo?"),
-						[
-							{ text: t("cancel", "Cancel"), style: "cancel" },
-							{
-								text: t("delete", "Delete"),
-								style: "destructive",
-							onPress: () => {
-								// photos 배열에서 제거
-								setPhotos((prev) =>
-									prev.filter((_, idx) => idx !== viewerIndex)
-								);
-								setViewerVisible(false);
-							},
-						},
-					]
-				);
-			};
-		
-    return (
-      <View style={styles.footer}>
-				{/* 왼쪽: Share 버튼 */}
-				<TouchableOpacity onPress={onPressShare}>
-					<Ionicons name="share-outline" size={24} color="white" />
-				</TouchableOpacity>
-				{/* 중앙: 날짜/시간 + 장소 */}
-				<View style={styles.headerTextContainer}>
-						<Text style={styles.metaTxt}>
-							{current ? fmtDateTime(current.takenAt) : ""}
-						</Text>
-						{locationText ? (
-							 <Text style={styles.locationTxt}>{locationText}</Text>
-						) : null}
-				</View>
-				{/* 오른쪽: Delete 버튼 */}
-				<TouchableOpacity onPress={handleDelete}>
-					<Ionicons name="trash-outline" size={24} color="white" />
-				</TouchableOpacity>
-      </View>
+  const handleViewerShare = useCallback(async () => {
+    if (!currentViewerPhoto?.uri) return;
+    try {
+      const messagePrefix = t("sharePhotoMessagePrefix", "Check out this photo!");
+      const message = viewerLocationText ? `${messagePrefix} ${viewerLocationText}` : messagePrefix;
+      await Share.open({
+        message,
+        url: Platform.OS === "android" ? `file://${currentViewerPhoto.uri}` : currentViewerPhoto.uri,
+        type: "image/jpeg",
+      });
+    } catch (err: unknown) {
+      const errMessage = err instanceof Error ? err.message : "";
+      if (errMessage !== "User did not share") {
+        Alert.alert(t("errorTitle", "Error"), t("shareFailedMessage", "Failed to share the photo."));
+      }
+    }
+  }, [currentViewerPhoto?.uri, t, viewerLocationText]);
+
+  const handleViewerDelete = useCallback(() => {
+    Alert.alert(
+      t("deletePhotoTitle", "Delete Photo"),
+      t("deletePhotoConfirm", "Are you sure you want to delete this photo?"),
+      [
+        { text: t("cancel", "Cancel"), style: "cancel" },
+        {
+          text: t("delete", "Delete"),
+          style: "destructive",
+          onPress: () => {
+            setPhotos((prev) => prev.filter((_, idx) => idx !== viewerIndexRef.current));
+            closeViewer();
+          },
+        },
+      ]
     );
-  }, [photos, t, viewerIndex]);
+  }, [closeViewer, t]);
 
   const handleLocationChange = (selections: LocationFilterState) => {
     setFilter((prev) => ({ ...prev, ...selections }));
@@ -2586,6 +2519,26 @@ export default function HomeScreen() {
     </View>;
     console.log("Show on map, photos: ", photos.length);
   };
+  /* 2026.05.12 지도 마커 탭 시 동일 공통 상세 뷰어를 열되 지도 컨텍스트를 유지하기 위해 index 매칭 기반 오픈 핸들러를 추가 by June */
+  const handleOpenPhotoFromMap = useCallback(
+    async (payload: { sourceUri: string; city?: string; country?: string }) => {
+      const sourceUri = String(payload.sourceUri ?? "");
+      if (!sourceUri) return;
+
+      const foundIndex = photosRef.current.findIndex((p) => p.uri === sourceUri);
+      if (foundIndex < 0) return;
+
+      swipe_count_ref.current = 0;
+      swipe_threshold_fired_ref.current = false;
+      setViewerEntryPoint("map");
+      setViewerIndex(foundIndex);
+      setViewerVisible(true);
+
+      await resolveViewerDetailUri(sourceUri);
+      await prioritizePhotoLocation(photosRef.current[foundIndex]);
+    },
+    [prioritizePhotoLocation, resolveViewerDetailUri]
+  );
 
   const edges = ["bottom", "left", "right"];
   if (Platform.OS === "ios") {
@@ -2601,6 +2554,13 @@ export default function HomeScreen() {
     <SafeAreaView style={{ flex: 1 }} edges={safeAreaEdges}>
       <View style={{ flex: 1 }}>
         <View style={styles.topArea}>
+          {/* 2026.05.13 홈 상단(노치 아래) 배너 광고를 버튼 영역 위에 배치 by June */}
+          <View style={styles.topBannerWrap}>
+            <BottomBannerAd
+              size={BannerAdSize.ANCHORED_ADAPTIVE_BANNER}
+              withBottomInset={false}
+            />
+          </View>
 
           {/* 상단버튼영역 수정 2026.03.18 by June START */}
           <View style={styles.topButtonsRow}>
@@ -2630,7 +2590,7 @@ export default function HomeScreen() {
                 style={styles.mapButtonSlot}
                 activeOpacity={0.9}
               >
-                <ShowOnMap images={photos} />
+                <ShowOnMap images={photos} onOpenPhotoFromMap={handleOpenPhotoFromMap} />
               </TouchableOpacity>
 
               {/* Settings 버튼 */}
@@ -2811,21 +2771,17 @@ export default function HomeScreen() {
         swipeToCloseEnabled={false} // ← 스와이프 제스처가 터치 선점하는 것 방지
         doubleTapToZoomEnabled
       /> */}
-      {/* 전체화면 이미지 뷰어 (핀치줌/스와이프) */}
-      <ImageViewing
-        //images={photos.map(p => ({ uri: p.uri }))}
+      <PhotoDetailViewer
+        visible={viewerVisible}
+        images={viewerImages}
+        imageIndex={viewerIndex}
+        onRequestClose={closeViewer}
         onImageIndexChange={(i: number) => {
-          // 기존
           viewerIndexRef.current = i;
-        
-          // swipe count 증가 (첫 진입은 0->선택 index로 이미 열리니, 변경 이벤트만 카운트)
           swipe_count_ref.current += 1;
-        
           if (!swipe_threshold_fired_ref.current && swipe_count_ref.current >= SWIPE_THRESHOLD) {
             swipe_threshold_fired_ref.current = true;
-        
             const dwell_ms = Date.now() - home_view_start_ms_ref.current;
-        
             amplitude.track("photo_swipe_threshold_reached", {
               screen_name: "home",
               threshold: SWIPE_THRESHOLD,
@@ -2834,22 +2790,14 @@ export default function HomeScreen() {
               dwell_ms,
             });
           }
-          /* 2026.05.06 뷰어 스와이프 시 새로 선택된 사진도 우선 위치 보강 대상으로 즉시 요청하도록 추가 by Codex */
           void prioritizePhotoLocation(photosRef.current[i]);
         }}
-        images={viewerImages}
-        imageIndex={viewerIndex}
-        visible={viewerVisible}
-        onRequestClose={closeViewer}
-        //onImageIndexChange={(i: number) => setViewerIndex(i)} // ← 추가
-        // 선택: 상단 닫기버튼(간단한 헤더)
-        HeaderComponent={Header}
-        // 선택: 바닥 여백(제스처 충돌 완화)
-        backgroundColor="rgba(0,0,0,0.98)"
-        swipeToCloseEnabled={false} // ← 스와이프 제스처가 터치 선점하는 것 방지
-        doubleTapToZoomEnabled
-
-				FooterComponent={Footer}
+        showPlayButton={viewerEntryPoint === "home"}
+        onPressPlay={handleViewerPlayPress}
+        dateText={currentViewerPhoto ? fmtDateTime(currentViewerPhoto.takenAt) : ""}
+        locationText={viewerLocationText}
+        onPressShare={handleViewerShare}
+        onPressDelete={handleViewerDelete}
       />
 
       <Modal visible={slideshowVisible} animationType="fade">
@@ -2901,7 +2849,7 @@ const styles = StyleSheet.create({
     flex: 1,
     paddingHorizontal: 20,
     ...Platform.select({
-      // ios: { paddingTop: 20 },
+      //ios: { paddingTop: 0 },
       android: { paddingTop: 50 },
     }),
   },
@@ -3193,6 +3141,10 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     marginBottom: 16,
     width: '100%',
+  },
+  topBannerWrap: {
+    width: "100%",
+    marginBottom: 10,
   },
   
   topLeftSpace: {

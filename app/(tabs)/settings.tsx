@@ -18,6 +18,7 @@ import DropDownPicker from "react-native-dropdown-picker";
 import { Edges, SafeAreaView } from "react-native-safe-area-context";
 
 import TextRow from "@/components/TextRow";
+import BottomBannerAd from "@/components/ads/BottomBannerAd";
 
 // Context (state management)
 import { useLanguage } from "@/components/context/LanguageContext";
@@ -510,6 +511,11 @@ export default function SimplifiedSettings() {
           </TouchableOpacity>
         </View>
       </View>
+
+      {/* 2026.05.13 설정 화면 하단 Sunny 섹션 아래 흰 영역에 배너를 배치 by June */}
+      <View style={styles.settingsBannerWrap}>
+        <BottomBannerAd />
+      </View>
     </View>
   );
 }
@@ -630,7 +636,11 @@ const styles = StyleSheet.create({
     borderColor: "#ccc",
     alignItems: "center",
     backgroundColor: "#2c2c2e",
-    marginBottom: 60,
+    marginBottom: 0,
+  },
+  settingsBannerWrap: {
+    backgroundColor: "#fff",
+    paddingTop: 6,
   },
 
   // 로고 스타일

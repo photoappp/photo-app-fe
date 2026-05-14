@@ -13,7 +13,7 @@ import { recordPerfMetric } from "@/lib/services/perfMetrics";
 /* 2026.04.15 동기화 페이지 크기를 상수화해 앱 성능 이슈 시 운영값을 안전하게 조정하기 위해 추가 by June */
 const SYNC_PAGE_SIZE = 300;
 
-/* 2026.05.06 백그라운드 동기화 시 위치 메타 재수집 비용을 제어하기 위해 페이지당 상세조회 상한을 추가 by Codex */
+/* 2026.05.06 백그라운드 동기화 시 위치 메타 재수집 비용을 제어하기 위해 페이지당 상세조회 상한을 추가 by June */
 const LOCATION_ENRICH_PER_PAGE = 80;
 
 /* 2026.04.15 동기화 중복 실행을 막아 같은 시점 다중 동기화로 인한 성능 저하를 방지하기 위해 추가 by June */
@@ -34,7 +34,7 @@ const getTakenMinute = (takenAt: number | null) => {
   return local.getHours() * 60 + local.getMinutes();
 };
 
-/* 2026.05.06 Asset/AssetInfo의 위치값 파싱 로직을 공통화해 동기화 경로별 누락을 줄이기 위해 추가 by Codex */
+/* 2026.05.06 Asset/AssetInfo의 위치값 파싱 로직을 공통화해 동기화 경로별 누락을 줄이기 위해 추가 by June */
 const readLocation = (location: any) => {
   if (!location) return { latitude: null, longitude: null };
 
