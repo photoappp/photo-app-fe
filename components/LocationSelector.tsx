@@ -425,19 +425,15 @@ const LocationSelector = forwardRef<LocationSelectorHandle, Props>(
             <View style={styles.buttonContainer}>
               <TouchableOpacity
                 onPress={() => {
-                  setSelectedCountries(tempCountries);
-                  setSelectedCities(tempCities);
-                  console.log("Applying selection:", {
-                    countries: tempCountries,
-                    cities: tempCities,
-                    locationLabel: getButtonTitle(),
-                  });
+                  /* 2026.05.26 "All locations" 적용 시 필터 효과는 리셋과 동일하게 비우되,
+                     다음 오픈 시 모든 국가/도시 체크 상태를 유지하기 위해 temp 배열은 보존 by yen */
+                  setSelectedCountries([]);
+                  setSelectedCities([]);
                   onSelectionChange?.({
-                    countries: tempCountries,
-                    cities: tempCities,
-                    locationLabel: getButtonTitle(),
+                    countries: [],
+                    cities: [],
+                    locationLabel: t("allLocations"),
                   });
-
                   onClose();
                 }}
               >
