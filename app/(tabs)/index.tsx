@@ -3,17 +3,17 @@ import DateTimeFilter from "@/components/DateTimeFilter";
 import PhotoDetailViewer from "@/components/PhotoDetailViewer";
 import ShowOnMap from "@/components/ShowOnMap";
 import { Photo } from "@/types/Photo";
-import { Ionicons } from '@expo/vector-icons';
+import { Ionicons } from "@expo/vector-icons";
 // import { useNavigation } from '@react-navigation/native';
-import { LinearGradient } from 'expo-linear-gradient';
+import { LinearGradient } from "expo-linear-gradient";
 import * as Location from "expo-location";
 import * as MediaLibrary from "expo-media-library";
-import { useNavigation, useRouter } from 'expo-router';
+import { useNavigation, useRouter } from "expo-router";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   ActivityIndicator,
   Alert,
-  AppState, /** 2026.03.03 Add by June */
+  AppState /** 2026.03.03 Add by June */,
   Button,
   Dimensions,
   FlatList,
@@ -26,21 +26,21 @@ import {
   Text,
   TouchableOpacity,
   useColorScheme,
-  View
+  View,
 } from "react-native";
 import { BannerAdSize } from "react-native-google-mobile-ads";
-import { Edges, SafeAreaView } from 'react-native-safe-area-context';
-import Share from 'react-native-share';
+import { Edges, SafeAreaView } from "react-native-safe-area-context";
+import Share from "react-native-share";
 
-import { useSlideshowTime } from '@/components/context/SlideshowTimeContext';
-import { useTheme } from '@/components/context/ThemeContext';
-import { useI18n } from '@/components/context/useI18n';
-import { useUserData } from '@/components/context/UserDataContext';
+import { useSlideshowTime } from "@/components/context/SlideshowTimeContext";
+import { useTheme } from "@/components/context/ThemeContext";
+import { useI18n } from "@/components/context/useI18n";
+import { useUserData } from "@/components/context/UserDataContext";
 
 import IconPlay from "@/assets/icons/ic_play.svg"; //2026.03.18 Change button UI by June
 
-import { AMPLITUDE_API_KEY } from '@/constants/env';
-import * as amplitude from '@amplitude/analytics-react-native';
+import { AMPLITUDE_API_KEY } from "@/constants/env";
+import * as amplitude from "@amplitude/analytics-react-native";
 /* 2026.04.15 SQLite 메타데이터 DB/동기화 모듈을 홈 화면 로딩 파이프라인에 연결하기 위해 import 추가 by June */
 import {
   countPhotoMetadataByDateTime,
@@ -62,9 +62,6 @@ import {
   upsertPhotoMetadataFromAssets,
 } from "@/lib/services/photoMetadataSync";
 
-
-
-
 // Responsive image grid calculations
 const screenWidth = Dimensions.get("window").width;
 const minImageWidth = 100;
@@ -75,7 +72,7 @@ const numColumns = 5;
 const usableWidth = screenWidth - (24 + horizontalPadding) * 2;
 // 이 usableWidth 기준으로 5등분 + margin
 const imageWidth = Math.floor(
-  (usableWidth - numColumns * imageMargin * 2) / numColumns
+  (usableWidth - numColumns * imageMargin * 2) / numColumns,
 );
 
 type DateTimeFilterState = {
@@ -94,21 +91,25 @@ type FilterState = DateTimeFilterState & LocationFilterState;
 
 /** ---------- HomeScreen ---------- */
 export default function HomeScreen() {
-	const router = useRouter();
-	const navigation = useNavigation();
-	const { isDarkTheme, colors } = useTheme();
-	/* 2026.04.22 홈 화면의 하드코딩 문구를 다국어로 전환하기 위해 공용 i18n 훅을 사용하도록 변경 by June */
-	const { t } = useI18n();
-//	const { userData, updateUserData } = useUserData();
+  const router = useRouter();
+  const navigation = useNavigation();
+  const { isDarkTheme, colors } = useTheme();
+  /* 2026.04.22 홈 화면의 하드코딩 문구를 다국어로 전환하기 위해 공용 i18n 훅을 사용하도록 변경 by June */
+  const { t } = useI18n();
+  //	const { userData, updateUserData } = useUserData();
 
-	const { incrementDateFilter, incrementTimeFilter, incrementLocationFilter, updateTotalPhotos } = useUserData();
+  const {
+    incrementDateFilter,
+    incrementTimeFilter,
+    incrementLocationFilter,
+    updateTotalPhotos,
+  } = useUserData();
 
-	useEffect(() => {
-			navigation.setOptions({ headerShown: false });
-		}, [navigation]);
+  useEffect(() => {
+    navigation.setOptions({ headerShown: false });
+  }, [navigation]);
 
   const [images, setImages] = useState<any[]>([]);
-
 
   const handleOpenSettings = () => {
     //navigation.navigate('Settings'); // 실제 설정 스크린 이름으로 바꿔 사용
@@ -150,6 +151,8 @@ export default function HomeScreen() {
   /* 2026.05.06 동일 목록에 대한 위치 팔로업 반복 실행을 줄이기 위해 최근 처리 시그니처를 저장하는 ref를 추가 by June */
   /* 2026.05.06 동일 후보 목록에 대한 위치 팔로업 재실행을 건너뛰어 불필요한 OS 메타 조회/지오코딩 반복을 줄이기 위해 추가 by June */
   const locationFollowUpSignatureRef = useRef<string>("");
+  /* 2026.05.26 Android에서 위치 권한 요청을 세션당 1회만 수행하기 위한 가드 ref by yen */
+  const locationPermissionAskedRef = useRef(false);
   /* 2026.05.06 사용자가 선택한 사진의 우선 위치 로딩 중복 실행을 막기 위해 URI 기준 in-flight 집합을 추가 by June */
   /* 2026.05.06 사용자가 연속 탭/스와이프할 때 같은 URI 우선 로딩 중복 요청을 막아 체감 지연과 배터리 소모를 줄이기 위해 추가 by June */
   const priorityLocationInFlightRef = useRef<Set<string>>(new Set());
@@ -158,7 +161,7 @@ export default function HomeScreen() {
 
   // ---- 사진 목록/페이지네이션 ----
   const [photos, setPhotos] = useState<Photo[]>([]); // 화면에 뿌릴 가공된 데이터 (필터 적용 후)
-	const [photosAll, setPhotosAll] = useState<Photo[]>([]); // 필터 적용 전 전체 사진
+  const [photosAll, setPhotosAll] = useState<Photo[]>([]); // 필터 적용 전 전체 사진
   const [endCursor, setEndCursor] = useState<string | null>(null); // MediaLibrary가 돌려주는 다음 페이지 커서 문자열
   const [hasNextPage, setHasNextPage] = useState<boolean>(true); // 다음 페이지 있는지 여부
   const [loading, setLoading] = useState<boolean>(false);
@@ -166,11 +169,17 @@ export default function HomeScreen() {
   const [viewerVisible, setViewerVisible] = useState(false);
   const [viewerIndex, setViewerIndex] = useState(0);
   /* 2026.05.12 지도 진입 상세에서는 공통 상세뷰를 재사용하되 슬라이드쇼 버튼만 숨기기 위해 진입 소스를 상태로 분리 by June */
-  const [viewerEntryPoint, setViewerEntryPoint] = useState<"home" | "map">("home");
+  const [viewerEntryPoint, setViewerEntryPoint] = useState<"home" | "map">(
+    "home",
+  );
   /* 2026.04.22 썸네일 리스트는 경량 URI를 유지하고 상세 뷰어에서만 고해상도 URI를 점진 교체하기 위해 뷰어 전용 URI 맵 상태를 추가 by June */
-  const [viewerDetailUriMap, setViewerDetailUriMap] = useState<Record<string, string>>({});
+  const [viewerDetailUriMap, setViewerDetailUriMap] = useState<
+    Record<string, string>
+  >({});
   /* 2026.04.28 썸네일 단계에서 ph:// 로더 충돌을 줄이기 위해 표시용 URI 캐시를 별도로 유지하도록 추가 by June */
-  const [displayUriMap, setDisplayUriMap] = useState<Record<string, string>>({});
+  const [displayUriMap, setDisplayUriMap] = useState<Record<string, string>>(
+    {},
+  );
 
   /** 2026.03.26 By June - 사진 목록/페이지네이션 관련 */
   const [initialLoading, setInitialLoading] = useState(false);
@@ -194,7 +203,7 @@ export default function HomeScreen() {
       photos.map((p) => ({
         uri: viewerDetailUriMap[p.uri] ?? displayUriMap[p.uri] ?? p.uri,
       })),
-    [displayUriMap, photos, viewerDetailUriMap]
+    [displayUriMap, photos, viewerDetailUriMap],
   );
 
   const photosRef = useRef<Photo[]>(photos);
@@ -212,62 +221,79 @@ export default function HomeScreen() {
 
   // 날짜,시간 필터링 관련 ===> 컴포넌트로 분리하기!!
   /* 2026.04.15 날짜 경계 함수 참조를 안정화해 DB 조회 콜백 의존성 재생성을 방지하기 위해 useCallback으로 변경 by June */
-  const dayStartMs = useCallback((d: Date) =>
-    new Date(d.getFullYear(), d.getMonth(), d.getDate(), 0, 0, 0, 0).getTime(), []);
+  const dayStartMs = useCallback(
+    (d: Date) =>
+      new Date(
+        d.getFullYear(),
+        d.getMonth(),
+        d.getDate(),
+        0,
+        0,
+        0,
+        0,
+      ).getTime(),
+    [],
+  );
   /* 2026.04.15 날짜 경계 함수 참조를 안정화해 초기 로드 effect 반복 실행을 막기 위해 useCallback으로 변경 by June */
-  const dayEndNextMs = useCallback((d: Date) => new Date(
-    d.getFullYear(),
-    d.getMonth(),
-    d.getDate() + 1,
-    0,
-    0,
-    0,
-    0
-  ).getTime(), []);
+  const dayEndNextMs = useCallback(
+    (d: Date) =>
+      new Date(
+        d.getFullYear(),
+        d.getMonth(),
+        d.getDate() + 1,
+        0,
+        0,
+        0,
+        0,
+      ).getTime(),
+    [],
+  );
 
-  /** 2026.03.26 by June Edit Start */  
+  /** 2026.03.26 by June Edit Start */
   /* 2026.04.15 초기 기준 날짜를 렌더마다 재생성하지 않도록 고정해 필터/로드 콜백 재생성을 줄이기 위해 추가 by June */
   const baseTodayRef = useRef(new Date());
   const today = baseTodayRef.current;
   /* 2026.04.15 oneYearAgo 참조를 고정해 loadInitialPhotos 의존성 변경으로 인한 반복 호출을 방지하기 위해 수정 by June */
-  const oneYearAgoRef = useRef(new Date(
-    today.getFullYear() - 1,
-    today.getMonth(),
-    today.getDate()
-  ));
+  const oneYearAgoRef = useRef(
+    new Date(today.getFullYear() - 1, today.getMonth(), today.getDate()),
+  );
   const oneYearAgo = oneYearAgoRef.current;
   /* 2026.04.15 threeYearsAgo도 동일하게 참조 고정해 향후 필터 확장 시 의존성 루프를 예방하기 위해 수정 by June */
-  const threeYearsAgoRef = useRef(new Date(
-    today.getFullYear() - 3,
-    today.getMonth(),
-    today.getDate()
-  ));
+  const threeYearsAgoRef = useRef(
+    new Date(today.getFullYear() - 3, today.getMonth(), today.getDate()),
+  );
   const threeYearsAgo = threeYearsAgoRef.current;
-  
+
   const INITIAL_TARGET_COUNT = 30;
   const FILTER_RESET_TARGET_COUNT = 50;
   const APPEND_TARGET_COUNT = 50;
   const FETCH_PAGE_SIZE = 100;
   /* 2026.04.15 시간 필터를 SQL로 이관한 이후 불필요한 대량 조회를 줄여 긴 기간 검색 응답 속도를 개선하기 위해 조회 상한을 조정 by June */
   const DB_QUERY_LIMIT = 120;
-  
+
   /* 2026.04.22 빈 상태 문구를 다국어로 표시하기 위해 하드코딩 문자열을 번역 키 기반으로 교체 by June */
-  const EMPTY_RECENT_3Y_MESSAGE = t("noRecent3YearsPhotos", "No photos in the last 3 years.");
+  const EMPTY_RECENT_3Y_MESSAGE = t(
+    "noRecent3YearsPhotos",
+    "No photos in the last 3 years.",
+  );
   const EMPTY_DEFAULT_MESSAGE = t("noPhotosFound", "No photos found");
-  const EMPTY_DEFAULT_DESC = t("tryExpandingFilters", "Try expanding the filters.");
- 
+  const EMPTY_DEFAULT_DESC = t(
+    "tryExpandingFilters",
+    "Try expanding the filters.",
+  );
+
   const sortPhotosByTakenAtAsc = (items: Photo[]) => {
     return [...items].sort((a, b) => {
       const aTime =
         typeof a.takenAt === "number" && Number.isFinite(a.takenAt)
           ? a.takenAt
           : Number.MAX_SAFE_INTEGER;
-  
+
       const bTime =
         typeof b.takenAt === "number" && Number.isFinite(b.takenAt)
           ? b.takenAt
           : Number.MAX_SAFE_INTEGER;
-  
+
       return aTime - bTime;
     });
   };
@@ -291,7 +317,7 @@ export default function HomeScreen() {
     countries: [],
     cities: [],
   });
-   /** 2026.03.26 by June Edit End */  
+  /** 2026.03.26 by June Edit End */
 
   // 슬라이드쇼 관련
   const { slideshowTime } = useSlideshowTime();
@@ -329,7 +355,7 @@ export default function HomeScreen() {
         });
       }
     },
-    [clearSlideshowTimer]
+    [clearSlideshowTimer],
   );
   /* 2026.04.22 화면 뷰어 종료 시 슬라이드쇼만 중지하고 별도 close 이벤트는 남기지 않기 위해 전용 stop 함수를 분리 by June */
   const stopSlideshow = useCallback(() => {
@@ -355,13 +381,16 @@ export default function HomeScreen() {
           }
 
           viewerIndexRef.current = next;
-          slideshowListRef.current?.scrollToIndex({ index: next, animated: true });
+          slideshowListRef.current?.scrollToIndex({
+            index: next,
+            animated: true,
+          });
           scheduleNextSlide(token);
           return next;
         });
       }, slideshowDelayMs);
     },
-    [clearSlideshowTimer, closeSlideshow, slideshowDelayMs]
+    [clearSlideshowTimer, closeSlideshow, slideshowDelayMs],
   );
   /* 2026.04.22 시작 인덱스를 경계값으로 보정하고 세션 토큰을 새로 발급해 슬라이드쇼 시작 흐름을 재구성하기 위해 start 함수를 재구현 by June */
   const startSlideshow = useCallback(
@@ -381,7 +410,7 @@ export default function HomeScreen() {
 
       scheduleNextSlide(token);
     },
-    [clearSlideshowTimer, scheduleNextSlide]
+    [clearSlideshowTimer, scheduleNextSlide],
   );
 
   useEffect(() => {
@@ -389,11 +418,11 @@ export default function HomeScreen() {
       console.warn("amplitude_api_key_missing");
       return;
     }
-  
+
     // init은 보통 1회만 하는 게 정석이지만,
     // 동일 API key로 중복 init이 문제되면 아래도 guard 걸면 됨.
     amplitude.init(AMPLITUDE_API_KEY);
-  
+
     if (!app_launched_tracked) {
       app_launched_tracked = true;
       amplitude.track("app_launched", {
@@ -405,7 +434,7 @@ export default function HomeScreen() {
 
   useEffect(() => {
     home_view_start_ms_ref.current = Date.now();
-  
+
     amplitude.track("screen_home_viewed", {
       screen_name: "home",
     });
@@ -455,9 +484,13 @@ export default function HomeScreen() {
       console.log("photo metadata background sync error:", err);
     } finally {
       /* 2026.04.22 동기화 소요 시간을 기록해 페이지 수/DB 적재량 튜닝 시 기준 지표를 남기기 위해 계측을 추가 by June */
-      recordPerfMetric("home.trigger_metadata_sync.ms", Date.now() - syncStartedAt, {
-        logEvery: 2,
-      });
+      recordPerfMetric(
+        "home.trigger_metadata_sync.ms",
+        Date.now() - syncStartedAt,
+        {
+          logEvery: 2,
+        },
+      );
       dbSyncInFlightRef.current = false;
     }
   }, []);
@@ -519,7 +552,7 @@ export default function HomeScreen() {
         setProgress({ loaded: loadedCount, total: null });
       }
     },
-    [dayEndNextMs, dayStartMs]
+    [dayEndNextMs, dayStartMs],
   );
 
   /* 2026.05.06 동일 asset 기준으로 위치 메타 반환 여부를 단건 비교해 경로 회귀를 즉시 진단하기 위해 추가 by June */
@@ -559,7 +592,7 @@ export default function HomeScreen() {
                 longitude: infoByAsset.location.longitude,
               }
             : null,
-        })
+        }),
       );
     } catch (err) {
       console.log("[LOCATION_DIAG] single_asset_compare_error", err);
@@ -573,7 +606,11 @@ export default function HomeScreen() {
     void refreshIndexingProgress();
     /* 2026.05.06 단건 비교 진단을 함께 실행해 위치 메타가 호출 경로에서 실제로 반환되는지 즉시 확인하기 위해 추가 by June */
     void runSingleAssetLocationCompare();
-  }, [refreshIndexingProgress, runSingleAssetLocationCompare, triggerPhotoMetadataSync]);
+  }, [
+    refreshIndexingProgress,
+    runSingleAssetLocationCompare,
+    triggerPhotoMetadataSync,
+  ]);
 
   /* 2026.04.22 geocode 작업 큐를 주기적으로 처리해 위치 캐시를 점진 보강하고 대기 작업을 줄이기 위해 워커 루프를 추가 by June */
   useEffect(() => {
@@ -637,7 +674,7 @@ export default function HomeScreen() {
     startSlideshow(viewerIndexRef.current ?? 0);
     console.log("Slideshow start");
 
-    amplitude.track("tap_slideshow_button", {
+    amplitude.track("tap_slw_button", {
       screen_name: "home",
       slideshow_on: slideshowOn,
       photo_count: photosRef.current.length,
@@ -656,10 +693,10 @@ export default function HomeScreen() {
       photo_count: photosRef.current.length,
     });
   }, [startSlideshow]);
-  
+
   async function imagesWithLocation(
     images: any[],
-    opts?: { maxLookups?: number; precision?: number; delayMs?: number }
+    opts?: { maxLookups?: number; precision?: number; delayMs?: number },
   ) {
     /* 2026.04.22 위치 보강 전체 지연을 계측해 캐시 hit율과 reverse geocode 병목을 함께 분석하기 위해 타이머를 추가 by June */
     const geocodeStartedAt = Date.now();
@@ -672,16 +709,19 @@ export default function HomeScreen() {
       { country: string | null; city: string | null }
     >();
     /* 2026.04.22 reverse geocode 성공 결과를 배치 업서트로 저장해 쓰기 트랜잭션 횟수를 줄이기 위해 수집 배열 추가 by June */
-    const cacheUpsertRows: Array<{
+    const cacheUpsertRows: {
       geoKey: string;
       latitude: number;
       longitude: number;
       country: string | null;
       city: string | null;
       updatedAt: number;
-    }> = [];
+    }[] = [];
     /* 2026.04.22 geocode miss 좌표를 작업 큐에 누적해 이후 백그라운드 보강 대상으로 추적하기 위해 map 추가 by June */
-    const pendingJobMap = new Map<string, { geoKey: string; latitude: number; longitude: number }>();
+    const pendingJobMap = new Map<
+      string,
+      { geoKey: string; latitude: number; longitude: number }
+    >();
     const updated: any[] = [];
     let lookups = 0;
     /* 2026.04.22 캐시 효율을 수치화하기 위해 런타임/DB 캐시 hit 카운터를 추가 by June */
@@ -691,9 +731,15 @@ export default function HomeScreen() {
     for (const img of images) {
       // 2026-05-12: location이 비어 있으면 ph:// URI로 좌표를 보강해 위치 필터 적용 시 모든 사진이 사라지는 버그 수정 by yen
       let imgLocation = img.location;
-      if (!imgLocation && typeof img.uri === "string" && img.uri.startsWith("ph://")) {
+      if (
+        !imgLocation &&
+        typeof img.uri === "string" &&
+        img.uri.startsWith("ph://")
+      ) {
         try {
-          const info = await MediaLibrary.getAssetInfoAsync(img.uri.replace("ph://", ""));
+          const info = await MediaLibrary.getAssetInfoAsync(
+            img.uri.replace("ph://", ""),
+          );
           if (info.location) {
             const lat0 = Number(info.location.latitude);
             const lon0 = Number(info.location.longitude);
@@ -721,7 +767,10 @@ export default function HomeScreen() {
           /* 2026.04.22 영속 geocode 캐시를 우선 조회해 동일 좌표 reverse geocode 재호출을 제거하기 위해 추가 by June */
           const cached = await getGeocodeCacheByKey(key);
           if (cached) {
-            place = { country: cached.country ?? null, city: cached.city ?? null };
+            place = {
+              country: cached.country ?? null,
+              city: cached.city ?? null,
+            };
             cache.set(key, place);
             dbCacheHits += 1;
           }
@@ -758,7 +807,11 @@ export default function HomeScreen() {
           place = { country: null, city: null };
           cache.set(key, place);
           /* 2026.04.22 현재 배치에서 처리 실패한 좌표를 geocode 작업 큐에 남겨 추후 재시도 가능하게 하기 위해 추가 by June */
-          pendingJobMap.set(key, { geoKey: key, latitude: lat, longitude: lon });
+          pendingJobMap.set(key, {
+            geoKey: key,
+            latitude: lat,
+            longitude: lon,
+          });
           // 간단 백오프
           await sleep(delayMs * 4);
         }
@@ -769,7 +822,8 @@ export default function HomeScreen() {
 
       // 상한 초과 or 캐시된 값 사용
       if (!place) place = { country: null, city: null };
-      updated.push({ ...img, ...place });
+      /* 2026.05.27 ph:// 폴백으로 복구한 좌표(imgLocation)를 결과 photo에 반영 — 그래야 ShowOnMap이 마커를 표시할 수 있음 by yen */
+      updated.push({ ...img, location: imgLocation, ...place });
     }
 
     if (cacheUpsertRows.length > 0) {
@@ -791,16 +845,20 @@ export default function HomeScreen() {
     }
 
     /* 2026.04.22 위치 보강 처리 시간을 캐시 hit/lookup/큐 적재량과 함께 기록해 다음 최적화 근거를 확보하기 위해 계측을 추가 by June */
-    recordPerfMetric("home.images_with_location.ms", Date.now() - geocodeStartedAt, {
-      context: {
-        inputCount: images.length,
-        reverseLookups: lookups,
-        memoryCacheHits,
-        dbCacheHits,
-        queuedJobs: pendingJobMap.size,
+    recordPerfMetric(
+      "home.images_with_location.ms",
+      Date.now() - geocodeStartedAt,
+      {
+        context: {
+          inputCount: images.length,
+          reverseLookups: lookups,
+          memoryCacheHits,
+          dbCacheHits,
+          queuedJobs: pendingJobMap.size,
+        },
+        logEvery: 2,
       },
-      logEvery: 2,
-    });
+    );
 
     return updated;
   }
@@ -810,37 +868,40 @@ export default function HomeScreen() {
   const getAssetTimestampMs = (asset: MediaLibrary.Asset) => {
     const created =
       asset.creationTime && asset.creationTime > 0 ? asset.creationTime : null;
-  
+
     const modified =
       asset.modificationTime && asset.modificationTime > 0
         ? asset.modificationTime
         : null;
-  
+
     return created ?? modified;
   };
 
   /** 날짜/시간 필터 검사 */
   const matchesDateTimeFilter = (
     asset: MediaLibrary.Asset,
-    currentFilter: FilterState
+    currentFilter: FilterState,
   ) => {
     const tsMs = getAssetTimestampMs(asset);
-  
+
     // timestamp 없는 사진도 포함
     if (!tsMs) return true;
-  
+
     if (
       tsMs < dayStartMs(currentFilter.dateStart) ||
       tsMs >= dayEndNextMs(currentFilter.dateEnd)
     ) {
       return false;
     }
-  
+
     return inTimeWindow(tsMs, currentFilter.timeStart, currentFilter.timeEnd);
   };
 
   /** 페이지 1번 fetch */
-  const fetchAssetsPage = async (params?: { after?: string | null; first?: number }) => {
+  const fetchAssetsPage = async (params?: {
+    after?: string | null;
+    first?: number;
+  }) => {
     const result = await MediaLibrary.getAssetsAsync({
       first: params?.first ?? FETCH_PAGE_SIZE,
       mediaType: MediaLibrary.MediaType.photo,
@@ -859,17 +920,61 @@ export default function HomeScreen() {
   };
 
   /** asset → Photo 정규화 */
-  const hydrateAssetsToPhotos = async (assets: MediaLibrary.Asset[]): Promise<Photo[]> => {
-    const base = assets.map((asset) => ({
-      uri: asset.uri,
-      takenAt:
-        asset.creationTime && asset.creationTime > 0
-          ? asset.creationTime
-          : asset.modificationTime && asset.modificationTime > 0
-          ? asset.modificationTime
-          : null,
-      location: null,
-    }));
+  const hydrateAssetsToPhotos = async (
+    assets: MediaLibrary.Asset[],
+    /* 2026.05.26 Android의 경우 bulk getAssetsAsync가 location을 반환하지 않으므로 위치 필터가 필요한 경로에서만
+       per-asset getAssetInfoAsync를 호출해 location을 보강하기 위한 옵션 추가 by yen */
+    options?: { enrichLocationOnAndroid?: boolean },
+  ): Promise<Photo[]> => {
+    const shouldEnrichOnAndroid =
+      Platform.OS === "android" && !!options?.enrichLocationOnAndroid;
+
+    const base = await Promise.all(
+      assets.map(async (asset) => {
+        const takenAt =
+          asset.creationTime && asset.creationTime > 0
+            ? asset.creationTime
+            : asset.modificationTime && asset.modificationTime > 0
+              ? asset.modificationTime
+              : null;
+
+        /* iOS는 bulk asset에 location이 포함되므로 우선 그 값을 사용 */
+        const rawLoc = (asset as any).location;
+        let location: { latitude: number; longitude: number } | null = null;
+        if (
+          rawLoc &&
+          Number.isFinite(Number(rawLoc.latitude)) &&
+          Number.isFinite(Number(rawLoc.longitude))
+        ) {
+          location = {
+            latitude: Number(rawLoc.latitude),
+            longitude: Number(rawLoc.longitude),
+          };
+        }
+
+        /* Android에서 위치 필터가 적용된 경로에서만 추가 비용 감수하고 per-asset 보강 */
+        if (!location && shouldEnrichOnAndroid) {
+          try {
+            const info = await MediaLibrary.getAssetInfoAsync(asset.id);
+            if (info.location) {
+              const lat = Number(info.location.latitude);
+              const lon = Number(info.location.longitude);
+              if (Number.isFinite(lat) && Number.isFinite(lon)) {
+                location = { latitude: lat, longitude: lon };
+              }
+            }
+          } catch {
+            // best-effort: skip on failure, photo will simply not match location filter
+          }
+        }
+
+        return {
+          uri: asset.uri,
+          takenAt,
+          location,
+        };
+      }),
+    );
     /* 2026.04.22 썸네일 리스트 단계에서는 원본 URI를 유지해 대량 localUri 변환으로 인한 메모리 피크를 줄이고 상세 진입 시점에만 고해상도 로드를 하도록 변경 by June */
     return base;
   };
@@ -879,6 +984,11 @@ export default function HomeScreen() {
     const { countries, cities } = currentFilter;
 
     if (countries.length === 0 && cities.length === 0) {
+      return items;
+    }
+
+    /* 2026.05.27 country/city 양쪽 모두 "All" 센티널이면 위치 없는 사진까지 포함해 전부 반환 by yen */
+    if (countries.includes("All") && cities.includes("All")) {
       return items;
     }
 
@@ -901,7 +1011,7 @@ export default function HomeScreen() {
   /** geocoding 필요 여부 판별 */
   const shouldUseGeocoding = (
     currentFilter: FilterState,
-    _mode: "initial" | "background" | "append" | "filter-reset"
+    _mode: "initial" | "background" | "append" | "filter-reset",
   ) => {
     const hasLocationFilter =
       currentFilter.countries.length > 0 || currentFilter.cities.length > 0;
@@ -916,115 +1026,122 @@ export default function HomeScreen() {
 
   /* 2026.05.06 사용자가 탭/스와이프로 선택한 단일 사진은 즉시 위치를 우선 보강해 체감 지연을 줄이기 위해 추가 by June */
   /* 2026.05.06 선택된 사진은 백그라운드 순서와 무관하게 즉시 위치를 보강해 상세 진입 직후 위치 공백 시간을 줄이기 위해 추가 by June */
-  const prioritizePhotoLocation = useCallback(async (photo: Photo | undefined) => {
-    if (!photo?.uri) return;
-    if (photo.city || photo.country) return;
-    if (priorityLocationInFlightRef.current.has(photo.uri)) return;
+  const prioritizePhotoLocation = useCallback(
+    async (photo: Photo | undefined) => {
+      if (!photo?.uri) return;
+      if (photo.city || photo.country) return;
+      if (priorityLocationInFlightRef.current.has(photo.uri)) return;
 
-    priorityLocationInFlightRef.current.add(photo.uri);
-    try {
-      let latitude: number | null =
-        photo.location ? Number(photo.location.latitude) : null;
-      let longitude: number | null =
-        photo.location ? Number(photo.location.longitude) : null;
+      priorityLocationInFlightRef.current.add(photo.uri);
+      try {
+        let latitude: number | null = photo.location
+          ? Number(photo.location.latitude)
+          : null;
+        let longitude: number | null = photo.location
+          ? Number(photo.location.longitude)
+          : null;
 
-      const hasValidCoords =
-        typeof latitude === "number" &&
-        typeof longitude === "number" &&
-        Number.isFinite(latitude) &&
-        Number.isFinite(longitude);
+        const hasValidCoords =
+          typeof latitude === "number" &&
+          typeof longitude === "number" &&
+          Number.isFinite(latitude) &&
+          Number.isFinite(longitude);
 
-      if (!hasValidCoords && photo.uri.startsWith("ph://")) {
-        try {
-          const info = await MediaLibrary.getAssetInfoAsync(photo.uri.replace("ph://", ""));
-          if (info.location) {
-            const lat = Number(info.location.latitude);
-            const lon = Number(info.location.longitude);
-            if (Number.isFinite(lat) && Number.isFinite(lon)) {
-              latitude = lat;
-              longitude = lon;
+        if (!hasValidCoords && photo.uri.startsWith("ph://")) {
+          try {
+            const info = await MediaLibrary.getAssetInfoAsync(
+              photo.uri.replace("ph://", ""),
+            );
+            if (info.location) {
+              const lat = Number(info.location.latitude);
+              const lon = Number(info.location.longitude);
+              if (Number.isFinite(lat) && Number.isFinite(lon)) {
+                latitude = lat;
+                longitude = lon;
+              }
             }
+          } catch (e) {
+            console.log("priority location asset info error:", e);
+          }
+        }
+
+        if (
+          typeof latitude !== "number" ||
+          typeof longitude !== "number" ||
+          !Number.isFinite(latitude) ||
+          !Number.isFinite(longitude)
+        ) {
+          return;
+        }
+
+        let city: string | null = null;
+        let country: string | null = null;
+        const geoKey = toGeoKey(latitude, longitude, 2);
+
+        try {
+          const cached = await getGeocodeCacheByKey(geoKey);
+          if (cached) {
+            city = cached.city ?? null;
+            country = cached.country ?? null;
           }
         } catch (e) {
-          console.log("priority location asset info error:", e);
+          console.log("priority geocode cache read error:", e);
         }
-      }
 
-      if (
-        typeof latitude !== "number" ||
-        typeof longitude !== "number" ||
-        !Number.isFinite(latitude) ||
-        !Number.isFinite(longitude)
-      ) {
-        return;
-      }
-
-      let city: string | null = null;
-      let country: string | null = null;
-      const geoKey = toGeoKey(latitude, longitude, 2);
-
-      try {
-        const cached = await getGeocodeCacheByKey(geoKey);
-        if (cached) {
-          city = cached.city ?? null;
-          country = cached.country ?? null;
-        }
-      } catch (e) {
-        console.log("priority geocode cache read error:", e);
-      }
-
-      if (!city && !country) {
-        try {
-          const [res] = await Location.reverseGeocodeAsync({
-            latitude,
-            longitude,
-          });
-          country = res?.country ?? null;
-          city = res?.city ?? res?.subregion ?? null;
-
-          await upsertGeocodeCacheRows([
-            {
-              geoKey,
+        if (!city && !country) {
+          try {
+            const [res] = await Location.reverseGeocodeAsync({
               latitude,
               longitude,
-              country,
-              city,
-              updatedAt: Date.now(),
-            },
-          ]);
-        } catch (e) {
-          console.log("priority reverse geocode error:", e);
-        }
-      }
+            });
+            country = res?.country ?? null;
+            city = res?.city ?? res?.subregion ?? null;
 
-      setPhotos((prev) =>
-        prev.map((p) =>
-          p.uri === photo.uri
-            ? {
-                ...p,
-                location: p.location ?? { latitude, longitude },
-                city: city ?? p.city,
-                country: country ?? p.country,
-              }
-            : p
-        )
-      );
-      setPhotosAll((prev) =>
-        prev.map((p) =>
-          p.uri === photo.uri
-            ? {
-                ...p,
-                location: p.location ?? { latitude, longitude },
-                city: city ?? p.city,
-                country: country ?? p.country,
-              }
-            : p
-        )
-      );
-    } finally {
-      priorityLocationInFlightRef.current.delete(photo.uri);
-    }
-  }, []);
+            await upsertGeocodeCacheRows([
+              {
+                geoKey,
+                latitude,
+                longitude,
+                country,
+                city,
+                updatedAt: Date.now(),
+              },
+            ]);
+          } catch (e) {
+            console.log("priority reverse geocode error:", e);
+          }
+        }
+
+        setPhotos((prev) =>
+          prev.map((p) =>
+            p.uri === photo.uri
+              ? {
+                  ...p,
+                  location: p.location ?? { latitude, longitude },
+                  city: city ?? p.city,
+                  country: country ?? p.country,
+                }
+              : p,
+          ),
+        );
+        setPhotosAll((prev) =>
+          prev.map((p) =>
+            p.uri === photo.uri
+              ? {
+                  ...p,
+                  location: p.location ?? { latitude, longitude },
+                  city: city ?? p.city,
+                  country: country ?? p.country,
+                }
+              : p,
+          ),
+        );
+      } finally {
+        priorityLocationInFlightRef.current.delete(photo.uri);
+      }
+    },
+    [],
+  );
 
   /* 2026.05.06 초기 썸네일 선노출 후 위치(좌표→도시/국가)를 백그라운드에서 보강해 위치 누락 체감을 줄이기 위해 팔로업 함수를 추가 by June */
   /* 2026.05.06 초기 썸네일 노출 후 화면 상단 가시 범위 후보를 점진 보강해 썸네일 속도는 유지하면서 위치 누락을 줄이기 위해 추가 by June */
@@ -1069,7 +1186,7 @@ export default function HomeScreen() {
           } catch {
             return photo;
           }
-        })
+        }),
       );
 
       const withPlaces = await imagesWithLocation(withCoordinates, {
@@ -1090,7 +1207,7 @@ export default function HomeScreen() {
                 country: next.country ?? photo.country,
               }
             : photo;
-        })
+        }),
       );
       setPhotosAll((prev) =>
         prev.map((photo) => {
@@ -1103,7 +1220,7 @@ export default function HomeScreen() {
                 country: next.country ?? photo.country,
               }
             : photo;
-        })
+        }),
       );
     } finally {
       locationFollowUpInFlightRef.current = false;
@@ -1114,16 +1231,18 @@ export default function HomeScreen() {
   /* 2026.04.15 정렬 함수 참조를 고정해 DB 조회 콜백이 렌더마다 재생성되지 않도록 하기 위해 useCallback 적용 by June */
   const sortPhotosForDisplay = useCallback((items: Photo[]) => {
     return [...items].sort((a, b) => {
-      const aHasTs = typeof a.takenAt === "number" && Number.isFinite(a.takenAt);
-      const bHasTs = typeof b.takenAt === "number" && Number.isFinite(b.takenAt);
-  
+      const aHasTs =
+        typeof a.takenAt === "number" && Number.isFinite(a.takenAt);
+      const bHasTs =
+        typeof b.takenAt === "number" && Number.isFinite(b.takenAt);
+
       if (aHasTs && bHasTs) {
         return (a.takenAt as number) - (b.takenAt as number);
       }
-  
+
       if (aHasTs && !bHasTs) return -1;
       if (!aHasTs && bHasTs) return 1;
-  
+
       return 0;
     });
   }, []);
@@ -1133,13 +1252,13 @@ export default function HomeScreen() {
   const dedupePhotosByUri = useCallback((items: Photo[]) => {
     const seen = new Set<string>();
     const out: Photo[] = [];
-  
+
     for (const item of items) {
       if (seen.has(item.uri)) continue;
       seen.add(item.uri);
       out.push(item);
     }
-  
+
     return out;
   }, []);
 
@@ -1164,13 +1283,16 @@ export default function HomeScreen() {
   }, []);
 
   /* 2026.04.22 사용자가 사진을 눌렀을 때 해당 항목만 고해상도 URI로 보강해 리스트 전체 변환 없이 상세 품질을 확보하기 위해 뷰어 전용 로더를 추가 by June */
-  const resolveViewerDetailUri = useCallback(async (sourceUri: string) => {
-    const resolved = await resolveDisplayUri(sourceUri);
-    setViewerDetailUriMap((prev) => {
-      if (prev[sourceUri] === resolved) return prev;
-      return { ...prev, [sourceUri]: resolved };
-    });
-  }, [resolveDisplayUri]);
+  const resolveViewerDetailUri = useCallback(
+    async (sourceUri: string) => {
+      const resolved = await resolveDisplayUri(sourceUri);
+      setViewerDetailUriMap((prev) => {
+        if (prev[sourceUri] === resolved) return prev;
+        return { ...prev, [sourceUri]: resolved };
+      });
+    },
+    [resolveDisplayUri],
+  );
 
   useEffect(() => {
     if (Platform.OS !== "ios") return;
@@ -1186,7 +1308,9 @@ export default function HomeScreen() {
     let cancelled = false;
     void (async () => {
       const pairs = await Promise.all(
-        targets.map(async (uri) => [uri, await resolveDisplayUri(uri)] as const)
+        targets.map(
+          async (uri) => [uri, await resolveDisplayUri(uri)] as const,
+        ),
       );
       if (cancelled) return;
 
@@ -1210,7 +1334,8 @@ export default function HomeScreen() {
 
   /* 2026.05.06 위치 필터 미사용 기본 화면에서도 위치 정보가 지연 보강되도록 목록 변경 후 백그라운드 팔로업을 수행하기 위해 추가 by June */
   useEffect(() => {
-    const hasLocationFilter = filter.countries.length > 0 || filter.cities.length > 0;
+    const hasLocationFilter =
+      filter.countries.length > 0 || filter.cities.length > 0;
     if (hasLocationFilter) return;
     if (initialLoading || filterLoading || appendLoading) return;
     if (photos.length === 0) return;
@@ -1229,12 +1354,12 @@ export default function HomeScreen() {
   /* 2026.04.15 DB 조회 결과를 기존 화면 Photo 타입으로 안전하게 변환해 기존 렌더링/로케이션 코드와 호환시키기 위해 추가 by June */
   const mapDbRowsToPhotos = useCallback(
     (
-      rows: Array<{
+      rows: {
         uri: string;
         takenAt: number | null;
         latitude: number | null;
         longitude: number | null;
-      }>
+      }[],
     ): Photo[] => {
       return rows.map((row) => ({
         uri: row.uri,
@@ -1248,7 +1373,7 @@ export default function HomeScreen() {
             : null,
       }));
     },
-    []
+    [],
   );
 
   /* 2026.04.15 날짜/시간 전용 DB 조회 경로를 분리해 로케이션 필터 영역 영향 없이 성능 테스트 가능한 모듈 단위를 만들기 위해 추가 by June */
@@ -1268,7 +1393,7 @@ export default function HomeScreen() {
           {
             context: { usedDb: false, reason: "location_filter", limit },
             logEvery: 3,
-          }
+          },
         );
         return {
           usedDb: false as const,
@@ -1287,7 +1412,7 @@ export default function HomeScreen() {
           {
             context: { usedDb: false, reason: "metadata_empty", limit },
             logEvery: 3,
-          }
+          },
         );
         return {
           usedDb: false as const,
@@ -1329,7 +1454,7 @@ export default function HomeScreen() {
           {
             context: { usedDb: false, reason: "index_incomplete_empty", limit },
             logEvery: 2,
-          }
+          },
         );
         return {
           usedDb: false as const,
@@ -1340,17 +1465,21 @@ export default function HomeScreen() {
       }
 
       /* 2026.04.22 DB 조회 성공 지연을 결과 건수와 함께 기록해 장기 범위 검색 최적화 튜닝 포인트를 찾기 위해 계측을 추가 by June */
-      recordPerfMetric("home.db_datetime_query.ms", Date.now() - dbLoadStartedAt, {
-        context: {
-          usedDb: true,
-          resultCount: photosFromDb.length,
-          limit,
-          offset,
-          dbHasMore,
-          isIndexComplete,
+      recordPerfMetric(
+        "home.db_datetime_query.ms",
+        Date.now() - dbLoadStartedAt,
+        {
+          context: {
+            usedDb: true,
+            resultCount: photosFromDb.length,
+            limit,
+            offset,
+            dbHasMore,
+            isIndexComplete,
+          },
+          logEvery: 2,
         },
-        logEvery: 2,
-      });
+      );
 
       return {
         usedDb: true as const,
@@ -1360,29 +1489,60 @@ export default function HomeScreen() {
         nextOffset: offset + photosFromDb.length,
       };
     },
-    [dayEndNextMs, dayStartMs, dedupePhotosByUri, mapDbRowsToPhotos, sortPhotosForDisplay]
+    [
+      dayEndNextMs,
+      dayStartMs,
+      dedupePhotosByUri,
+      mapDbRowsToPhotos,
+      sortPhotosForDisplay,
+    ],
   );
+
+  /* 2026.05.26 Android에서 Location.reverseGeocodeAsync가 위치 권한을 요구하지만 앱 측에서 권한 요청을
+     하지 않아 country/city 보강이 영구 차단되던 문제 수정. 사용자에게 한 번만 묻고 결과를 모듈 스코프에
+     캐시해 반복 다이얼로그를 방지 by yen */
+  const ensureLocationPermissionOnce = async () => {
+    if (locationPermissionAskedRef.current) return;
+    locationPermissionAskedRef.current = true;
+    try {
+      const current = await Location.getForegroundPermissionsAsync();
+      if (current.status === "granted") return;
+      if (!current.canAskAgain) return;
+      await Location.requestForegroundPermissionsAsync();
+    } catch {
+      // 권한 요청 실패는 무시 — 위치 필터만 비어 있고 사진 로딩에는 영향 없음
+    }
+  };
 
   /** 사진 접근 권한 처리 */
   const ensurePhotoPermission = async () => {
     const { status, canAskAgain } = await MediaLibrary.getPermissionsAsync();
-  
+
     let hasPerm = status === "granted";
-  
+
     if (!hasPerm && canAskAgain) {
       const req = await MediaLibrary.requestPermissionsAsync(false);
       hasPerm = req.status === "granted";
     }
-  
-    if (hasPerm) return true;
-  
+
+    if (hasPerm) {
+      /* 2026.05.26 Android에서 Location.reverseGeocodeAsync는 위치 권한이 있어야 동작 — 사진 권한 획득 후
+         일회성으로 foreground 위치 권한을 요청해 country/city 보강이 진행되도록 처리. iOS는 권한 없이도
+         reverse geocode가 동작하므로 건너뜀. 사용자가 거부해도 사진 로딩은 그대로 동작하며 위치 필터만
+         빈 상태로 유지됨 by yen */
+      if (Platform.OS === "android") {
+        await ensureLocationPermissionOnce();
+      }
+      return true;
+    }
+
     if (!canAskAgain) {
       /* 2026.04.22 권한 거부 안내 알럿을 다국어로 통일해 언어 설정과 사용자 안내 문구를 일치시키기 위해 수정 by June */
       Alert.alert(
         t("permissionRequiredTitle", "Permission Required"),
         t(
           "photoPermissionSettingsMessage",
-          "To display photos, allow photo access in Settings."
+          "To display photos, allow photo access in Settings.",
         ),
         [
           { text: t("cancel", "Cancel"), style: "cancel" },
@@ -1394,16 +1554,16 @@ export default function HomeScreen() {
               });
             },
           },
-        ]
+        ],
       );
     } else {
       /* 2026.04.22 재요청 가능 상태의 권한 알럿도 다국어 처리해 언어별 UX 일관성을 유지하기 위해 수정 by June */
       Alert.alert(
         t("permissionRequiredTitle", "Permission Required"),
-        t("photoPermissionRequired", "Photo access permission is required.")
+        t("photoPermissionRequired", "Photo access permission is required."),
       );
     }
-  
+
     return false;
   };
 
@@ -1425,11 +1585,15 @@ export default function HomeScreen() {
     let nextPage = true;
     let totalCount = 0;
     const collected: Photo[] = [];
-  
+
     let pageCount = 0;
     const MAX_PAGES = 5;
 
-    while (nextPage && collected.length < targetCount && pageCount < MAX_PAGES) {
+    while (
+      nextPage &&
+      collected.length < targetCount &&
+      pageCount < MAX_PAGES
+    ) {
       /* 2026.04.22 페이지 단위 처리 지연을 계측해 어느 단계에서 느려지는지 분리 진단하기 위해 타이머를 추가 by June */
       const pageStartedAt = Date.now();
       pageCount += 1;
@@ -1437,28 +1601,33 @@ export default function HomeScreen() {
         after: cursor,
         first: FETCH_PAGE_SIZE,
       });
-  
+
       totalCount = result.totalCount ?? totalCount;
-  
+
       const assets = result.assets ?? [];
       const dateTimeMatched = assets.filter((asset) =>
-        matchesDateTimeFilter(asset, currentFilter)
+        matchesDateTimeFilter(asset, currentFilter),
       );
-  
-      let photosChunk = await hydrateAssetsToPhotos(dateTimeMatched);
-  
-      if (shouldUseGeocoding(currentFilter, mode)) {
+
+      /* 2026.05.26 위치 필터가 활성일 때만 Android에서 per-asset location 보강을 활성화 — 그래야
+         Android에서 country/city 필터링이 실제로 동작 by yen */
+      const needsLocation = shouldUseGeocoding(currentFilter, mode);
+      let photosChunk = await hydrateAssetsToPhotos(dateTimeMatched, {
+        enrichLocationOnAndroid: needsLocation,
+      });
+
+      if (needsLocation) {
         photosChunk = await imagesWithLocation(photosChunk, {
           maxLookups: 60,
           precision: 2,
           delayMs: 150,
         });
       }
-  
+
       const locationMatched = applyLocationFilter(photosChunk, currentFilter);
-  
+
       collected.push(...locationMatched);
-  
+
       cursor = result.endCursor ?? null;
       nextPage = result.hasNextPage;
 
@@ -1484,7 +1653,7 @@ export default function HomeScreen() {
       },
       logEvery: 2,
     });
-  
+
     return {
       photos: collected,
       endCursor: cursor,
@@ -1495,30 +1664,37 @@ export default function HomeScreen() {
 
   /** 앱 기동 후 초기 진입 시 사진 로드 빠르게 처리 */
   const loadInitialPhotos = useCallback(async () => {
-
     let initialHasNextPage = false;
     /* 2026.04.22 초기 진입 로딩 총 시간을 계측해 사용자 첫 체감 속도를 p50/p95로 관리하기 위해 타이머를 추가 by June */
     const initialLoadStartedAt = Date.now();
     /* 2026.04.22 초기 로드가 DB/MediaLibrary 중 어떤 경로를 탔는지 성능 로그에 남기기 위해 경로 라벨 변수를 추가 by June */
-    let initialLoadPath: "db" | "medialibrary" | "permission_denied" | "skipped" = "skipped";
+    let initialLoadPath:
+      | "db"
+      | "medialibrary"
+      | "permission_denied"
+      | "skipped" = "skipped";
 
     if (requestInFlightRef.current) return;
-  
+
     const ok = await ensurePhotoPermission();
     if (!ok) {
       initialLoadPath = "permission_denied";
       /* 2026.04.22 권한 거부 케이스도 계측에 포함해 초기 로드 실패 원인 비율을 확인하기 위해 로그를 추가 by June */
-      recordPerfMetric("home.initial_load.ms", Date.now() - initialLoadStartedAt, {
-        context: { path: initialLoadPath },
-        logEvery: 1,
-      });
+      recordPerfMetric(
+        "home.initial_load.ms",
+        Date.now() - initialLoadStartedAt,
+        {
+          context: { path: initialLoadPath },
+          logEvery: 1,
+        },
+      );
       return;
     }
-  
+
     requestInFlightRef.current = true;
     setInitialLoading(true);
     setEmptyMessage(null);
-  
+
     try {
       /* 2026.04.15 초기 진입에서도 날짜/시간 DB 경로를 우선 사용해 첫 체감 속도 테스트가 가능하도록 분기 추가 by June */
       const dbResult = await tryLoadPhotosFromDbForDateTime(
@@ -1530,7 +1706,7 @@ export default function HomeScreen() {
           countries: [],
           cities: [],
         },
-        INITIAL_TARGET_COUNT
+        INITIAL_TARGET_COUNT,
       );
 
       if (dbResult.usedDb) {
@@ -1549,7 +1725,7 @@ export default function HomeScreen() {
             countries: [],
             cities: [],
           },
-          initialDbPhotos.length
+          initialDbPhotos.length,
         );
         setEndCursor(null);
         /* 2026.04.22 초기 DB 로드에서도 남은 결과가 있으면 스크롤 append가 가능하도록 hasNextPage를 DB hasMore 기준으로 설정 by June */
@@ -1565,7 +1741,6 @@ export default function HomeScreen() {
         return;
       }
 
-      
       // 1. 딱 1페이지만 가져온다
       initialLoadPath = "medialibrary";
       const result = await fetchAssetsPage({
@@ -1574,28 +1749,28 @@ export default function HomeScreen() {
       });
 
       initialHasNextPage = result.hasNextPage;
-  
+
       const assets = result.assets ?? [];
-  
+
       // 2. 빠른 변환 (assetInfo 없음)
       /* 2026.04.15 hydrate 단계에서 URI 정규화를 비동기로 수행하도록 변경해 ph:// 충돌을 초기 로딩에서도 방지하기 위해 수정 by June */
       let photosFast = await hydrateAssetsToPhotos(assets);
-  
+
       // 3. 날짜 필터만 간단 적용
       photosFast = photosFast.filter((p) => {
         if (!p.takenAt) return true;
-  
+
         return (
           p.takenAt >= dayStartMs(oneYearAgo) &&
           p.takenAt < dayEndNextMs(new Date())
         );
       });
-  
+
       // 4. 최대 30장만 잘라서 즉시 보여줌
       const initial = sortPhotosForDisplay(
-        dedupePhotosByUri(photosFast).slice(0, INITIAL_TARGET_COUNT)
+        dedupePhotosByUri(photosFast).slice(0, INITIAL_TARGET_COUNT),
       );
-  
+
       setPhotos(initial);
       setPhotosAll(initial);
       /* 2026.04.22 초기 MediaLibrary 경로에서도 현재 표출 건수를 progress에 반영해 사용자에게 로드 상태를 보여주기 위해 추가 by June */
@@ -1608,37 +1783,40 @@ export default function HomeScreen() {
           countries: [],
           cities: [],
         },
-        initial.length
+        initial.length,
       );
       setEndCursor(result.endCursor ?? null);
       setHasNextPage(result.hasNextPage);
       /* 2026.04.22 MediaLibrary 경로에서는 DB 오프셋 상태가 남아 잘못 append되지 않도록 DB 페이지네이션 상태를 비활성화 by June */
       dbDateTimePagingRef.current = { enabled: false, offset: 0 };
       setDidInitialLoad(true);
-  
+
       // 5. 즉시 백그라운드 로딩 시작
       // setTimeout(() => {
       //   loadMorePhotos({ mode: "background" });
       // }, 0);
-  
     } catch (err) {
       console.log("initial load error:", err);
     } finally {
       /* 2026.04.22 초기 로드 전체 시간을 경로/결과건수와 함께 기록해 실제 체감 성능 회귀를 빠르게 탐지하기 위해 계측을 추가 by June */
-      recordPerfMetric("home.initial_load.ms", Date.now() - initialLoadStartedAt, {
-        context: {
-          path: initialLoadPath,
-          visibleCount: photosRef.current.length,
-          initialHasNextPage,
+      recordPerfMetric(
+        "home.initial_load.ms",
+        Date.now() - initialLoadStartedAt,
+        {
+          context: {
+            path: initialLoadPath,
+            visibleCount: photosRef.current.length,
+            initialHasNextPage,
+          },
+          logEvery: 1,
         },
-        logEvery: 1,
-      });
+      );
       setInitialLoading(false);
       requestInFlightRef.current = false;
-      
+
       /* 2026.04.22 자동 background append 대신 하단 명시적 버튼으로만 다음 페이지를 로드하도록 UX 정책을 변경해 예측 가능한 동작을 제공하기 위해 자동 호출 제거 by June */
     }
-  /* 2026.04.15 loadMorePhotos 선언 순서와의 순환 참조를 피하기 위해 의존성 배열에서 제외하고 기존 동작과 동일하게 후속 로딩을 유지하도록 수정 by June */
+    /* 2026.04.15 loadMorePhotos 선언 순서와의 순환 참조를 피하기 위해 의존성 배열에서 제외하고 기존 동작과 동일하게 후속 로딩을 유지하도록 수정 by June */
   }, [oneYearAgo, refreshFilterProgress, tryLoadPhotosFromDbForDateTime]);
 
   /** 날짜 필터 변경 처리 - 유저가 날짜 변경 시 해당 날짜 조건에 맞는 결과를 찾을 때까지 다시 탐색 */
@@ -1647,8 +1825,9 @@ export default function HomeScreen() {
     /* 2026.04.22 필터 변경 시 재검색 총 시간을 계측해 사용자 액션 체감 속도를 p50/p95로 관리하기 위해 타이머를 추가 by June */
     const reloadStartedAt = Date.now();
     /* 2026.04.22 필터 재검색 경로(DB/MediaLibrary)를 로그에서 구분하기 위해 경로 라벨 변수를 추가 by June */
-    let reloadPath: "db" | "medialibrary" | "permission_denied" | "skipped" = "skipped";
-  
+    let reloadPath: "db" | "medialibrary" | "permission_denied" | "skipped" =
+      "skipped";
+
     const ok = await ensurePhotoPermission();
     if (!ok) {
       reloadPath = "permission_denied";
@@ -1659,26 +1838,26 @@ export default function HomeScreen() {
       });
       return;
     }
-  
+
     requestInFlightRef.current = true;
     setFilterLoading(true);
     setEmptyMessage(null);
-    setPhotos([]);          // 이전 결과 즉시 제거
-    setPhotosAll([]);       // 이전 결과 즉시 제거
+    setPhotos([]); // 이전 결과 즉시 제거
+    setPhotosAll([]); // 이전 결과 즉시 제거
     /* 2026.04.22 필터 변경 시 이전 상세 URI 캐시를 비워 누적 메모리 증가를 방지하기 위해 초기화 추가 by June */
     setViewerDetailUriMap({});
     /* 2026.04.22 필터 재검색 시작 시 progress를 초기화해 이전 필터 값이 남아 혼동되는 것을 방지하기 위해 추가 by June */
     setProgress({ loaded: 0, total: null });
-    setEndCursor(null);     // 새 필터는 처음부터 다시 시작
-    setHasNextPage(true);   // 새 필터는 다시 탐색 가능 상태로 초기화
+    setEndCursor(null); // 새 필터는 처음부터 다시 시작
+    setHasNextPage(true); // 새 필터는 다시 탐색 가능 상태로 초기화
     /* 2026.04.22 필터 변경 시 이전 DB 오프셋이 남아 다음 조회가 어긋나는 문제를 막기 위해 페이지네이션 상태를 먼저 초기화 by June */
     dbDateTimePagingRef.current = { enabled: false, offset: 0 };
-  
+
     try {
       /* 2026.04.15 날짜/시간 필터 테스트를 위해 로케이션 필터 미사용 시 DB 조회를 우선 적용하고, 실패/미적재 시 기존 탐색으로 폴백하기 위해 추가 by June */
       const dbResult = await tryLoadPhotosFromDbForDateTime(
         filter,
-        DB_QUERY_LIMIT
+        DB_QUERY_LIMIT,
       );
 
       if (dbResult.usedDb) {
@@ -1697,7 +1876,7 @@ export default function HomeScreen() {
           });
 
           const fallbackSorted = sortPhotosForDisplay(
-            dedupePhotosByUri(fallbackResult.photos)
+            dedupePhotosByUri(fallbackResult.photos),
           );
 
           setPhotos(fallbackSorted);
@@ -1706,7 +1885,7 @@ export default function HomeScreen() {
           setEndCursor(fallbackResult.endCursor);
           setHasNextPage(fallbackResult.hasNextPage);
           setEmptyMessage(
-            fallbackSorted.length === 0 ? EMPTY_DEFAULT_MESSAGE : null
+            fallbackSorted.length === 0 ? EMPTY_DEFAULT_MESSAGE : null,
           );
 
           reloadPath = "medialibrary";
@@ -1741,11 +1920,9 @@ export default function HomeScreen() {
         startCursor: null,
         mode: "filter-reset",
       });
-  
-      const sorted = sortPhotosForDisplay(
-        dedupePhotosByUri(result.photos)
-      );
-  
+
+      const sorted = sortPhotosForDisplay(dedupePhotosByUri(result.photos));
+
       setPhotos(sorted);
       setPhotosAll(sorted);
       /* 2026.04.22 MediaLibrary 경로에서도 현재 필터의 표출/전체 건수를 동기화해 append 전 진행률 기준을 맞추기 위해 추가 by June */
@@ -1754,7 +1931,7 @@ export default function HomeScreen() {
       setHasNextPage(result.hasNextPage);
       /* 2026.04.22 MediaLibrary 분기로 전환된 경우 DB 페이지네이션 상태를 끄고 커서 기반 append만 사용하도록 정리 by June */
       dbDateTimePagingRef.current = { enabled: false, offset: 0 };
-  
+
       if (sorted.length === 0) {
         setEmptyMessage(EMPTY_DEFAULT_MESSAGE);
       } else {
@@ -1766,7 +1943,7 @@ export default function HomeScreen() {
       /* 2026.04.22 필터 재조회 실패 알럿을 다국어 키로 전환해 비영어권 사용자도 즉시 원인을 이해할 수 있도록 수정 by June */
       Alert.alert(
         t("errorTitle", "Error"),
-        t("reloadPhotosError", "There was a problem while reloading photos.")
+        t("reloadPhotosError", "There was a problem while reloading photos."),
       );
     } finally {
       /* 2026.04.22 필터 재검색 시간을 경로/결과건수와 함께 기록해 긴 기간 필터 성능 회귀를 빠르게 검출하기 위해 계측을 추가 by June */
@@ -1781,7 +1958,13 @@ export default function HomeScreen() {
       setFilterLoading(false);
       requestInFlightRef.current = false;
     }
-  }, [filter, refreshFilterProgress, t, tryLoadPhotosFromDbForDateTime, triggerPhotoMetadataSync]);
+  }, [
+    filter,
+    refreshFilterProgress,
+    t,
+    tryLoadPhotosFromDbForDateTime,
+    triggerPhotoMetadataSync,
+  ]);
 
   /** append/background 공용 로드 처리 */
   const loadMorePhotos = useCallback(
@@ -1798,10 +1981,14 @@ export default function HomeScreen() {
         const ok = await ensurePhotoPermission();
         if (!ok) {
           /* 2026.04.22 권한 미허용으로 추가 로딩이 중단된 케이스를 별도 계측해 운영 로그 해석 정확도를 높이기 위해 추가 by June */
-          recordPerfMetric("home.load_more.ms", Date.now() - loadMoreStartedAt, {
-            context: { mode, permission: "denied" },
-            logEvery: 1,
-          });
+          recordPerfMetric(
+            "home.load_more.ms",
+            Date.now() - loadMoreStartedAt,
+            {
+              context: { mode, permission: "denied" },
+              logEvery: 1,
+            },
+          );
           return;
         }
 
@@ -1825,14 +2012,17 @@ export default function HomeScreen() {
           const dbResult = await tryLoadPhotosFromDbForDateTime(
             filter,
             APPEND_TARGET_COUNT,
-            dbOffset
+            dbOffset,
           );
 
           if (dbResult.usedDb) {
             /* 2026.04.22 append 결과가 0건이면 같은 offset 재요청 루프가 발생해 스크롤 시 과부하/종료로 이어질 수 있어 즉시 페이지네이션을 종료하도록 가드 추가 by June */
             if (dbResult.photos.length === 0) {
               setHasNextPage(false);
-              dbDateTimePagingRef.current = { enabled: false, offset: dbOffset };
+              dbDateTimePagingRef.current = {
+                enabled: false,
+                offset: dbOffset,
+              };
               return;
             }
 
@@ -1867,8 +2057,11 @@ export default function HomeScreen() {
           startCursor: endCursor,
           mode,
         });
-  
-        const merged = dedupePhotosByUri([...photosRef.current, ...result.photos]);
+
+        const merged = dedupePhotosByUri([
+          ...photosRef.current,
+          ...result.photos,
+        ]);
         const sorted = sortPhotosForDisplay(merged);
 
         setPhotos(sorted);
@@ -1903,7 +2096,16 @@ export default function HomeScreen() {
         }
       }
     },
-    [APPEND_TARGET_COUNT, endCursor, filter, filterLoading, hasNextPage, refreshFilterProgress, sortPhotosForDisplay, tryLoadPhotosFromDbForDateTime]
+    [
+      APPEND_TARGET_COUNT,
+      endCursor,
+      filter,
+      filterLoading,
+      hasNextPage,
+      refreshFilterProgress,
+      sortPhotosForDisplay,
+      tryLoadPhotosFromDbForDateTime,
+    ],
   );
   /** 2026.03.26 By June END */
 
@@ -1937,7 +2139,6 @@ export default function HomeScreen() {
 
   const loadPhotos = useCallback(
     async ({ reset = false }: { reset?: boolean } = {}) => {
-
       // 딜레이 처리 제대로 되는지 테스트 START
       loadCountRef.current += 1;
       console.log(`[LOAD #${loadCountRef.current}]`, new Date().toISOString());
@@ -1957,30 +2158,30 @@ export default function HomeScreen() {
         /* 2026.04.22 구 로딩 경로의 권한 알럿도 다국어 처리해 예외 경로에서 언어가 섞이지 않도록 수정 by June */
         Alert.alert(
           t("permissionRequiredTitle", "Permission Required"),
-          t("photoPermissionRequired", "Photo access permission is required.")
+          t("photoPermissionRequired", "Photo access permission is required."),
         );
         return;
       } else {
         console.log("Access permit OK");
       }
-  
+
       // 2) 중복 호출 / 페이지 끝 체크
       if (loading) return;
       if (!reset && !hasNextPage) return;
-  
+
       setLoading(true);
-  
+
       try {
         // 3) 한 페이지 가져오기
         const result = await MediaLibrary.getAssetsAsync({
           first: PAGE_SIZE,
           mediaType: MediaLibrary.MediaType.photo,
-          after: reset ? undefined : endCursor ?? undefined,
+          after: reset ? undefined : (endCursor ?? undefined),
           sortBy: [MediaLibrary.SortBy.creationTime],
         });
-  
-				updateTotalPhotos(result.totalCount ?? 0);
-				console.log("PHOTO COUNT:", photosAll.length);
+
+        updateTotalPhotos(result.totalCount ?? 0);
+        console.log("PHOTO COUNT:", photosAll.length);
         const assets = result.assets ?? [];
 
         // 4) 날짜/시간 필터
@@ -2001,7 +2202,7 @@ export default function HomeScreen() {
             "mod:",
             a.modificationTime,
             "tsMs:",
-            tsMs
+            tsMs,
           );
 
           // 1) 진짜로 둘 다 없으면 어떻게 할지 정책
@@ -2016,7 +2217,7 @@ export default function HomeScreen() {
           if (tsMs < dayStartMs(dateStart) || tsMs >= dayEndNextMs(dateEnd)) {
             return false;
           }
-  
+
           return inTimeWindow(tsMs, timeStart, timeEnd);
         });
 
@@ -2027,7 +2228,7 @@ export default function HomeScreen() {
           filtered.map(async (a) => {
             try {
               const info = await MediaLibrary.getAssetInfoAsync(a.id);
-              const uri = true ? info.localUri ?? info.uri : info.uri;
+              const uri = true ? (info.localUri ?? info.uri) : info.uri;
 
               return {
                 uri,
@@ -2052,7 +2253,7 @@ export default function HomeScreen() {
                   : null,
               };
             }
-          })
+          }),
         );
 
         console.log("photos.length 1: ", photos.length);
@@ -2082,7 +2283,7 @@ export default function HomeScreen() {
           const merged = reset
             ? filteredWithLocation
             : [...prev, ...filteredWithLocation];
-        
+
           return sortPhotosByTakenAtAsc(merged);
         });
         setEndCursor(result.endCursor ?? null);
@@ -2092,44 +2293,44 @@ export default function HomeScreen() {
         /* 2026.04.22 사진 로드 실패 알럿을 다국어로 통일해 오류 메시지 현지화 누락을 방지하기 위해 수정 by June */
         Alert.alert(
           t("errorTitle", "Error"),
-          t("loadPhotosError", "There was a problem while loading photos.")
+          t("loadPhotosError", "There was a problem while loading photos."),
         );
       } finally {
         setLoading(false);
       }
     },
-    [loading, hasNextPage, endCursor, filter, t]
+    [loading, hasNextPage, endCursor, filter, t],
   );
 
   /** 2026.03.26 by June */
   const loadPhotosForFilterReset = useCallback(async () => {
     if (loading) return;
-  
+
     const { status, canAskAgain } = await MediaLibrary.getPermissionsAsync();
-  
+
     let hasPerm = status === "granted";
-  
+
     if (!hasPerm && canAskAgain) {
       const req = await MediaLibrary.requestPermissionsAsync(false);
       hasPerm = req.status === "granted";
     }
-  
+
     if (!hasPerm) {
       /* 2026.04.22 필터 리셋 경로의 권한 알럿을 다국어 처리해 분기별 메시지 편차를 제거하기 위해 수정 by June */
       Alert.alert(
         t("permissionRequiredTitle", "Permission Required"),
-        t("photoPermissionRequired", "Photo access permission is required.")
+        t("photoPermissionRequired", "Photo access permission is required."),
       );
       return;
     }
-  
+
     setLoading(true);
-  
+
     try {
       let cursor: string | undefined = undefined;
       let nextPage = true;
       let collected: Photo[] = [];
-  
+
       while (nextPage && collected.length < 50) {
         const result = await MediaLibrary.getAssetsAsync({
           first: 50,
@@ -2137,39 +2338,39 @@ export default function HomeScreen() {
           after: cursor,
           sortBy: [MediaLibrary.SortBy.creationTime],
         });
-  
+
         updateTotalPhotos(result.totalCount ?? 0);
-  
+
         const assets = result.assets ?? [];
-  
+
         const filtered = assets.filter((a) => {
           const created =
             a.creationTime && a.creationTime > 0 ? a.creationTime : null;
-  
+
           const modified =
             a.modificationTime && a.modificationTime > 0
               ? a.modificationTime
               : null;
-  
+
           const tsMs = created ?? modified;
-  
+
           if (!tsMs) {
             return true;
           }
-  
+
           if (tsMs < dayStartMs(dateStart) || tsMs >= dayEndNextMs(dateEnd)) {
             return false;
           }
-  
+
           return inTimeWindow(tsMs, timeStart, timeEnd);
         });
-  
+
         const baseInfos: Photo[] = await Promise.all(
           filtered.map(async (a) => {
             try {
               const info = await MediaLibrary.getAssetInfoAsync(a.id);
               const uri = info.localUri ?? info.uri;
-  
+
               return {
                 uri,
                 takenAt: info.creationTime ?? a.creationTime ?? null,
@@ -2187,15 +2388,15 @@ export default function HomeScreen() {
                 location: null,
               };
             }
-          })
+          }),
         );
-  
+
         const withPlaces = await imagesWithLocation(baseInfos, {
           maxLookups: 60,
           precision: 2,
           delayMs: 150,
         });
-  
+
         const filteredWithLocation = withPlaces.filter((photo) => {
           if (countries.length === 0 && cities.length === 0) {
             return true;
@@ -2210,27 +2411,29 @@ export default function HomeScreen() {
             ? country !== ""
             : countries.includes(country);
         });
-  
+
         collected = [...collected, ...filteredWithLocation];
-  
+
         cursor = result.endCursor ?? undefined;
         nextPage = result.hasNextPage;
       }
-  
+
       const deduped = Array.from(
-        new Map(collected.map((photo) => [photo.uri, photo])).values()
+        new Map(collected.map((photo) => [photo.uri, photo])).values(),
       );
-  
+
       deduped.sort((a, b) => {
-        const aHas = typeof a.takenAt === "number" && Number.isFinite(a.takenAt);
-        const bHas = typeof b.takenAt === "number" && Number.isFinite(b.takenAt);
-  
+        const aHas =
+          typeof a.takenAt === "number" && Number.isFinite(a.takenAt);
+        const bHas =
+          typeof b.takenAt === "number" && Number.isFinite(b.takenAt);
+
         if (aHas && bHas) return (a.takenAt as number) - (b.takenAt as number);
         if (aHas && !bHas) return -1;
         if (!aHas && bHas) return 1;
         return 0;
       });
-  
+
       setPhotos(deduped);
       setEndCursor(cursor ?? null);
       setHasNextPage(nextPage);
@@ -2239,24 +2442,15 @@ export default function HomeScreen() {
       /* 2026.04.22 필터 리셋 실패 알럿도 다국어 키를 사용해 전체 오류 안내 체계를 일관화하기 위해 수정 by June */
       Alert.alert(
         t("errorTitle", "Error"),
-        t("reloadPhotosError", "There was a problem while reloading photos.")
+        t("reloadPhotosError", "There was a problem while reloading photos."),
       );
     } finally {
       setLoading(false);
     }
-  }, [
-    loading,
-    dateStart,
-    dateEnd,
-    timeStart,
-    timeEnd,
-    countries,
-    cities,
-    t,
-  ]);
+  }, [loading, dateStart, dateEnd, timeStart, timeEnd, countries, cities, t]);
 
   /** 2026.03.03 사진 삭제 등으로 데이터 갱신 발생 시 새로고침 관련 추가 By June START */
-  const [refreshing, setRefreshing] = useState(false); 
+  const [refreshing, setRefreshing] = useState(false);
   const lastResumeReloadRef = useRef(0);
 
   /** 2026.03.26 수정 By June */
@@ -2275,17 +2469,17 @@ export default function HomeScreen() {
   useEffect(() => {
     const sub = AppState.addEventListener("change", (state) => {
       if (state !== "active") return;
-  
+
       const now = Date.now();
       // iOS에서 active 이벤트가 연달아 튀는 경우가 있어 쿨다운
       if (now - lastResumeReloadRef.current < 1500) return;
       lastResumeReloadRef.current = now;
-  
+
       /* 2026.04.15 앱 복귀 시 새 사진 반영 누락을 줄이기 위해 화면 리로드와 별도로 DB 증분 동기화를 트리거하기 위해 추가 by June */
       void triggerPhotoMetadataSync();
       reloadPhotos();
     });
-  
+
     return () => sub.remove();
   }, [reloadPhotos, triggerPhotoMetadataSync]);
 
@@ -2299,13 +2493,13 @@ export default function HomeScreen() {
   }, [reloadPhotos]);
   /** 2026.03.03 사진 삭제 등으로 데이터 갱신 발생 시 새로고침 관련 추가 By June END */
 
-	// 전체 사진 수 Context 저장
-	useEffect(() => {
-		if (!loading && photosAll.length > 0) {
-			//updateUserData({ totalPhotos: photosAll.length }); --- 2026.01.21 문제 코드 주석처리
-		}
-	}, [photosAll.length, loading]);
-	
+  // 전체 사진 수 Context 저장
+  useEffect(() => {
+    if (!loading && photosAll.length > 0) {
+      //updateUserData({ totalPhotos: photosAll.length }); --- 2026.01.21 문제 코드 주석처리
+    }
+  }, [photosAll.length, loading]);
+
   /** 2026.03.26 By June */
   const didMountFilterEffectRef = useRef(false);
   /* 2026.04.15 reload 함수 참조 변경으로 effect가 재발화되는 문제를 막기 위해 최신 함수를 ref로 유지 by June */
@@ -2353,18 +2547,26 @@ export default function HomeScreen() {
 
     /* 2026.04.15 날짜 사용 여부를 truthy 체크 대신 초기값 비교로 판정해 항상 true가 되는 버그를 수정하기 위해 변경 by June */
     const usedDate =
-      filter.dateStart.getTime() !== initialFilterRef.current.dateStart.getTime() ||
+      filter.dateStart.getTime() !==
+        initialFilterRef.current.dateStart.getTime() ||
       filter.dateEnd.getTime() !== initialFilterRef.current.dateEnd.getTime();
     const usedTime = filter.timeStart !== 0 || filter.timeEnd !== 1439;
-    const usedLocation = filter.countries.length > 0 || filter.cities.length > 0;
-  
+    const usedLocation =
+      filter.countries.length > 0 || filter.cities.length > 0;
+
     if (usedDate) incrementDateFilter();
     if (usedTime) incrementTimeFilter();
     if (usedLocation) incrementLocationFilter();
-  
+
     /* 2026.04.15 effect 의존성에 함수 참조를 직접 넣지 않고 ref 호출을 사용해 재귀적 재실행을 방지하기 위해 수정 by June */
     void reloadPhotosForFilterRef.current();
-  }, [filterSignature, filter, incrementDateFilter, incrementTimeFilter, incrementLocationFilter]);
+  }, [
+    filterSignature,
+    filter,
+    incrementDateFilter,
+    incrementTimeFilter,
+    incrementLocationFilter,
+  ]);
   /** 2026.03.26 By June */
 
   // 썸네일 그리드에 사진 데이터 렌더링
@@ -2419,7 +2621,7 @@ export default function HomeScreen() {
   const inTimeWindow = (
     tsMs: string | number | Date,
     timeStart: number,
-    timeEnd: number
+    timeEnd: number,
   ) => {
     const local = new Date(tsMs);
     const mins = local.getHours() * 60 + local.getMinutes();
@@ -2434,10 +2636,10 @@ export default function HomeScreen() {
   const fmtDateTime = (ms: string | number | Date | null | undefined) => {
     /* 2026.04.22 날짜 정보 없음 문구를 다국어 키로 전환해 메타 정보 미존재 케이스도 현지화되도록 수정 by June */
     if (!ms) return t("noDateInfo", "No date info");
-  
+
     const d = new Date(ms);
     if (Number.isNaN(d.getTime())) return t("noDateInfo", "No date info");
-  
+
     const yyyy = d.getFullYear();
     const MM = `${d.getMonth() + 1}`.padStart(2, "0");
     const DD = `${d.getDate()}`.padStart(2, "0");
@@ -2451,25 +2653,36 @@ export default function HomeScreen() {
     currentViewerPhoto?.city && currentViewerPhoto?.country
       ? `${currentViewerPhoto.city}, ${currentViewerPhoto.country}`
       : currentViewerPhoto?.country
-      ? currentViewerPhoto.country
-      : !currentViewerPhoto?.location
-      ? "No location info"
-      : t("loadingLocationInfo", "Loading location info...");
+        ? currentViewerPhoto.country
+        : !currentViewerPhoto?.location
+          ? "No location info"
+          : t("loadingLocationInfo", "Loading location info...");
 
   const handleViewerShare = useCallback(async () => {
     if (!currentViewerPhoto?.uri) return;
     try {
-      const messagePrefix = t("sharePhotoMessagePrefix", "Check out this photo!");
-      const message = viewerLocationText ? `${messagePrefix} ${viewerLocationText}` : messagePrefix;
+      const messagePrefix = t(
+        "sharePhotoMessagePrefix",
+        "Check out this photo!",
+      );
+      const message = viewerLocationText
+        ? `${messagePrefix} ${viewerLocationText}`
+        : messagePrefix;
       await Share.open({
         message,
-        url: Platform.OS === "android" ? `file://${currentViewerPhoto.uri}` : currentViewerPhoto.uri,
+        url:
+          Platform.OS === "android"
+            ? `file://${currentViewerPhoto.uri}`
+            : currentViewerPhoto.uri,
         type: "image/jpeg",
       });
     } catch (err: unknown) {
       const errMessage = err instanceof Error ? err.message : "";
       if (errMessage !== "User did not share") {
-        Alert.alert(t("errorTitle", "Error"), t("shareFailedMessage", "Failed to share the photo."));
+        Alert.alert(
+          t("errorTitle", "Error"),
+          t("shareFailedMessage", "Failed to share the photo."),
+        );
       }
     }
   }, [currentViewerPhoto?.uri, t, viewerLocationText]);
@@ -2484,11 +2697,13 @@ export default function HomeScreen() {
           text: t("delete", "Delete"),
           style: "destructive",
           onPress: () => {
-            setPhotos((prev) => prev.filter((_, idx) => idx !== viewerIndexRef.current));
+            setPhotos((prev) =>
+              prev.filter((_, idx) => idx !== viewerIndexRef.current),
+            );
             closeViewer();
           },
         },
-      ]
+      ],
     );
   }, [closeViewer, t]);
 
@@ -2503,7 +2718,7 @@ export default function HomeScreen() {
         ...selections,
       }));
     },
-    []
+    [],
   );
 
   /* 2026.04.22 썸네일 하단의 명시적 "더 불러오기" 버튼으로만 append를 실행해 자동 스크롤 트리거의 간헐적 동작을 제거하기 위해 버튼 핸들러를 추가 by June */
@@ -2511,7 +2726,14 @@ export default function HomeScreen() {
     if (refreshing || filterLoading || appendLoading || initialLoading) return;
     if (!hasNextPage) return;
     void loadMorePhotos({ mode: "append" });
-  }, [appendLoading, filterLoading, hasNextPage, initialLoading, loadMorePhotos, refreshing]);
+  }, [
+    appendLoading,
+    filterLoading,
+    hasNextPage,
+    initialLoading,
+    loadMorePhotos,
+    refreshing,
+  ]);
 
   const handleShowOnMap = () => {
     <View style={styles.mapContainer}>
@@ -2525,7 +2747,9 @@ export default function HomeScreen() {
       const sourceUri = String(payload.sourceUri ?? "");
       if (!sourceUri) return;
 
-      const foundIndex = photosRef.current.findIndex((p) => p.uri === sourceUri);
+      const foundIndex = photosRef.current.findIndex(
+        (p) => p.uri === sourceUri,
+      );
       if (foundIndex < 0) return;
 
       swipe_count_ref.current = 0;
@@ -2537,12 +2761,12 @@ export default function HomeScreen() {
       await resolveViewerDetailUri(sourceUri);
       await prioritizePhotoLocation(photosRef.current[foundIndex]);
     },
-    [prioritizePhotoLocation, resolveViewerDetailUri]
+    [prioritizePhotoLocation, resolveViewerDetailUri],
   );
 
   const edges = ["bottom", "left", "right"];
   if (Platform.OS === "ios") {
-    edges.push("top"); // iOS는 top 추가해야 UI 안깨짐 
+    edges.push("top"); // iOS는 top 추가해야 UI 안깨짐
   }
   const safeAreaEdges: Edges = edges as Edges;
 
@@ -2551,198 +2775,217 @@ export default function HomeScreen() {
       colors={["#E8F2FF", "#F9F3FF"]} // 연한 하늘색 + 약간 보라 느낌
       style={styles.screen}
     >
-    <SafeAreaView style={{ flex: 1 }} edges={safeAreaEdges}>
-      <View style={{ flex: 1 }}>
-        <View style={styles.topArea}>
-          {/* 2026.05.13 홈 상단(노치 아래) 배너 광고를 버튼 영역 위에 배치 by June */}
-          <View style={styles.topBannerWrap}>
-            <BottomBannerAd
-              size={BannerAdSize.ANCHORED_ADAPTIVE_BANNER}
-              withBottomInset={false}
-            />
-          </View>
+      <SafeAreaView style={{ flex: 1 }} edges={safeAreaEdges}>
+        <View style={{ flex: 1 }}>
+          <View style={styles.topArea}>
+            {/* 2026.05.13 홈 상단(노치 아래) 배너 광고를 버튼 영역 위에 배치 by June */}
+            <View style={styles.topBannerWrap}>
+              <BottomBannerAd
+                size={BannerAdSize.ANCHORED_ADAPTIVE_BANNER}
+                withBottomInset={false}
+              />
+            </View>
 
-          {/* 상단버튼영역 수정 2026.03.18 by June START */}
-          <View style={styles.topButtonsRow}>
-            {/* 왼쪽 여백 */}
-            <View style={styles.topLeftSpace} />
+            {/* 상단버튼영역 수정 2026.03.18 by June START */}
+            <View style={styles.topButtonsRow}>
+              {/* 왼쪽 여백 */}
+              <View style={styles.topLeftSpace} />
 
-            {/* 오른쪽 버튼 그룹 */}
-            <View style={styles.topButtonsGroup}>
-              {/* Play 버튼 */}
-              <TouchableOpacity
-                style={styles.playButtonSlot}
-                onPress={() => (slideshowOn ? handleCloseSlideshow() : handleSlideshow())}
-                activeOpacity={0.9}
-              >
-                <LinearGradient
-                  colors={['#2B7FFF', '#AD46FF']}
-                  start={{ x: 0, y: 0 }}
-                  end={{ x: 1, y: 0 }}
-                  style={styles.playButtonBg}
+              {/* 오른쪽 버튼 그룹 */}
+              <View style={styles.topButtonsGroup}>
+                {/* Play 버튼 */}
+                <TouchableOpacity
+                  style={styles.playButtonSlot}
+                  onPress={() =>
+                    slideshowOn ? handleCloseSlideshow() : handleSlideshow()
+                  }
+                  activeOpacity={0.9}
                 >
-                  <IconPlay width={18} height={18} />
-                </LinearGradient>
-              </TouchableOpacity>
+                  <LinearGradient
+                    colors={["#2B7FFF", "#AD46FF"]}
+                    start={{ x: 0, y: 0 }}
+                    end={{ x: 1, y: 0 }}
+                    style={styles.playButtonBg}
+                  >
+                    <IconPlay width={18} height={18} />
+                  </LinearGradient>
+                </TouchableOpacity>
 
-              {/* Map 버튼 */}
-              <TouchableOpacity
-                style={styles.mapButtonSlot}
-                activeOpacity={0.9}
-              >
-                <ShowOnMap images={photos} onOpenPhotoFromMap={handleOpenPhotoFromMap} />
-              </TouchableOpacity>
+                {/* Map 버튼 */}
+                <TouchableOpacity
+                  style={styles.mapButtonSlot}
+                  activeOpacity={0.9}
+                >
+                  <ShowOnMap
+                    images={photos}
+                    onOpenPhotoFromMap={handleOpenPhotoFromMap}
+                  />
+                </TouchableOpacity>
 
-              {/* Settings 버튼 */}
-              <TouchableOpacity
-                onPress={() => router.push('/settings')}
-                activeOpacity={0.7}
-                style={styles.settingsButtonSlot}
-              >
-                <Ionicons name="settings-outline" size={20} color="#374151" />
-              </TouchableOpacity>
+                {/* Settings 버튼 */}
+                <TouchableOpacity
+                  onPress={() => router.push("/settings")}
+                  activeOpacity={0.7}
+                  style={styles.settingsButtonSlot}
+                >
+                  <Ionicons name="settings-outline" size={20} color="#374151" />
+                </TouchableOpacity>
+              </View>
+            </View>
+            {/* 상단버튼영역 수정 2026.03.18 by June END */}
+
+            {/* 썸네일 그리드 START */}
+            <View style={styles.gridWrap}>
+              <FlatList<Photo>
+                style={{ flex: 1 }} // 리스트가 남은 세로 공간을 다 차지
+                data={photos}
+                numColumns={numColumns}
+                /* 2026.04.22 index key 사용 시 append/재정렬 구간에서 셀 재생성이 과도해져 스크롤 안정성이 저하될 수 있어 URI 우선 key로 변경 by June */
+                keyExtractor={(item, i) => `${item.uri || "missing-uri"}::${i}`}
+                renderItem={renderItem}
+                /* 2026.04.22 대량 사진 스크롤 시 메모리 사용량을 낮춰 OS 강제 종료 가능성을 줄이기 위해 FlatList 배치 렌더 파라미터를 최적화 by June */
+                initialNumToRender={25}
+                maxToRenderPerBatch={20}
+                windowSize={7}
+                removeClippedSubviews
+                refreshing={refreshing} // 2026.03.03 June 추가
+                onRefresh={onRefresh} // 2026.03.03 June 추가
+                contentContainerStyle={{
+                  paddingHorizontal: horizontalPadding,
+                  padding: 8,
+                  flexGrow: 1, // 아이템 0개여도 높이 채우기
+                  backgroundColor: "#FFF",
+                  borderRadius: 10,
+                }}
+                ListEmptyComponent={
+                  !initialLoading &&
+                  !filterLoading &&
+                  !appendLoading &&
+                  !isScanning &&
+                  !error ? (
+                    <View style={styles.emptyWrap}>
+                      <Text style={styles.emptyTitle}>
+                        {emptyMessage ?? EMPTY_DEFAULT_MESSAGE}
+                      </Text>
+                      {emptyMessage !== EMPTY_RECENT_3Y_MESSAGE ? (
+                        <Text style={styles.emptyDesc}>
+                          {EMPTY_DEFAULT_DESC}
+                        </Text>
+                      ) : null}
+                    </View>
+                  ) : null
+                }
+                onEndReachedThreshold={0.4}
+                onEndReached={() => {
+                  /* 2026.04.22 간헐적으로 동작하는 자동 무한스크롤 트리거를 완전히 비활성화하고 하단 명시 버튼만 사용하도록 변경 by June */
+                  return;
+                }}
+                ListFooterComponent={
+                  /* 2026.04.22 썸네일 하단에 명시적 더 불러오기 CTA를 제공해 사용자가 다음 페이지 로딩 시점을 직접 제어할 수 있도록 UI를 추가 by June */
+                  !initialLoading && !filterLoading ? (
+                    <View style={{ paddingVertical: 12, alignItems: "center" }}>
+                      {appendLoading || backgroundLoading ? (
+                        <View style={{ alignItems: "center", gap: 8 }}>
+                          <ActivityIndicator />
+                          <Text style={styles.loadingSubText}>
+                            {t("loadingMorePhotos", "Loading more photos...")}
+                          </Text>
+                        </View>
+                      ) : hasNextPage ? (
+                        <TouchableOpacity
+                          style={styles.loadMoreButton}
+                          activeOpacity={0.85}
+                          onPress={handleManualLoadMorePress}
+                        >
+                          {/* 2026.04.22 하단 더 불러오기 버튼도 앱 전반의 CTA 톤앤매너와 일치시키기 위해 블루-퍼플 그라디언트 배경으로 변경 by June */}
+                          <LinearGradient
+                            colors={["#2B7FFF", "#AD46FF"]}
+                            start={{ x: 0, y: 0 }}
+                            end={{ x: 1, y: 0 }}
+                            style={styles.loadMoreButtonGradient}
+                          >
+                            <Text style={styles.loadMoreButtonText}>
+                              {t("loadMorePhotos", "Load more photos")}
+                            </Text>
+                          </LinearGradient>
+                        </TouchableOpacity>
+                      ) : (
+                        <Text style={styles.loadingSubText}>
+                          {t(
+                            "allFilteredPhotosLoaded",
+                            "All filtered photos are loaded",
+                          )}
+                        </Text>
+                      )}
+                      <Text style={styles.loadMoreProgressText}>
+                        {/* 2026.04.22 필터 기준 표출/총 건수 안내 위치를 로딩 오버레이에서 하단 CTA 영역으로 이동해 사용자가 현재 로드 진행을 항상 확인할 수 있도록 수정 by June */}
+                        {progress.total !== null
+                          ? `${t("filteredPhotos", "Filtered photos")}: ${progress.loaded.toLocaleString()} / ${progress.total.toLocaleString()}`
+                          : `${t("filteredPhotos", "Filtered photos")}: ${progress.loaded.toLocaleString()}`}
+                      </Text>
+                    </View>
+                  ) : null
+                }
+                /* 2026.04.22 자동 무한스크롤 관련 상태 제거에 맞춰 onLayout/onContentSizeChange 기반 보조 로직을 정리해 렌더 비용을 줄이기 위해 제거 by June */
+                onScroll={({ nativeEvent }) => {
+                  const y = nativeEvent.contentOffset.y;
+                  /* 2026.04.22 상단 당김(y<=-60) 구간은 onRefresh와 역할이 겹치고 append 경쟁으로 앱 크래시를 유발해 해당 경로를 비활성화 by June */
+                  if (y <= -60) {
+                    return;
+                  }
+                }}
+                scrollEventThrottle={16}
+              />
+              {/* 썸네일 그리드 END */}
+              {/** Progress bar START */}
+              {initialLoading ||
+              filterLoading ||
+              appendLoading ||
+              isScanning ? ( // 2026.03.27 By June
+                <View style={styles.gridOverlay} pointerEvents="auto">
+                  <View style={styles.loadingBox}>
+                    <ActivityIndicator size="large" />
+                    <Text style={styles.loadingText}>
+                      {/* 2026.04.22 로딩 오버레이 문구를 다국어 키 기반으로 전환해 진행 상태 텍스트 현지화를 적용하기 위해 수정 by June */}
+                      {t("loadingPhotos", "Loading photos...")}
+                    </Text>
+                    <Text style={styles.loadingSubText}>
+                      {`${t("photoIndexing", "Photo indexing")}: ${indexingProgress.photoIndexed.toLocaleString()} (${indexingProgress.isPhotoIndexing ? t("syncing", "syncing") : t("complete", "complete")})`}
+                    </Text>
+                    <Text style={styles.loadingSubText}>
+                      {`${t("geocodeCache", "Geocode cache")}: ${indexingProgress.geocodeCached.toLocaleString()} / ${t("queue", "Queue")}: ${indexingProgress.geocodePending.toLocaleString()}`}
+                    </Text>
+                  </View>
+                </View>
+              ) : error ? (
+                <View style={styles.centerContainer}>
+                  <Text style={styles.errorText}>{error}</Text>
+                </View>
+              ) : (
+                <>
+                  <Modal visible={!!selectedImage} animationType="slide">
+                    <Image
+                      source={{ uri: selectedImage || "" }}
+                      style={{
+                        flex: 1,
+                        width: "100%",
+                        height: "100%",
+                        resizeMode: "contain",
+                      }}
+                    />
+                    <View style={{ position: "absolute", top: 40, left: 20 }}>
+                      <Button
+                        title="Close"
+                        onPress={() => setSelectedImage(null)}
+                      />
+                    </View>
+                  </Modal>
+                </>
+              )}
+              {/** Progress bar END */}
             </View>
           </View>
-          {/* 상단버튼영역 수정 2026.03.18 by June END */}
-            
-          {/* 썸네일 그리드 START */}
-          <View style={styles.gridWrap}>
-            <FlatList<Photo>
-              style={{ flex: 1 }} // 리스트가 남은 세로 공간을 다 차지
-              data={photos}
-              numColumns={numColumns}
-              /* 2026.04.22 index key 사용 시 append/재정렬 구간에서 셀 재생성이 과도해져 스크롤 안정성이 저하될 수 있어 URI 우선 key로 변경 by June */
-              keyExtractor={(item, i) => `${item.uri || "missing-uri"}::${i}`}
-              renderItem={renderItem}
-              /* 2026.04.22 대량 사진 스크롤 시 메모리 사용량을 낮춰 OS 강제 종료 가능성을 줄이기 위해 FlatList 배치 렌더 파라미터를 최적화 by June */
-              initialNumToRender={25}
-              maxToRenderPerBatch={20}
-              windowSize={7}
-              removeClippedSubviews
-              refreshing={refreshing} // 2026.03.03 June 추가
-              onRefresh={onRefresh}   // 2026.03.03 June 추가
-              contentContainerStyle={{
-                paddingHorizontal: horizontalPadding,
-                padding: 8,
-                flexGrow: 1, // 아이템 0개여도 높이 채우기
-                backgroundColor: "#FFF",
-                borderRadius: 10,
-              }}
-              ListEmptyComponent={
-                (!initialLoading && !filterLoading && !appendLoading && !isScanning && !error) ? (
-                  <View style={styles.emptyWrap}>
-                    <Text style={styles.emptyTitle}>
-                      {emptyMessage ?? EMPTY_DEFAULT_MESSAGE}
-                    </Text>
-                    {emptyMessage !== EMPTY_RECENT_3Y_MESSAGE ? (
-                      <Text style={styles.emptyDesc}>{EMPTY_DEFAULT_DESC}</Text>
-                    ) : null}
-                  </View>
-                ) : null
-              }
-              onEndReachedThreshold={0.4}
-              onEndReached={() => {
-                /* 2026.04.22 간헐적으로 동작하는 자동 무한스크롤 트리거를 완전히 비활성화하고 하단 명시 버튼만 사용하도록 변경 by June */
-                return;
-              }}
-              ListFooterComponent={
-                /* 2026.04.22 썸네일 하단에 명시적 더 불러오기 CTA를 제공해 사용자가 다음 페이지 로딩 시점을 직접 제어할 수 있도록 UI를 추가 by June */
-                !initialLoading && !filterLoading ? (
-                  <View style={{ paddingVertical: 12, alignItems: "center" }}>
-                    {appendLoading || backgroundLoading ? (
-                      <View style={{ alignItems: "center", gap: 8 }}>
-                        <ActivityIndicator />
-                        <Text style={styles.loadingSubText}>
-                          {t("loadingMorePhotos", "Loading more photos...")}
-                        </Text>
-                      </View>
-                    ) : hasNextPage ? (
-                      <TouchableOpacity
-                        style={styles.loadMoreButton}
-                        activeOpacity={0.85}
-                        onPress={handleManualLoadMorePress}
-                      >
-                        {/* 2026.04.22 하단 더 불러오기 버튼도 앱 전반의 CTA 톤앤매너와 일치시키기 위해 블루-퍼플 그라디언트 배경으로 변경 by June */}
-                        <LinearGradient
-                          colors={["#2B7FFF", "#AD46FF"]}
-                          start={{ x: 0, y: 0 }}
-                          end={{ x: 1, y: 0 }}
-                          style={styles.loadMoreButtonGradient}
-                        >
-                          <Text style={styles.loadMoreButtonText}>
-                            {t("loadMorePhotos", "Load more photos")}
-                          </Text>
-                        </LinearGradient>
-                      </TouchableOpacity>
-                    ) : (
-                      <Text style={styles.loadingSubText}>
-                        {t("allFilteredPhotosLoaded", "All filtered photos are loaded")}
-                      </Text>
-                    )}
-                    <Text style={styles.loadMoreProgressText}>
-                      {/* 2026.04.22 필터 기준 표출/총 건수 안내 위치를 로딩 오버레이에서 하단 CTA 영역으로 이동해 사용자가 현재 로드 진행을 항상 확인할 수 있도록 수정 by June */}
-                      {progress.total !== null
-                        ? `${t("filteredPhotos", "Filtered photos")}: ${progress.loaded.toLocaleString()} / ${progress.total.toLocaleString()}`
-                        : `${t("filteredPhotos", "Filtered photos")}: ${progress.loaded.toLocaleString()}`}
-                    </Text>
-                  </View>
-                ) : null
-              }
-              /* 2026.04.22 자동 무한스크롤 관련 상태 제거에 맞춰 onLayout/onContentSizeChange 기반 보조 로직을 정리해 렌더 비용을 줄이기 위해 제거 by June */
-              onScroll={({ nativeEvent }) => {
-                const y = nativeEvent.contentOffset.y;
-                /* 2026.04.22 상단 당김(y<=-60) 구간은 onRefresh와 역할이 겹치고 append 경쟁으로 앱 크래시를 유발해 해당 경로를 비활성화 by June */
-                if (y <= -60) {
-                  return;
-                }
-              }}
-              scrollEventThrottle={16}
-            />
-            {/* 썸네일 그리드 END */}
-            {/** Progress bar START */}
-            {initialLoading || filterLoading || appendLoading || isScanning ? ( // 2026.03.27 By June
-              <View style={styles.gridOverlay} pointerEvents="auto">
-                <View style={styles.loadingBox}>
-                  <ActivityIndicator size="large" />
-                  <Text style={styles.loadingText}>
-                    {/* 2026.04.22 로딩 오버레이 문구를 다국어 키 기반으로 전환해 진행 상태 텍스트 현지화를 적용하기 위해 수정 by June */}
-                    {t("loadingPhotos", "Loading photos...")}
-                  </Text>
-                  <Text style={styles.loadingSubText}>
-                    {`${t("photoIndexing", "Photo indexing")}: ${indexingProgress.photoIndexed.toLocaleString()} (${indexingProgress.isPhotoIndexing ? t("syncing", "syncing") : t("complete", "complete")})`}
-                  </Text>
-                  <Text style={styles.loadingSubText}>
-                    {`${t("geocodeCache", "Geocode cache")}: ${indexingProgress.geocodeCached.toLocaleString()} / ${t("queue", "Queue")}: ${indexingProgress.geocodePending.toLocaleString()}`}
-                  </Text>
-                </View>
-              </View>
-            ) : error ? (
-              <View style={styles.centerContainer}>
-                <Text style={styles.errorText}>{error}</Text>
-              </View>
-            ) : (
-              <>
-                <Modal visible={!!selectedImage} animationType="slide">
-                  <Image
-                    source={{ uri: selectedImage || "" }}
-                    style={{
-                      flex: 1,
-                      width: "100%",
-                      height: "100%",
-                      resizeMode: "contain",
-                    }}
-                  />
-                  <View style={{ position: "absolute", top: 40, left: 20 }}>
-                    <Button title="Close" onPress={() => setSelectedImage(null)} />
-                  </View>
-                </Modal>
-              </>
-            )}
-            {/** Progress bar END */}
-          </View>
-          
-        </View>
-        <View style={styles.bottomArea}>
+          <View style={styles.bottomArea}>
             <DateTimeFilter
               onChange={handleDateTimeChange}
               photos={photos}
@@ -2751,9 +2994,9 @@ export default function HomeScreen() {
               onLocationChange={handleLocationChange}
             />
           </View>
-      </View>
-    
-      {/* 전체화면 이미지 뷰어 (핀치줌/스와이프)
+        </View>
+
+        {/* 전체화면 이미지 뷰어 (핀치줌/스와이프)
       <ImageViewing
         //images={photos.map(p => ({ uri: p.uri }))}
         onImageIndexChange={(i: number) => {
@@ -2771,75 +3014,82 @@ export default function HomeScreen() {
         swipeToCloseEnabled={false} // ← 스와이프 제스처가 터치 선점하는 것 방지
         doubleTapToZoomEnabled
       /> */}
-      <PhotoDetailViewer
-        visible={viewerVisible}
-        images={viewerImages}
-        imageIndex={viewerIndex}
-        onRequestClose={closeViewer}
-        onImageIndexChange={(i: number) => {
-          viewerIndexRef.current = i;
-          swipe_count_ref.current += 1;
-          if (!swipe_threshold_fired_ref.current && swipe_count_ref.current >= SWIPE_THRESHOLD) {
-            swipe_threshold_fired_ref.current = true;
-            const dwell_ms = Date.now() - home_view_start_ms_ref.current;
-            amplitude.track("photo_swipe_threshold_reached", {
-              screen_name: "home",
-              threshold: SWIPE_THRESHOLD,
-              swipe_count: swipe_count_ref.current,
-              current_index: i,
-              dwell_ms,
-            });
+        <PhotoDetailViewer
+          visible={viewerVisible}
+          images={viewerImages}
+          imageIndex={viewerIndex}
+          onRequestClose={closeViewer}
+          onImageIndexChange={(i: number) => {
+            viewerIndexRef.current = i;
+            swipe_count_ref.current += 1;
+            if (
+              !swipe_threshold_fired_ref.current &&
+              swipe_count_ref.current >= SWIPE_THRESHOLD
+            ) {
+              swipe_threshold_fired_ref.current = true;
+              const dwell_ms = Date.now() - home_view_start_ms_ref.current;
+              amplitude.track("photo_swipe_threshold_reached", {
+                screen_name: "home",
+                threshold: SWIPE_THRESHOLD,
+                swipe_count: swipe_count_ref.current,
+                current_index: i,
+                dwell_ms,
+              });
+            }
+            void prioritizePhotoLocation(photosRef.current[i]);
+          }}
+          showPlayButton={viewerEntryPoint === "home"}
+          onPressPlay={handleViewerPlayPress}
+          dateText={
+            currentViewerPhoto ? fmtDateTime(currentViewerPhoto.takenAt) : ""
           }
-          void prioritizePhotoLocation(photosRef.current[i]);
-        }}
-        showPlayButton={viewerEntryPoint === "home"}
-        onPressPlay={handleViewerPlayPress}
-        dateText={currentViewerPhoto ? fmtDateTime(currentViewerPhoto.takenAt) : ""}
-        locationText={viewerLocationText}
-        onPressShare={handleViewerShare}
-        onPressDelete={handleViewerDelete}
-      />
+          locationText={viewerLocationText}
+          onPressShare={handleViewerShare}
+          onPressDelete={handleViewerDelete}
+        />
 
-      <Modal visible={slideshowVisible} animationType="fade">
-        <SafeAreaView style={{ flex: 1, backgroundColor: "black" }}>
-          <FlatList
-            ref={(r) => {slideshowListRef.current = r;}}
-            data={viewerImages} // { uri } 배열 이미 있음
-            horizontal
-            pagingEnabled
-            showsHorizontalScrollIndicator={false}
-            keyExtractor={(_, i) => i.toString()}
-            initialScrollIndex={viewerIndex}
-            getItemLayout={(_, index) => ({
-              length: screenWidth,
-              offset: screenWidth * index,
-              index,
-            })}
-            renderItem={({ item }) => (
-              <TouchableOpacity
-                activeOpacity={1}
-                onPress={handleCloseSlideshow}
-                style={{ width: screenWidth, height: "100%" }}
-              >
-                <Image
-                  source={{ uri: item.uri }}
+        <Modal visible={slideshowVisible} animationType="fade">
+          <SafeAreaView style={{ flex: 1, backgroundColor: "black" }}>
+            <FlatList
+              ref={(r) => {
+                slideshowListRef.current = r;
+              }}
+              data={viewerImages} // { uri } 배열 이미 있음
+              horizontal
+              pagingEnabled
+              showsHorizontalScrollIndicator={false}
+              keyExtractor={(_, i) => i.toString()}
+              initialScrollIndex={viewerIndex}
+              getItemLayout={(_, index) => ({
+                length: screenWidth,
+                offset: screenWidth * index,
+                index,
+              })}
+              renderItem={({ item }) => (
+                <TouchableOpacity
+                  activeOpacity={1}
+                  onPress={handleCloseSlideshow}
                   style={{ width: screenWidth, height: "100%" }}
-                  resizeMode="contain"
-                />
-              </TouchableOpacity>
-            )}
-          />
+                >
+                  <Image
+                    source={{ uri: item.uri }}
+                    style={{ width: screenWidth, height: "100%" }}
+                    resizeMode="contain"
+                  />
+                </TouchableOpacity>
+              )}
+            />
 
-          {/* 닫기 버튼 */}
-          <TouchableOpacity
-            onPress={handleCloseSlideshow}
-            style={{ position: "absolute", top: 20, right: 16, padding: 10 }}
-          >
-            <Ionicons name="close" size={28} color="#fff" />
-          </TouchableOpacity>
-        </SafeAreaView>
-      </Modal>
-    </SafeAreaView>
+            {/* 닫기 버튼 */}
+            <TouchableOpacity
+              onPress={handleCloseSlideshow}
+              style={{ position: "absolute", top: 20, right: 16, padding: 10 }}
+            >
+              <Ionicons name="close" size={28} color="#fff" />
+            </TouchableOpacity>
+          </SafeAreaView>
+        </Modal>
+      </SafeAreaView>
     </LinearGradient>
   );
 }
@@ -2997,7 +3247,7 @@ const styles = StyleSheet.create({
   },
   counter: { color: "#fff", fontSize: 16, fontWeight: "600" },
   metaTxt: { color: "#fff", fontSize: 14, fontWeight: "600" },
-	locationTxt: { color: "#fff", fontSize: 14, fontWeight: "600", marginTop: 2 },
+  locationTxt: { color: "#fff", fontSize: 14, fontWeight: "600", marginTop: 2 },
   closeBtn: {
     width: 40,
     height: 40,
@@ -3013,27 +3263,27 @@ const styles = StyleSheet.create({
     fontSize: 18,
     fontWeight: "700",
   },
-	headerTextContainer: {
-		flexDirection: "column",
-		alignItems: "center",
-		flexShrink: 1, // 긴 텍스트도 잘림
-		marginHorizontal: 8,
-	},
-	footer: {
-		 flexDirection: "row",
-		 justifyContent: "space-between",
-		 alignItems: "center",
-		 paddingHorizontal: 16,
-		 paddingVertical: 10,
-		 backgroundColor: "rgba(0,0,0,0.6)",
-		 position: "absolute",
-		 bottom: 0,
-		 width: "100%",
-		 zIndex: 20, // zIndex 높여서 이미지 위로
-		 minHeight: 60, // 충분한 높이 지정
-	},
+  headerTextContainer: {
+    flexDirection: "column",
+    alignItems: "center",
+    flexShrink: 1, // 긴 텍스트도 잘림
+    marginHorizontal: 8,
+  },
+  footer: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+    paddingHorizontal: 16,
+    paddingVertical: 10,
+    backgroundColor: "rgba(0,0,0,0.6)",
+    position: "absolute",
+    bottom: 0,
+    width: "100%",
+    zIndex: 20, // zIndex 높여서 이미지 위로
+    minHeight: 60, // 충분한 높이 지정
+  },
   thumbnailCard: {
-    backgroundColor: '#FFFFFF',   // 내부 흰색
+    backgroundColor: "#FFFFFF", // 내부 흰색
     borderRadius: 32, // 모서리 둥글게
     padding: 12,
     marginTop: 12,
@@ -3117,62 +3367,72 @@ const styles = StyleSheet.create({
     alignItems: "center",
     padding: 20,
   },
-  emptyTitle: { fontSize: 16, fontWeight: "700", color: "#111", marginBottom: 6 },
-  emptyDesc: { fontSize: 13, color: "#666", textAlign: "center", lineHeight: 18 },
+  emptyTitle: {
+    fontSize: 16,
+    fontWeight: "700",
+    color: "#111",
+    marginBottom: 6,
+  },
+  emptyDesc: {
+    fontSize: 13,
+    color: "#666",
+    textAlign: "center",
+    lineHeight: 18,
+  },
 
   croppedButtonWrap: {
     //width: 128,
     height: 60,
-    overflow: 'hidden',
+    overflow: "hidden",
     //borderRadius: 16,
     //marginRight: 10,
-    alignItems: 'center',
-    justifyContent: 'center',
+    alignItems: "center",
+    justifyContent: "center",
   },
   croppedButtonImage: {
-    width: '100%',
-    height: 56,          // 원본보다 더 크게 잡고
+    width: "100%",
+    height: 56, // 원본보다 더 크게 잡고
     transform: [{ translateY: -6 }], // 아래 여백 잘라내기
   },
 
   /** 2026.03.18 Add by June */
   topButtonsRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
+    flexDirection: "row",
+    alignItems: "center",
     marginBottom: 16,
-    width: '100%',
+    width: "100%",
   },
   topBannerWrap: {
     width: "100%",
     marginBottom: 10,
   },
-  
+
   topLeftSpace: {
     flex: 3, // 30%
   },
-  
+
   topButtonsGroup: {
     flex: 7, // 70%
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
   },
-  
+
   playButtonSlot: {
     flex: 3, // 30
     height: 38,
     marginRight: 5,
-    justifyContent: 'center',
+    justifyContent: "center",
   },
-  
+
   mapButtonSlot: {
     flex: 3, // 30
     height: 38,
     marginLeft: 0,
     marginRight: 5,
-    justifyContent: 'center',
+    justifyContent: "center",
   },
-  
+
   settingsButtonSlot: {
     flex: 1, // 10
     height: 36,
@@ -3192,15 +3452,15 @@ const styles = StyleSheet.create({
   },
 
   playButtonBg: {
-    width: '100%',
-    height: '100%',
+    width: "100%",
+    height: "100%",
     borderRadius: 16,
-    alignItems: 'center',
-    justifyContent: 'center',
+    alignItems: "center",
+    justifyContent: "center",
     shadowColor: "#2563EB",
     shadowOpacity: 0.25,
     shadowRadius: 10,
     shadowOffset: { width: 0, height: 6 },
   },
-  /** 2026.03.18 Add by June */ 
+  /** 2026.03.18 Add by June */
 });

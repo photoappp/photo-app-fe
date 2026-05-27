@@ -156,6 +156,11 @@ const LocationSelector = forwardRef<LocationSelectorHandle, Props>(
         return Array.from(new Set([...allCountries]));
       }
       if (type === "city") {
+        /* 2026.05.26 리셋 직후 tempCountries가 비어 있어도 city 목록이 사라지지 않도록 전체 도시 목록(allCities)으로
+           폴백 — 사용자는 다시 도시를 선택할 수 있어야 함 by yen */
+        if (tempCountries.length === 0) {
+          return Array.from(new Set([...allCities]));
+        }
         const allCitiesSet = new Set<string>();
 
         tempCountries.forEach((country) => {
@@ -425,15 +430,19 @@ const LocationSelector = forwardRef<LocationSelectorHandle, Props>(
             <View style={styles.buttonContainer}>
               <TouchableOpacity
                 onPress={() => {
-                  /* 2026.05.26 "All locations" 적용 시 필터 효과는 리셋과 동일하게 비우되,
-                     다음 오픈 시 모든 국가/도시 체크 상태를 유지하기 위해 temp 배열은 보존 by yen */
-                  setSelectedCountries([]);
-                  setSelectedCities([]);
-                  onSelectionChange?.({
-                    countries: [],
-                    cities: [],
-                    locationLabel: t("allLocations"),
+                  setSelectedCountries(tempCountries);
+                  setSelectedCities(tempCities);
+                  console.log("Applying selection:", {
+                    countries: tempCountries,
+                    cities: tempCities,
+                    locationLabel: getButtonTitle(),
                   });
+                  onSelectionChange?.({
+                    countries: tempCountries,
+                    cities: tempCities,
+                    locationLabel: getButtonTitle(),
+                  });
+
                   onClose();
                 }}
               >
