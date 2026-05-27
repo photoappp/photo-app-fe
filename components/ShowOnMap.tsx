@@ -17,6 +17,8 @@ import {
 } from "react-native";
 import { WebView, type WebViewMessageEvent } from "react-native-webview";
 import * as MediaLibrary from "expo-media-library";
+/* 2026.05.26 마커 썸네일을 WebView에 임베드하기 위해 사진을 작은 크기로 리사이즈 + base64 인코딩하는 모듈 by yen */
+import { manipulateAsync, SaveFormat } from "expo-image-manipulator";
 import Share from "react-native-share";
 
 type Photo = {
@@ -41,6 +43,14 @@ type Props = {
   }) => void;
 };
 
+/* 2026.05.12 이미지 로드 실패 시에도 좌표 마커는 유지하기 위해 공통 placeholder 이미지를 정의 by June
+   2026.05.26 컴포넌트 외부로 이동해 useEffect 의존성 경고를 제거 by yen */
+const FALLBACK_MARKER_URI =
+  "data:image/svg+xml;utf8," +
+  encodeURIComponent(
+    "<svg xmlns='http://www.w3.org/2000/svg' width='80' height='80'><rect width='100%' height='100%' rx='16' ry='16' fill='#EEF2FF'/><circle cx='40' cy='40' r='14' fill='#6366F1'/></svg>"
+  );
+
 export default function MapView({ images, onOpenPhotoFromMap }: Props) {
   const { language } = useLanguage();
   const [visible, setVisible] = useState(false);
@@ -53,14 +63,10 @@ export default function MapView({ images, onOpenPhotoFromMap }: Props) {
   // 2026-03-18 get proper coordinates by yen
   const [coordinates, setCoordinates] = useState<any[]>([]); // store base64 coords
   const [loading, setLoading] = useState(true);
-  /* 2026.05.12 이미지 로드 실패 시에도 좌표 마커는 유지하기 위해 공통 placeholder 이미지를 정의 by June */
-  const FALLBACK_MARKER_URI =
-    "data:image/svg+xml;utf8," +
-    encodeURIComponent(
-      "<svg xmlns='http://www.w3.org/2000/svg' width='80' height='80'><rect width='100%' height='100%' rx='16' ry='16' fill='#EEF2FF'/><circle cx='40' cy='40' r='14' fill='#6366F1'/></svg>"
-    );
   /* 2026.04.15 동일 이미지 입력에서 좌표 재계산/재설정 루프를 막기 위해 마지막 처리 시그니처를 저장 by June */
   const lastImagesSigRef = useRef<string>("");
+  /* 2026.05.26 sourceUri별로 변환된 markerUri를 캐싱해 모달 재오픈/리렌더 시 재인코딩 비용을 제거 by yen */
+  const markerCacheRef = useRef<Map<string, string>>(new Map());
 
   /* 2026.04.15 이미지 값 기준 시그니처를 만들어 부모 리렌더 시 불필요한 좌표 로딩을 건너뛰기 위해 추가 by June */
   const imagesSignature = useMemo(() => {
@@ -74,9 +80,13 @@ export default function MapView({ images, onOpenPhotoFromMap }: Props) {
   }, [images]);
 
   useEffect(() => {
+    /* 2026.05.26 모달이 열릴 때까지 비용이 큰 썸네일 인코딩을 지연시켜 초기 렌더 비용을 제거 by yen */
+    if (!visible) return;
     /* 2026.04.15 동일 시그니처에서는 setCoordinates를 생략해 Maximum update depth 재발 가능성을 낮추기 위해 가드 추가 by June */
     if (lastImagesSigRef.current === imagesSignature) return;
     lastImagesSigRef.current = imagesSignature;
+
+    let cancelled = false;
 
     const loadCoordinates = async () => {
       try {
@@ -93,18 +103,43 @@ export default function MapView({ images, onOpenPhotoFromMap }: Props) {
               const sourceUri = String(img.uri ?? "");
               let markerUri = FALLBACK_MARKER_URI;
 
-              if (sourceUri.startsWith("file://")) {
-                markerUri = sourceUri;
-              } else if (sourceUri.startsWith("ph://")) {
-                try {
-                  const assetId = sourceUri.replace("ph://", "");
-                  const info = await MediaLibrary.getAssetInfoAsync(assetId);
-                  const resolved = info.localUri ?? info.uri ?? "";
-                  if (typeof resolved === "string" && resolved.startsWith("file://")) {
-                    markerUri = resolved;
+              /* 2026.05.26 인라인 HTML WebView는 file:// 리소스를 직접 로드할 수 없으므로
+                 마커용으로 사진을 썸네일 크기로 리사이즈한 뒤 base64 data URI로 변환 by yen */
+              const cached = markerCacheRef.current.get(sourceUri);
+              if (cached) {
+                markerUri = cached;
+              } else {
+                let localFileUri = "";
+                if (sourceUri.startsWith("file://")) {
+                  localFileUri = sourceUri;
+                } else if (sourceUri.startsWith("ph://")) {
+                  try {
+                    const assetId = sourceUri.replace("ph://", "");
+                    const info = await MediaLibrary.getAssetInfoAsync(assetId);
+                    const resolved = info.localUri ?? info.uri ?? "";
+                    if (typeof resolved === "string" && resolved.startsWith("file://")) {
+                      localFileUri = resolved;
+                    }
+                  } catch {
+                    localFileUri = "";
                   }
-                } catch {
-                  markerUri = FALLBACK_MARKER_URI;
+                }
+
+                if (localFileUri) {
+                  try {
+                    /* 마커 프레임은 80×80이므로 retina 대비 160으로만 리사이즈해 페이로드를 수십~수백배 축소 */
+                    const result = await manipulateAsync(
+                      localFileUri,
+                      [{ resize: { width: 160 } }],
+                      { compress: 0.6, format: SaveFormat.JPEG, base64: true }
+                    );
+                    if (result.base64) {
+                      markerUri = `data:image/jpeg;base64,${result.base64}`;
+                      markerCacheRef.current.set(sourceUri, markerUri);
+                    }
+                  } catch {
+                    markerUri = FALLBACK_MARKER_URI;
+                  }
                 }
               }
 
@@ -119,6 +154,8 @@ export default function MapView({ images, onOpenPhotoFromMap }: Props) {
               };
             }),
         );
+
+        if (cancelled) return;
 
         const coords = settled
           .filter(
@@ -135,14 +172,18 @@ export default function MapView({ images, onOpenPhotoFromMap }: Props) {
           return next;
         });
       } catch (e) {
-        console.error("Failed to load images as base64", e);
+        console.error("Failed to load marker thumbnails", e);
       } finally {
-        setLoading(false);
+        if (!cancelled) setLoading(false);
       }
     };
 
     loadCoordinates();
-  }, [imagesSignature, images]);
+
+    return () => {
+      cancelled = true;
+    };
+  }, [visible, imagesSignature, images]);
   // Pass coordinates to WebView as JSON
   const coordJSON = JSON.stringify(coordinates);
 
