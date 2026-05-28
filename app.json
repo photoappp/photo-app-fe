@@ -37,6 +37,7 @@
         {
           "photosPermission": "Allow photo-app-fe to access your photos.",
           "savePhotosPermission": "Allow photo-app-fe to save photos to your device.",
+          "isAccessMediaLocationEnabled": true,
           "granularPermissions": ["photo"]
         }
       ],
@@ -63,6 +64,7 @@
         "READ_MEDIA_IMAGES",
         "READ_MEDIA_VIDEO",
         "READ_EXTERNAL_STORAGE",
+        "ACCESS_MEDIA_LOCATION",
         "ACCESS_FINE_LOCATION"
       ]
     },

@@ -6,6 +6,7 @@ import { LinearGradient } from "expo-linear-gradient";
 // 2026-03-04 added forwardRef, useImperativeHandle, useState for reset by yen
 import { forwardRef, useEffect, useImperativeHandle, useState } from "react";
 import {
+  ActivityIndicator,
   FlatList,
   Modal,
   Pressable,
@@ -36,6 +37,9 @@ type Props = {
   visible: boolean;
   onClose: () => void;
   photos: Photo[];
+  /* 2026.05.28 위치 후보 목록이 아직 준비 중이면 선택 UI 위에 안내 오버레이를 띄워 중복 입력을 막기 위해 추가 by June */
+  isPreparing?: boolean;
+  preparingMessage?: string;
   onSelectionChange?: (selected: {
     countries: string[];
     cities: string[];
@@ -44,7 +48,17 @@ type Props = {
 };
 // 2026-03-04 to to push reset function to parent with forwardRef by yen
 const LocationSelector = forwardRef<LocationSelectorHandle, Props>(
-  ({ photos, visible, onClose, onSelectionChange }, ref) => {
+  (
+    {
+      photos,
+      visible,
+      onClose,
+      isPreparing = false,
+      preparingMessage,
+      onSelectionChange,
+    },
+    ref,
+  ) => {
     // const [visible, setVisible] = useState(false);
     const [allCountries, setAllCountries] = useState<string[]>([]);
     const [allCities, setAllCities] = useState<string[]>([]);
@@ -56,6 +70,11 @@ const LocationSelector = forwardRef<LocationSelectorHandle, Props>(
     const [tempCities, setTempCities] = useState<string[]>(["All"]);
     /* 2026.04.22 TRANSLATIONS 직접 접근을 제거하고 공용 i18n 훅을 사용해 번역 처리 방식을 통일하기 위해 변경 by June */
     const { language, t } = useI18n();
+    /* 2026.05.28 위치 목록이 이미 하나라도 준비된 상태라면 백그라운드 인덱싱이 남아 있어도 로딩 오버레이를 숨기기 위해 실제 옵션 유무로 최종 표시 여부를 보정 by June */
+    const hasLocationOptions =
+      allCountries.some((item) => item !== "All") ||
+      allCities.some((item) => item !== "All");
+    const shouldShowPreparingOverlay = isPreparing && !hasLocationOptions;
 
     useEffect(() => {
       // Fetch Translations from Google Sheets
@@ -288,6 +307,17 @@ const LocationSelector = forwardRef<LocationSelectorHandle, Props>(
       >
         <Pressable style={styles.overlay} onPress={onClose}>
           <View style={styles.modalContainer}>
+            {shouldShowPreparingOverlay ? (
+              <View style={styles.preparingOverlay} pointerEvents="auto">
+                <View style={styles.preparingBox}>
+                  <ActivityIndicator size="large" color="#6366F1" />
+                  <Text style={styles.preparingText}>
+                    {preparingMessage ??
+                      "Preparing location list. Please wait..."}
+                  </Text>
+                </View>
+              </View>
+            ) : null}
             <View style={styles.selectionContainer}>
               <View
                 style={{
@@ -468,6 +498,7 @@ const styles = StyleSheet.create({
     backgroundColor: "white",
     borderTopLeftRadius: 20,
     borderTopRightRadius: 20,
+    position: "relative",
     paddingTop: 20,
     paddingBottom: 40, // 아이폰 홈 바 영역 고려
     maxHeight: "40%",
@@ -479,6 +510,37 @@ const styles = StyleSheet.create({
     shadowOpacity: 0.25,
     shadowRadius: 4,
     elevation: 5, // 안드로이드 그림자
+  },
+  preparingOverlay: {
+    ...StyleSheet.absoluteFillObject,
+    zIndex: 20,
+    elevation: 20,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: "rgba(255,255,255,0.82)",
+    borderTopLeftRadius: 20,
+    borderTopRightRadius: 20,
+  },
+  preparingBox: {
+    minWidth: 220,
+    marginHorizontal: 20,
+    paddingHorizontal: 18,
+    paddingVertical: 16,
+    borderRadius: 16,
+    backgroundColor: "#FFFFFF",
+    alignItems: "center",
+    shadowColor: "#000",
+    shadowOpacity: 0.12,
+    shadowRadius: 14,
+    shadowOffset: { width: 0, height: 8 },
+    elevation: 6,
+  },
+  preparingText: {
+    marginTop: 10,
+    color: "#374151",
+    fontSize: 13,
+    fontWeight: "600",
+    textAlign: "center",
   },
   selectionContainer: {
     borderRadius: 3,

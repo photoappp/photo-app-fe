@@ -119,6 +119,9 @@ type DateTimeFilterProps = {
   photos: Photo[]; // add photos here
   /* 2026.04.22 All Dates 선택 시 실제 사진첩 최저 날짜를 외부(DB 우선)에서 주입받아 1970 고정 범위를 제거하기 위해 비동기 resolver prop을 추가 by June */
   resolveOldestPhotoDate?: () => Promise<Date | null>;
+  /* 2026.05.28 위치 목록이 아직 인덱싱/지오코딩 중일 때 바텀시트 안에서 명확한 안내를 보여주기 위한 상태 by June */
+  locationPreparing?: boolean;
+  locationPreparingMessage?: string;
   onLocationChange: (value: {
     countries: string[];
     cities: string[];
@@ -226,6 +229,8 @@ export default function DateTimeFilter({
   onChange,
   photos,
   resolveOldestPhotoDate,
+  locationPreparing = false,
+  locationPreparingMessage,
   onLocationChange,
 }: DateTimeFilterProps) {
   // ---- 필터 상태 ----
@@ -827,6 +832,8 @@ export default function DateTimeFilter({
             setLocationLabel(locationLabel);
           }}
           photos={photos}
+          isPreparing={locationPreparing}
+          preparingMessage={locationPreparingMessage}
         />
       }
       {/* Time Bottom Sheet END */}

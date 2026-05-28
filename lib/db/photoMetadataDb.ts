@@ -27,6 +27,7 @@ export type PhotoMetadataRow = {
 
 /* 2026.04.15 쿼리 결과를 화면용 최소 Photo 형태로 변환하기 위한 타입을 명확히 분리하기 위해 추가 by June */
 export type PhotoSummaryRow = {
+  assetId: string;
   uri: string;
   takenAt: number | null;
   latitude: number | null;
@@ -595,7 +596,7 @@ export const queryPhotoMetadataByDateTime = async (params: {
 
   const rows = await db.getAllAsync<PhotoSummaryRow>(
     `
-    SELECT uri, taken_at as takenAt, latitude, longitude
+    SELECT asset_id as assetId, uri, taken_at as takenAt, latitude, longitude
     FROM photo_metadata
     WHERE is_deleted = 0
       /* 2026.04.22 날짜 검색 정확도 우선 정책으로 unknown timestamp row를 제외해 잘못된 연도 노출을 방지하기 위해 조건 수정 by June */
@@ -608,7 +609,8 @@ export const queryPhotoMetadataByDateTime = async (params: {
         OR (? < ? AND taken_minute >= ? AND taken_minute <= ?)
       )
     ORDER BY
-      taken_at ASC
+      /* 2026.05.28 홈 썸네일 정책과 동일하게 최신 사진이 먼저 나오도록 DB 조회 정렬을 최신순으로 변경 by June */
+      taken_at DESC
     LIMIT ?
     OFFSET ?
     `,
