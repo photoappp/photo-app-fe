@@ -156,6 +156,11 @@ const LocationSelector = forwardRef<LocationSelectorHandle, Props>(
         return Array.from(new Set([...allCountries]));
       }
       if (type === "city") {
+        /* 2026.05.26 리셋 직후 tempCountries가 비어 있어도 city 목록이 사라지지 않도록 전체 도시 목록(allCities)으로
+           폴백 — 사용자는 다시 도시를 선택할 수 있어야 함 by yen */
+        if (tempCountries.length === 0) {
+          return Array.from(new Set([...allCities]));
+        }
         const allCitiesSet = new Set<string>();
 
         tempCountries.forEach((country) => {
