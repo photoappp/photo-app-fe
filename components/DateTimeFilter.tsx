@@ -122,6 +122,9 @@ type DateTimeFilterProps = {
   /* 2026.05.28 위치 목록이 아직 인덱싱/지오코딩 중일 때 바텀시트 안에서 명확한 안내를 보여주기 위한 상태 by June */
   locationPreparing?: boolean;
   locationPreparingMessage?: string;
+  onOpenLocationRequest?: () => void | Promise<void>;
+  interactionBlocked?: boolean;
+  interactionBlockedReason?: string;
   onLocationChange: (value: {
     countries: string[];
     cities: string[];
@@ -231,6 +234,9 @@ export default function DateTimeFilter({
   resolveOldestPhotoDate,
   locationPreparing = false,
   locationPreparingMessage,
+  onOpenLocationRequest,
+  interactionBlocked = false,
+  interactionBlockedReason,
   onLocationChange,
 }: DateTimeFilterProps) {
   // ---- 필터 상태 ----
@@ -263,6 +269,7 @@ export default function DateTimeFilter({
   // 날짜, 시간 변경 타이밍 관련
   const debounceTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const lastEmittedRef = useRef<string>(""); // 동일 값 중복 emit 방지용(선택이지만 추천)
+  const sheetTransitionLockUntilRef = useRef(0);
 
   const onChangeStartSafe = (d: Date) => {
     const nd = clampToToday(d);
@@ -276,17 +283,113 @@ export default function DateTimeFilter({
     if (nd < dateStart) setDateStart(nd);
   };
 
+  const isSheetTransitionLocked = (type: string, action: string) => {
+    const now = Date.now();
+    if (now < sheetTransitionLockUntilRef.current) {
+      console.log("[FilterSheet] ignored transition", {
+        type,
+        action,
+        remainingMs: sheetTransitionLockUntilRef.current - now,
+      });
+      return true;
+    }
+    return false;
+  };
+
+  const lockSheetTransition = () => {
+    sheetTransitionLockUntilRef.current = Date.now() + 350;
+  };
+
+  const closeDateSheet = (source: string) => {
+    if (!dateModalVisible) return;
+    if (isSheetTransitionLocked("date", `close:${source}`)) return;
+    lockSheetTransition();
+    console.log("[FilterSheet] close", { type: "date", source });
+    flushPendingChange();
+    setDateModalVisible(false);
+  };
+
+  const closeTimeSheet = (source: string, flush = true) => {
+    if (!timeModalVisible) return;
+    if (isSheetTransitionLocked("time", `close:${source}`)) return;
+    lockSheetTransition();
+    console.log("[FilterSheet] close", { type: "time", source });
+    if (flush) flushPendingChange();
+    setTimeModalVisible(false);
+  };
+
+  const closeLocationSheet = (source: string) => {
+    if (!locationModalVisible) return;
+    if (isSheetTransitionLocked("location", `close:${source}`)) return;
+    lockSheetTransition();
+    console.log("[FilterSheet] close", { type: "location", source });
+    setLocationModalVisible(false);
+  };
+
   const openDateSheet = () => {
+    console.log("[FilterTap] date", {
+      interactionBlocked,
+      interactionBlockedReason: interactionBlockedReason ?? null,
+      dateModalVisible,
+      timeModalVisible,
+      locationModalVisible,
+      transitionLocked:
+        Date.now() < sheetTransitionLockUntilRef.current,
+      remainingMs: Math.max(
+        0,
+        sheetTransitionLockUntilRef.current - Date.now(),
+      ),
+    });
+    if (dateModalVisible) return;
+    if (isSheetTransitionLocked("date", "open")) return;
+    lockSheetTransition();
+    console.log("[FilterSheet] open", { type: "date" });
     amplitude.track("tap_date_filter", { screen_name: "home" });
     setDateModalVisible(true);
   };
 
   const openTimeSheet = () => {
+    console.log("[FilterTap] time", {
+      interactionBlocked,
+      interactionBlockedReason: interactionBlockedReason ?? null,
+      dateModalVisible,
+      timeModalVisible,
+      locationModalVisible,
+      transitionLocked:
+        Date.now() < sheetTransitionLockUntilRef.current,
+      remainingMs: Math.max(
+        0,
+        sheetTransitionLockUntilRef.current - Date.now(),
+      ),
+    });
+    if (timeModalVisible) return;
+    if (isSheetTransitionLocked("time", "open")) return;
+    lockSheetTransition();
+    console.log("[FilterSheet] open", { type: "time" });
     amplitude.track("tap_time_filter", { screen_name: "home" });
     setTimeModalVisible(true);
   };
 
   const openLocationSheet = () => {
+    console.log("[FilterTap] location", {
+      interactionBlocked,
+      interactionBlockedReason: interactionBlockedReason ?? null,
+      locationPreparing,
+      dateModalVisible,
+      timeModalVisible,
+      locationModalVisible,
+      transitionLocked:
+        Date.now() < sheetTransitionLockUntilRef.current,
+      remainingMs: Math.max(
+        0,
+        sheetTransitionLockUntilRef.current - Date.now(),
+      ),
+    });
+    void onOpenLocationRequest?.();
+    if (locationModalVisible) return;
+    if (isSheetTransitionLocked("location", "open")) return;
+    lockSheetTransition();
+    console.log("[FilterSheet] open", { type: "location" });
     amplitude.track("tap_location_filter", { screen_name: "home" });
     setLocationModalVisible(true);
   };
@@ -518,8 +621,8 @@ export default function DateTimeFilter({
                 bypassDebounceRef.current = true;
                 setDateStart(oneYearAgo);
                 setDateEnd(today);
-                setDateModalVisible(false);
                 flushPendingChange();
+                setDateModalVisible(false);
               }}
             >
               <ICON_RESET width={70} />
@@ -550,8 +653,8 @@ export default function DateTimeFilter({
                 bypassDebounceRef.current = true;
                 setTimeStart(0);
                 setTimeEnd(1439);
-                setTimeModalVisible(false);
                 flushPendingChange();
+                setTimeModalVisible(false);
               }}
             >
               <ICON_RESET width={70} />
@@ -602,19 +705,14 @@ export default function DateTimeFilter({
         visible={dateModalVisible}
         transparent
         animationType="slide"
-        onRequestClose={() => {
-          flushPendingChange();
-          setDateModalVisible(false);
-        }}
+        onRequestClose={() => closeDateSheet("request")}
       >
         <Pressable
           style={styles.modalBackdrop}
-          onPress={() => {
-            setDateModalVisible(false);
-            flushPendingChange();
-          }}
+          onPress={() => closeDateSheet("backdrop")}
         >
-          <View
+          <Pressable
+            onPress={(event) => event.stopPropagation()}
             style={[
               styles.sheet,
               {
@@ -630,10 +728,7 @@ export default function DateTimeFilter({
                 <Text style={styles.sheetTitle}>{t("selectDate")}</Text>
                 <View style={{ flexDirection: "row" }}>
                   <TouchableOpacity
-                    onPress={() => {
-                      setDateModalVisible(false);
-                      flushPendingChange();
-                    }}
+                    onPress={() => closeDateSheet("header")}
                     style={{ marginLeft: 16 }}
                   >
                     <ICON_CLOSE width={20} height={20} />
@@ -678,7 +773,7 @@ export default function DateTimeFilter({
                 ))}
               </View>
             </ScrollView>
-          </View>
+          </Pressable>
         </Pressable>
       </Modal>
       {/* Date Bottom Sheet END */}
@@ -688,16 +783,14 @@ export default function DateTimeFilter({
         visible={timeModalVisible}
         transparent
         animationType="slide"
-        onRequestClose={() => setTimeModalVisible(false)}
+        onRequestClose={() => closeTimeSheet("request", false)}
       >
         <Pressable
           style={styles.modalBackdrop}
-          onPress={() => {
-            setTimeModalVisible(false);
-            flushPendingChange();
-          }}
+          onPress={() => closeTimeSheet("backdrop")}
         >
-          <View
+          <Pressable
+            onPress={(event) => event.stopPropagation()}
             style={[
               styles.sheet,
               {
@@ -713,10 +806,7 @@ export default function DateTimeFilter({
                 <Text style={styles.sheetTitle}>{t("selectTime")}</Text>
                 <View style={{ flexDirection: "row" }}>
                   <TouchableOpacity
-                    onPress={() => {
-                      setTimeModalVisible(false);
-                      flushPendingChange();
-                    }}
+                    onPress={() => closeTimeSheet("header")}
                     style={{ marginLeft: 16 }}
                   >
                     <ICON_CLOSE width={20} height={20} />
@@ -818,7 +908,7 @@ export default function DateTimeFilter({
                 </LinearGradient>
               </TouchableOpacity>
             </ScrollView>
-          </View>
+          </Pressable>
         </Pressable>
       </Modal>
       {
@@ -826,7 +916,7 @@ export default function DateTimeFilter({
           // 2026-03-04 ref 전달 추가 by yen
           ref={locationRef}
           visible={locationModalVisible}
-          onClose={() => setLocationModalVisible(false)}
+          onClose={() => closeLocationSheet("selector")}
           onSelectionChange={({ countries, cities, locationLabel }) => {
             onLocationChange({ countries, cities, locationLabel });
             setLocationLabel(locationLabel);

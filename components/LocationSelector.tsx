@@ -4,7 +4,7 @@ import { Colors } from "@/constants/Colors";
 import { Photo } from "@/types/Photo";
 import { LinearGradient } from "expo-linear-gradient";
 // 2026-03-04 added forwardRef, useImperativeHandle, useState for reset by yen
-import { forwardRef, useEffect, useImperativeHandle, useState } from "react";
+import { forwardRef, useCallback, useEffect, useImperativeHandle, useMemo, useState } from "react";
 import {
   ActivityIndicator,
   FlatList,
@@ -66,15 +66,15 @@ const LocationSelector = forwardRef<LocationSelectorHandle, Props>(
     const [selectedCities, setSelectedCities] = useState<string[]>([]);
     const [locationMap, setLocationMap] = useState<LocationMap>({});
 
-    const [tempCountries, setTempCountries] = useState<string[]>(["All"]);
-    const [tempCities, setTempCities] = useState<string[]>(["All"]);
+    const [tempCountries, setTempCountries] = useState<string[]>([]);
+    const [tempCities, setTempCities] = useState<string[]>([]);
     /* 2026.04.22 TRANSLATIONS 직접 접근을 제거하고 공용 i18n 훅을 사용해 번역 처리 방식을 통일하기 위해 변경 by June */
     const { language, t } = useI18n();
-    /* 2026.05.28 위치 목록이 이미 하나라도 준비된 상태라면 백그라운드 인덱싱이 남아 있어도 로딩 오버레이를 숨기기 위해 실제 옵션 유무로 최종 표시 여부를 보정 by June */
-    const hasLocationOptions =
-      allCountries.some((item) => item !== "All") ||
-      allCities.some((item) => item !== "All");
-    const shouldShowPreparingOverlay = isPreparing && !hasLocationOptions;
+    const shouldShowPreparingOverlay = isPreparing;
+    const areListsEqual = useCallback((left: string[], right: string[]) => {
+      if (left.length !== right.length) return false;
+      return left.every((item, index) => item === right[index]);
+    }, []);
 
     useEffect(() => {
       // Fetch Translations from Google Sheets
@@ -88,6 +88,7 @@ const LocationSelector = forwardRef<LocationSelectorHandle, Props>(
           const langCodes = rows[0];
           const allCountriesSet = new Set<string>();
           const allCitiesSet = new Set<string>();
+          const nextLocationMap: LocationMap = {};
 
           rows.slice(1).forEach((row) => {
             const enName = row[0];
@@ -95,7 +96,6 @@ const LocationSelector = forwardRef<LocationSelectorHandle, Props>(
 
             row.forEach((val, i) => {
               const code = langCodes[i] as string;
-              /* 2026.04.22 CSV 헤더 중 지원 언어만 라벨 맵에 반영해 잘못된 키 인덱싱으로 인한 타입/런타임 오류를 방지하기 위해 조건 가드 추가 by June */
               if (val && SUPPORTED_LANGUAGES.includes(code as SupportedLanguage)) {
                 const normalizedCode = code as SupportedLanguage;
                 countryTranslationMap[enName][normalizedCode] = val;
@@ -106,93 +106,135 @@ const LocationSelector = forwardRef<LocationSelectorHandle, Props>(
           photos.forEach(({ country, city }) => {
             if (!country) return;
 
-            // Initialize country block if missing
-            locationMap[country] = {
-              country: countryTranslationMap[country] ?? { en: country },
-              cities: [],
-            };
+            if (!nextLocationMap[country]) {
+              nextLocationMap[country] = {
+                country: countryTranslationMap[country] ?? { en: country },
+                cities: [],
+              };
+            }
+
             allCountriesSet.add(country);
-            // Add city if present and not duplicated
             if (city) {
-              const exists = locationMap[country].cities.some(
+              const exists = nextLocationMap[country].cities.some(
                 (c) => c.en === city,
               );
               allCitiesSet.add(city);
               if (!exists) {
-                locationMap[country].cities.push({ en: city });
+                nextLocationMap[country].cities.push({ en: city });
               }
             }
           });
-          setLocationMap(locationMap);
-          if (allCountriesSet.size > 0) {
-            setAllCountries(["All", ...Array.from(allCountriesSet)]);
-            setAllCities(["All", ...Array.from(allCitiesSet)]);
-            setTempCountries(["All", ...Array.from(allCountriesSet)]);
-            setTempCities(["All", ...Array.from(allCitiesSet)]);
-          }
+
+          const nextCountries = Array.from(allCountriesSet).sort();
+          const nextCities = Array.from(allCitiesSet).sort();
+
+          setLocationMap(nextLocationMap);
+          setAllCountries(nextCountries);
+          setAllCities(nextCities);
+          setSelectedCountries((prev) => prev.filter((item) => allCountriesSet.has(item)));
+          setSelectedCities((prev) => {
+            const filtered = prev.filter((item) => allCitiesSet.has(item));
+            return filtered.length > 0 ? filtered : [];
+          });
         })
         .catch(console.error);
     }, [photos]);
 
-    // Get temporary selection array based on type
-    const getTempSelection = (type: "country" | "city") => {
-      if (type === "country") return tempCountries;
-      if (type === "city") return tempCities;
-      return [];
-    };
+    const getCitiesForCountry = useCallback(
+      (country: string) =>
+        (locationMap[country]?.cities ?? [])
+          .map((city) => city.en)
+          .filter(Boolean),
+      [locationMap],
+    );
 
-    const setTempSelection = (type: "country" | "city", items: string[]) => {
-      if (type === "country") setTempCountries(items);
-      else setTempCities(items);
-    };
+    useEffect(() => {
+      if (!visible) return;
+      const hasActiveLocationFilter =
+        selectedCountries.length > 0 || selectedCities.length > 0;
+      const nextCities = hasActiveLocationFilter ? selectedCities : allCities;
+      const nextCountries = hasActiveLocationFilter ? selectedCountries : allCountries;
+      setTempCities((prev) =>
+        areListsEqual(prev, nextCities) ? prev : nextCities,
+      );
+      setTempCountries((prev) =>
+        areListsEqual(prev, nextCountries) ? prev : nextCountries,
+      );
+    }, [
+      allCities,
+      allCountries,
+      areListsEqual,
+      selectedCities,
+      selectedCountries,
+      visible,
+    ]);
 
-    const toggleItem = (type: "country" | "city", item: string) => {
-      const current = getTempSelection(type);
-      const allItems = getCurrentItems(type);
+    const visibleCities = useMemo(() => {
+      if (tempCountries.length === 0) {
+        return allCities;
+      }
 
+      const citySet = new Set<string>();
+      tempCountries.forEach((country) => {
+        getCitiesForCountry(country).forEach((city) => citySet.add(city));
+      });
+      return Array.from(citySet).sort();
+    }, [allCities, tempCountries, locationMap]);
+
+    const areAllCountriesSelected =
+      allCountries.length > 0 && tempCountries.length === allCountries.length;
+    const areAllVisibleCitiesSelected =
+      visibleCities.length > 0 &&
+      visibleCities.every((city) => tempCities.includes(city));
+
+    const toggleCountry = (item: string) => {
       if (item === "All") {
-        if (!current.includes("All")) {
-          setTempSelection(type, allItems);
-        } else {
-          setTempSelection(type, []);
+        if (areAllCountriesSelected) {
+          setTempCountries([]);
+          setTempCities([]);
+          return;
         }
+
+        setTempCountries(allCountries);
+        setTempCities(allCities);
         return;
       }
-      let updated: string[];
-      // 2026-03-04 change toggle logic to handle "All" selection by yen
-      if (current.includes(item) && current.includes("All")) {
-        updated = [item];
-      } else if (current.includes(item)) {
-        updated = current.filter((i) => i !== item && i !== "All");
-      } else {
-        updated = [...current, item];
+
+      const isSelected = tempCountries.includes(item);
+      const countryCities = getCitiesForCountry(item);
+
+      if (isSelected) {
+        const nextCountries = tempCountries.filter((country) => country !== item);
+        const nextCities = tempCities.filter((city) => !countryCities.includes(city));
+        setTempCountries(nextCountries);
+        setTempCities(nextCities);
+        return;
       }
-      setTempSelection(type, updated);
+
+      const nextCities = Array.from(new Set([...tempCities, ...countryCities])).sort();
+      setTempCities(nextCities);
+      setTempCountries(Array.from(new Set([...tempCountries, item])).sort());
     };
 
-    const getCurrentItems = (type: "country" | "city") => {
-      if (type === "country") {
-        return Array.from(new Set([...allCountries]));
-      }
-      if (type === "city") {
-        /* 2026.05.26 리셋 직후 tempCountries가 비어 있어도 city 목록이 사라지지 않도록 전체 도시 목록(allCities)으로
-           폴백 — 사용자는 다시 도시를 선택할 수 있어야 함 by yen */
-        if (tempCountries.length === 0) {
-          return Array.from(new Set([...allCities]));
+    const toggleCity = (item: string) => {
+      if (item === "All") {
+        if (areAllVisibleCitiesSelected) {
+          const nextCities = tempCities.filter((city) => !visibleCities.includes(city));
+          setTempCities(nextCities);
+          return;
         }
-        const allCitiesSet = new Set<string>();
 
-        tempCountries.forEach((country) => {
-          const cities = locationMap[country]?.cities ?? [];
-          cities.forEach((c) => {
-            if (c.en) allCitiesSet.add(c.en);
-          });
-        });
-        if (allCitiesSet.size == 0) return [];
-        return Array.from(new Set(["All", ...allCitiesSet]));
+        const nextCities = Array.from(new Set([...tempCities, ...visibleCities])).sort();
+        setTempCities(nextCities);
+        return;
       }
 
-      return [];
+      const isSelected = tempCities.includes(item);
+      const nextCities = isSelected
+        ? tempCities.filter((city) => city !== item)
+        : [...tempCities, item];
+      const normalized = Array.from(new Set(nextCities)).sort();
+      setTempCities(normalized);
     };
 
     /*const getButtonTitle = () => {
@@ -228,10 +270,8 @@ const LocationSelector = forwardRef<LocationSelectorHandle, Props>(
 
     // 2026.05.13 설정에서 언어 변경 이후 위치필터에 문자열 반영 안되는 현상 수정 June START
     const getLabelForSelection = (countriesInput: string[], citiesInput: string[]) => {
-      const countryIsAll =
-        countriesInput.length === 0 || countriesInput.includes("All");
-      const cityIsAll =
-        citiesInput.length === 0 || citiesInput.includes("All");
+      const countryIsAll = countriesInput.length === 0;
+      const cityIsAll = citiesInput.length === 0;
     
       if (countryIsAll && cityIsAll) {
         return t("allLocations");
@@ -243,10 +283,10 @@ const LocationSelector = forwardRef<LocationSelectorHandle, Props>(
         item;
     
       const formatLabel = (items: string[], allLabel: string) => {
-        if (items.length === 0 || items.includes("All")) return allLabel;
+        if (items.length === 0) return allLabel;
         return items.length === 1
           ? getTranslatedCountry(items[0])
-          : `${getTranslatedCountry(items[1])}+${items.length - 1}`;
+          : `${getTranslatedCountry(items[0])}+${items.length - 1}`;
       };
     
       const countryLabel = formatLabel(
@@ -260,17 +300,6 @@ const LocationSelector = forwardRef<LocationSelectorHandle, Props>(
     
       return [countryLabel, cityLabel].filter(Boolean).join(", ");
     };
-
-    const getButtonTitle = () => getLabelForSelection(tempCountries, tempCities);
-
-    useEffect(() => {
-      onSelectionChange?.({
-        countries: selectedCountries,
-        cities: selectedCities,
-        locationLabel: getLabelForSelection(selectedCountries, selectedCities),
-      });
-    }, [language, locationMap, selectedCountries, selectedCities]);
-    // 2026.05.13 설정에서 언어 변경 이후 위치필터에 문자열 반영 안되는 현상 수정 June END
 
     const handleReset = () => {
       setSelectedCountries([]);
@@ -290,14 +319,30 @@ const LocationSelector = forwardRef<LocationSelectorHandle, Props>(
       handleReset,
     }));
 
-    /* 2026.05.12 언어 변경 후 메인 복귀 시 위치 라벨이 이전 언어로 남는 문제를 막기 위해 현재 선택값 기준 라벨을 재전달 by June */
-    useEffect(() => {
+    const applyCurrentSelection = () => {
+      const appliedCountries = [...tempCountries].sort();
+      const appliedCities = [...tempCities].sort();
+      const isAllSelected =
+        allCountries.length > 0 &&
+        allCities.length > 0 &&
+        areListsEqual(appliedCountries, allCountries) &&
+        areListsEqual(appliedCities, allCities);
+      const nextCountries = isAllSelected ? [] : appliedCountries;
+      const nextCities = isAllSelected ? [] : appliedCities;
+      const locationLabel = isAllSelected
+        ? t("allLocations")
+        : getLabelForSelection(nextCountries, nextCities);
+
+      setSelectedCountries(nextCountries);
+      setSelectedCities(nextCities);
       onSelectionChange?.({
-        countries: selectedCountries,
-        cities: selectedCities,
-        locationLabel: getLabelForSelection(selectedCountries, selectedCities),
+        countries: nextCountries,
+        cities: nextCities,
+        locationLabel,
       });
-    }, [language, locationMap, selectedCountries, selectedCities]);
+      onClose();
+    };
+
     return (
       <Modal
         transparent
@@ -306,7 +351,10 @@ const LocationSelector = forwardRef<LocationSelectorHandle, Props>(
         onRequestClose={onClose}
       >
         <Pressable style={styles.overlay} onPress={onClose}>
-          <View style={styles.modalContainer}>
+          <Pressable
+            style={styles.modalContainer}
+            onPress={(event) => event.stopPropagation()}
+          >
             {shouldShowPreparingOverlay ? (
               <View style={styles.preparingOverlay} pointerEvents="auto">
                 <View style={styles.preparingBox}>
@@ -339,22 +387,7 @@ const LocationSelector = forwardRef<LocationSelectorHandle, Props>(
                   }}
                 >
                   <TouchableOpacity
-                    onPress={() => {
-                      setSelectedCountries(tempCountries);
-                      setSelectedCities(tempCities);
-                      console.log("Applying selection:", {
-                        countries: tempCountries,
-                        cities: tempCities,
-                        locationLabel: getButtonTitle(),
-                      });
-                      onSelectionChange?.({
-                        countries: tempCountries,
-                        cities: tempCities,
-                        locationLabel: getButtonTitle(),
-                      });
-
-                      onClose();
-                    }}
+                    onPress={applyCurrentSelection}
                   >
                     {/* 2026-03-04 change to close icon by yen */}
                     <ICON_CLOSE width={20} height={20} />
@@ -379,15 +412,17 @@ const LocationSelector = forwardRef<LocationSelectorHandle, Props>(
                   {t("country")}
                 </Text>
                 <FlatList
-                  data={getCurrentItems("country")}
+                  data={["All", ...allCountries]}
                   renderItem={({ item }) => {
                     const isSelected =
-                      getTempSelection("country").includes(item);
+                      item === "All"
+                        ? areAllCountriesSelected
+                        : tempCountries.includes(item);
 
                     return (
                       <Pressable
                         key={item}
-                        onPress={() => toggleItem("country", item)}
+                        onPress={() => toggleCountry(item)}
                         style={({ pressed }) => [
                           {
                             backgroundColor: pressed
@@ -425,15 +460,17 @@ const LocationSelector = forwardRef<LocationSelectorHandle, Props>(
                 </Text>
                 {tempCountries && (
                   <FlatList
-                    data={getCurrentItems("city")}
+                    data={["All", ...visibleCities]}
                     renderItem={({ item }) => {
                       const isSelected =
-                        getTempSelection("city").includes(item);
+                        item === "All"
+                          ? areAllVisibleCitiesSelected
+                          : tempCities.includes(item);
 
                       return (
                         <Pressable
                           key={item}
-                          onPress={() => toggleItem("city", item)}
+                          onPress={() => toggleCity(item)}
                           style={({ pressed }) => [
                             {
                               backgroundColor: pressed
@@ -460,19 +497,7 @@ const LocationSelector = forwardRef<LocationSelectorHandle, Props>(
             <View style={styles.buttonContainer}>
               <TouchableOpacity
                 onPress={() => {
-                  setSelectedCountries(tempCountries);
-                  setSelectedCities(tempCities);
-                  console.log("Applying selection:", {
-                    countries: tempCountries,
-                    cities: tempCities,
-                    locationLabel: getButtonTitle(),
-                  });
-                  onSelectionChange?.({
-                    countries: tempCountries,
-                    cities: tempCities,
-                    locationLabel: getButtonTitle(),
-                  });
-
+                  handleReset();
                   onClose();
                 }}
               >
@@ -487,7 +512,7 @@ const LocationSelector = forwardRef<LocationSelectorHandle, Props>(
                 </LinearGradient>
               </TouchableOpacity>
             </View>
-          </View>
+          </Pressable>
         </Pressable>
       </Modal>
     );

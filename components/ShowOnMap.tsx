@@ -37,6 +37,9 @@ type Photo = {
 type Props = {
   //images: Image[];
   images: Photo[];
+  onOpenRequest?: () => void | Promise<void>;
+  preparingLocations?: boolean;
+  preparingMessage?: string;
   onOpenPhotoFromMap?: (payload: {
     sourceUri: string;
     city?: string;
@@ -61,7 +64,13 @@ const getAssetIdFromPhUri = (uri: string): string | null => {
   return normalized || null;
 };
 
-export default function MapView({ images, onOpenPhotoFromMap }: Props) {
+export default function MapView({
+  images,
+  onOpenRequest,
+  preparingLocations = false,
+  preparingMessage,
+  onOpenPhotoFromMap,
+}: Props) {
   const { language } = useLanguage();
   const [visible, setVisible] = useState(false);
   const [detailVisible, setDetailVisible] = useState(false);
@@ -557,6 +566,7 @@ export default function MapView({ images, onOpenPhotoFromMap }: Props) {
     setThumbnailLoading(false);
     setCoordinatesReady(false);
     setVisible(true);
+    void onOpenRequest?.();
   };
 
   return (
@@ -569,7 +579,14 @@ export default function MapView({ images, onOpenPhotoFromMap }: Props) {
       </TouchableOpacity>
       <Modal visible={visible} animationType="slide">
         <View style={styles.container}>
-          {!coordinatesReady ? (
+          {preparingLocations ? (
+            <View style={styles.mapStatusOverlay}>
+              <ActivityIndicator size="large" color="#6366F1" />
+              <Text style={styles.mapStatusText}>
+                {preparingMessage ?? "Preparing locations..."}
+              </Text>
+            </View>
+          ) : !coordinatesReady ? (
             <View style={styles.mapStatusOverlay}>
               <ActivityIndicator size="large" color="#6366F1" />
               <Text style={styles.mapStatusText}>Loading map locations...</Text>
