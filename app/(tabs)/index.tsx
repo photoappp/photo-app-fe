@@ -2489,28 +2489,82 @@ export default function HomeScreen() {
   const { dateStart, dateEnd, timeStart, timeEnd, countries, cities } = filter;
 
   const loadCountRef = useRef(0);
+  /* 2026.06.03 All Dates에서 실제 갤러리 최저 촬영일을 반복 탐색하지 않도록 세션 캐시와 in-flight ref를 추가 by Codex */
+  const oldestGalleryDateRef = useRef<Date | null>(null);
+  const oldestGalleryDateResolvedRef = useRef(false);
+  const oldestGalleryDatePromiseRef = useRef<Promise<Date | null> | null>(null);
   /* 2026.04.22 All Dates 프리셋 시작일을 실제 최저 촬영일로 바꾸기 위해 DateTimeFilter에서 호출할 최소 날짜 resolver를 추가 by June */
   const resolveOldestPhotoDate = useCallback(async () => {
-    try {
-      /* 2026.04.22 전체 라이브러리 기준 신뢰도를 확보하기 위해 DB 최소 촬영일을 1순위로 조회하도록 추가 by June */
-      const oldestTakenAt = await getOldestPhotoTakenAt();
-      if (oldestTakenAt && Number.isFinite(oldestTakenAt)) {
-        return new Date(oldestTakenAt);
-      }
-    } catch (error) {
-      /* 2026.04.22 DB 조회 실패 시에도 All Dates 기능이 동작하도록 로컬 fallback으로 이어가기 위해 오류를 로그만 남기고 흡수 by June */
-      console.log("resolve oldest photo date from db error:", error);
+    if (oldestGalleryDateResolvedRef.current) {
+      return oldestGalleryDateRef.current;
     }
 
-    /* 2026.04.22 DB 미적재 초기 구간을 대비해 현재 메모리에 로드된 사진에서도 최소 날짜를 계산하는 fallback을 추가 by June */
-    let minTakenAt: number | null = null;
-    for (const photo of photosRef.current) {
-      if (!photo.takenAt || !Number.isFinite(photo.takenAt)) continue;
-      if (minTakenAt === null || photo.takenAt < minTakenAt) {
-        minTakenAt = photo.takenAt;
-      }
+    if (oldestGalleryDatePromiseRef.current) {
+      return oldestGalleryDatePromiseRef.current;
     }
-    return minTakenAt ? new Date(minTakenAt) : null;
+
+    const work = (async () => {
+      try {
+        /* 2026.06.03 All Dates는 DB 캐시가 아니라 실제 네이티브 갤러리 기준 최저 날짜를 우선 반영하기 위해 creationTime ASC 1건 조회를 1순위로 추가 by Codex */
+        const permission = await MediaLibrary.getPermissionsAsync();
+        if (permission.status === "granted") {
+          const result = await MediaLibrary.getAssetsAsync({
+            first: 1,
+            mediaType: MediaLibrary.MediaType.photo,
+            sortBy: [[MediaLibrary.SortBy.creationTime, true]],
+          });
+          const oldestAsset = result.assets?.[0];
+          const oldestCreationTime = oldestAsset?.creationTime;
+          if (
+            oldestCreationTime &&
+            Number.isFinite(oldestCreationTime) &&
+            oldestCreationTime > 0
+          ) {
+            const oldestDate = new Date(oldestCreationTime);
+            oldestGalleryDateRef.current = oldestDate;
+            oldestGalleryDateResolvedRef.current = true;
+            return oldestDate;
+          }
+        }
+      } catch (error) {
+        /* 2026.06.03 네이티브 최저 날짜 직접 조회 실패가 All Dates 전체 실패로 이어지지 않도록 기존 fallback으로 이어가기 위해 오류만 로깅 by Codex */
+        console.log("resolve oldest photo date from gallery error:", error);
+      }
+
+      try {
+        /* 2026.04.22 실제 갤러리 직접 조회 실패 시에는 기존 DB 최소 촬영일 fallback을 유지해 기능 회복력을 확보 by June */
+        const oldestTakenAt = await getOldestPhotoTakenAt();
+        if (oldestTakenAt && Number.isFinite(oldestTakenAt)) {
+          const oldestDate = new Date(oldestTakenAt);
+          oldestGalleryDateRef.current = oldestDate;
+          oldestGalleryDateResolvedRef.current = true;
+          return oldestDate;
+        }
+      } catch (error) {
+        /* 2026.04.22 DB 조회 실패 시에도 All Dates 기능이 동작하도록 로컬 fallback으로 이어가기 위해 오류를 로그만 남기고 흡수 by June */
+        console.log("resolve oldest photo date from db error:", error);
+      }
+
+      /* 2026.04.22 DB 미적재 초기 구간을 대비해 현재 메모리에 로드된 사진에서도 최소 날짜를 계산하는 fallback을 추가 by June */
+      let minTakenAt: number | null = null;
+      for (const photo of photosRef.current) {
+        if (!photo.takenAt || !Number.isFinite(photo.takenAt)) continue;
+        if (minTakenAt === null || photo.takenAt < minTakenAt) {
+          minTakenAt = photo.takenAt;
+        }
+      }
+
+      const fallbackDate = minTakenAt ? new Date(minTakenAt) : null;
+      oldestGalleryDateRef.current = fallbackDate;
+      oldestGalleryDateResolvedRef.current = true;
+      return fallbackDate;
+    })();
+
+    oldestGalleryDatePromiseRef.current = work.finally(() => {
+      oldestGalleryDatePromiseRef.current = null;
+    });
+
+    return oldestGalleryDatePromiseRef.current;
   }, []);
 
   const loadPhotos = useCallback(
