@@ -12,8 +12,8 @@ import { useNavigation, useRouter } from "expo-router";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   ActivityIndicator,
-  Animated,
   Alert,
+  Animated,
   Button,
   Dimensions,
   Easing,
@@ -44,7 +44,6 @@ import { AMPLITUDE_API_KEY } from "@/constants/env";
 import * as amplitude from "@amplitude/analytics-react-native";
 /* 2026.04.15 SQLite 메타데이터 DB/동기화 모듈을 홈 화면 로딩 파이프라인에 연결하기 위해 import 추가 by June */
 import {
-  countPhotoMetadataByDateTime,
   enqueueGeocodeJobs,
   getDisplayUriCacheBySourceUris,
   getGeocodeCacheByKey,
@@ -56,7 +55,7 @@ import {
   initPhotoMetadataDb,
   queryPhotoMetadataByDateTime,
   upsertDisplayUriCacheRows,
-  upsertGeocodeCacheRows,
+  upsertGeocodeCacheRows
 } from "@/lib/db/photoMetadataDb";
 import { recordPerfMetric } from "@/lib/services/perfMetrics";
 import {
@@ -208,7 +207,7 @@ export default function HomeScreen() {
   );
   /* 2026.05.28 iOS 썸네일 URI 변환 중에도 로딩 안내/딤처리를 표시하고 중복 터치를 막기 위한 상태 by June */
   const [thumbnailResolving, setThumbnailResolving] = useState(false);
-  /* 2026.06.02 실제 썸네일 이미지가 화면에 그려질 때까지 로딩 딤처리를 유지하기 위해 초기 배치 ready 상태를 추적 by Codex */
+  /* 2026.06.02 실제 썸네일 이미지가 화면에 그려질 때까지 로딩 딤처리를 유지하기 위해 초기 배치 ready 상태를 추적 by June */
   const [thumbnailReadyByUri, setThumbnailReadyByUri] = useState<
     Record<string, true>
   >({});
@@ -520,9 +519,12 @@ export default function HomeScreen() {
   const { slideshowTime } = useSlideshowTime();
   const [slideshowOn, setSlideshowOn] = useState(false);
   const [slideshowVisible, setSlideshowVisible] = useState(false);
+  const [slideshowPreparing, setSlideshowPreparing] = useState(false);
+  const [slideshowPhotoUris, setSlideshowPhotoUris] = useState<string[]>([]);
   const slideshowListRef = useRef<FlatList<{ uri: string }> | null>(null);
   const slideshowTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const slideshowRunTokenRef = useRef(0);
+  const slideshowPhotoUrisRef = useRef<string[]>([]);
   /* 2026.04.22 Settings에서 slideshowTime을 ms 단위로 저장하므로 여기서 초→ms 재변환을 제거해 3초 설정이 3초로 정확히 동작하도록 수정 by June */
   const slideshowDelayMs = useMemo(() => {
     const delayMs = Number(slideshowTime);
@@ -542,8 +544,10 @@ export default function HomeScreen() {
     (options?: { trackClose?: boolean }) => {
       slideshowRunTokenRef.current += 1;
       clearSlideshowTimer();
+      setSlideshowPreparing(false);
       setSlideshowOn(false);
       setSlideshowVisible(false);
+      setSlideshowPhotoUris([]);
 
       if (options?.trackClose) {
         amplitude.track("slideshow_closed", {
@@ -564,7 +568,7 @@ export default function HomeScreen() {
       clearSlideshowTimer();
       slideshowTimerRef.current = setTimeout(() => {
         if (token !== slideshowRunTokenRef.current) return;
-        const total = photosRef.current.length;
+        const total = slideshowPhotoUrisRef.current.length;
         if (total <= 0) {
           closeSlideshow({ trackClose: true });
           return;
@@ -591,8 +595,12 @@ export default function HomeScreen() {
   );
   /* 2026.04.22 시작 인덱스를 경계값으로 보정하고 세션 토큰을 새로 발급해 슬라이드쇼 시작 흐름을 재구성하기 위해 start 함수를 재구현 by June */
   const startSlideshow = useCallback(
-    (startIndex: number = 0) => {
-      const total = photosRef.current.length;
+    (startIndex: number = 0, sourceUris?: string[]) => {
+      const uris =
+        sourceUris && sourceUris.length > 0
+          ? sourceUris
+          : slideshowPhotoUrisRef.current;
+      const total = uris.length;
       if (total <= 0) return;
 
       const safeIndex = Math.min(Math.max(startIndex, 0), total - 1);
@@ -600,6 +608,8 @@ export default function HomeScreen() {
       const token = slideshowRunTokenRef.current;
 
       clearSlideshowTimer();
+      slideshowPhotoUrisRef.current = uris;
+      setSlideshowPhotoUris(uris);
       setViewerIndex(safeIndex);
       setViewerSessionStartIndex(safeIndex);
       viewerIndexRef.current = safeIndex;
@@ -610,6 +620,19 @@ export default function HomeScreen() {
     },
     [clearSlideshowTimer, scheduleNextSlide],
   );
+
+  useEffect(() => {
+    slideshowPhotoUrisRef.current = slideshowPhotoUris;
+  }, [slideshowPhotoUris]);
+
+  const slideshowImages = useMemo(
+    () =>
+      slideshowPhotoUris.map((uri) => ({
+        uri: viewerDetailUriMap[uri] ?? displayUriMap[uri] ?? uri,
+      })),
+    [displayUriMap, slideshowPhotoUris, viewerDetailUriMap],
+  );
+
 
   useEffect(() => {
     if (!AMPLITUDE_API_KEY) {
@@ -692,7 +715,7 @@ export default function HomeScreen() {
   );
 
   /* 2026.06.02 초기 진입 체감 속도 우선 정책으로 자동 백그라운드 인덱싱은 시작하지 않고,
-     현재 화면에서 실제로 본 페이지들만 fetchAssetsPage 경로를 통해 점진 캐싱하도록 조정 by Codex */
+     현재 화면에서 실제로 본 페이지들만 fetchAssetsPage 경로를 통해 점진 캐싱하도록 조정 by June */
   useEffect(() => {
     /* 2026.04.22 화면 진입 시 인덱싱 상태를 즉시 표시하기 위해 초기 진행 상태 조회를 함께 실행 by June */
     void refreshIndexingProgress();
@@ -725,8 +748,9 @@ export default function HomeScreen() {
   }, [closeSlideshow]);
 
   const handleSlideshow = () => {
-    // 예: 현재 선택된 index에서 시작하고 싶으면 viewerIndexRef.current 사용
-    startSlideshow(viewerIndexRef.current ?? 0);
+    void prepareAndStartSlideshow({
+      startIndex: viewerIndexRef.current ?? 0,
+    });
     console.log("Slideshow start");
 
     amplitude.track("tap_slw_button", {
@@ -740,14 +764,17 @@ export default function HomeScreen() {
     const startIndex = viewerIndexRef.current ?? 0;
     /* 2026.04.22 뷰어와 슬라이드쇼 모달이 겹쳐 보이는 문제를 막기 위해 재생 시작 전 뷰어를 닫도록 처리 by June */
     setViewerVisible(false);
-    startSlideshow(startIndex);
+    void prepareAndStartSlideshow({
+      startIndex,
+      sourceUris: viewerPhotoUris,
+    });
 
     amplitude.track("tap_slideshow_button_from_viewer", {
       screen_name: "home",
       start_index: startIndex,
       photo_count: photosRef.current.length,
     });
-  }, [startSlideshow]);
+  }, [prepareAndStartSlideshow, viewerPhotoUris]);
 
   async function imagesWithLocation(
     images: any[],
@@ -1462,6 +1489,41 @@ export default function HomeScreen() {
     [resolveDisplayUri],
   );
 
+  async function prepareAndStartSlideshow(params?: {
+    startIndex?: number;
+    sourceUris?: string[];
+  }) {
+    const currentUris =
+      params?.sourceUris && params.sourceUris.length > 0
+        ? params.sourceUris
+        : photosRef.current.map((photo) => photo.uri);
+    if (currentUris.length === 0) return;
+
+    const safeIndex = Math.min(
+      Math.max(params?.startIndex ?? 0, 0),
+      currentUris.length - 1,
+    );
+    const sourcePhoto =
+      photosRef.current.find((photo) => photo.uri === currentUris[safeIndex]) ??
+      photosRef.current[safeIndex];
+
+    setSlideshowPreparing(true);
+    try {
+      setViewerPhotoUris(currentUris);
+      setSlideshowPhotoUris(currentUris);
+
+      const currentUri = currentUris[safeIndex];
+      await Promise.allSettled([
+        resolveViewerDetailUri(currentUri),
+        sourcePhoto ? prioritizePhotoLocation(sourcePhoto) : Promise.resolve(),
+      ]);
+
+      startSlideshow(safeIndex, currentUris);
+    } finally {
+      setSlideshowPreparing(false);
+    }
+  }
+
   useEffect(() => {
     displayUriMapRef.current = displayUriMap;
   }, [displayUriMap]);
@@ -1636,7 +1698,7 @@ export default function HomeScreen() {
   }, [photos, resolveDisplayUri, thumbnailResolveLimit]);
 
   /* 2026.06.02 초기/필터 로드 직후 자동 위치 보강은 사용자가 요청하지 않은 추가 작업이라 비활성화.
-     위치 정보는 위치 필터 적용, 지도 진입, 썸네일 탭 같은 명시적 액션에서만 확장되도록 유지 by Codex */
+     위치 정보는 위치 필터 적용, 지도 진입, 썸네일 탭 같은 명시적 액션에서만 확장되도록 유지 by June */
 
   /* 2026.04.15 DB 조회 결과를 기존 화면 Photo 타입으로 안전하게 변환해 기존 렌더링/로케이션 코드와 호환시키기 위해 추가 by June */
   const mapDbRowsToPhotos = useCallback(
@@ -1965,7 +2027,7 @@ export default function HomeScreen() {
   ]);
 
   /** 날짜 범위 전용 fallback. 현재는 MediaLibrary 자체 createdAfter/createdBefore 질의를 사용해
-      선택한 날짜 범위에서만 최신순 페이지네이션을 수행하도록 변경 by Codex */
+      선택한 날짜 범위에서만 최신순 페이지네이션을 수행하도록 변경 by June */
   const collectPhotosForDateRangeFallback = async ({
     currentFilter,
     targetCount,
@@ -1979,7 +2041,7 @@ export default function HomeScreen() {
     mode: "initial" | "background" | "append" | "filter-reset";
     maxPages?: number;
   }) => {
-    /* 2026.06.02 선택한 날짜 범위를 MediaLibrary에 직접 전달해 최신->과거 전역 스캔을 제거 by Codex */
+    /* 2026.06.02 선택한 날짜 범위를 MediaLibrary에 직접 전달해 최신->과거 전역 스캔을 제거 by June */
     const collectStartedAt = Date.now();
     const rangeStartMs = dayStartMs(currentFilter.dateStart);
     const rangeEndNextMs = dayEndNextMs(currentFilter.dateEnd);
@@ -2489,7 +2551,7 @@ export default function HomeScreen() {
   const { dateStart, dateEnd, timeStart, timeEnd, countries, cities } = filter;
 
   const loadCountRef = useRef(0);
-  /* 2026.06.03 All Dates에서 실제 갤러리 최저 촬영일을 반복 탐색하지 않도록 세션 캐시와 in-flight ref를 추가 by Codex */
+  /* 2026.06.03 All Dates에서 실제 갤러리 최저 촬영일을 반복 탐색하지 않도록 세션 캐시와 in-flight ref를 추가 by June */
   const oldestGalleryDateRef = useRef<Date | null>(null);
   const oldestGalleryDateResolvedRef = useRef(false);
   const oldestGalleryDatePromiseRef = useRef<Promise<Date | null> | null>(null);
@@ -2505,7 +2567,7 @@ export default function HomeScreen() {
 
     const work = (async () => {
       try {
-        /* 2026.06.03 All Dates는 DB 캐시가 아니라 실제 네이티브 갤러리 기준 최저 날짜를 우선 반영하기 위해 creationTime ASC 1건 조회를 1순위로 추가 by Codex */
+        /* 2026.06.03 All Dates는 DB 캐시가 아니라 실제 네이티브 갤러리 기준 최저 날짜를 우선 반영하기 위해 creationTime ASC 1건 조회를 1순위로 추가 by June */
         const permission = await MediaLibrary.getPermissionsAsync();
         if (permission.status === "granted") {
           const result = await MediaLibrary.getAssetsAsync({
@@ -2527,7 +2589,7 @@ export default function HomeScreen() {
           }
         }
       } catch (error) {
-        /* 2026.06.03 네이티브 최저 날짜 직접 조회 실패가 All Dates 전체 실패로 이어지지 않도록 기존 fallback으로 이어가기 위해 오류만 로깅 by Codex */
+        /* 2026.06.03 네이티브 최저 날짜 직접 조회 실패가 All Dates 전체 실패로 이어지지 않도록 기존 fallback으로 이어가기 위해 오류만 로깅 by June */
         console.log("resolve oldest photo date from gallery error:", error);
       }
 
@@ -3050,7 +3112,7 @@ export default function HomeScreen() {
       >
         <View style={styles.imageFrame}>
           {!shouldShowPhPlaceholder ? (
-            /* 2026.06.03 일반 URI도 실제 onLoad 전까지는 placeholder를 남겨 흰 박스처럼 보이지 않도록 조정 by Codex */
+            /* 2026.06.03 일반 URI도 실제 onLoad 전까지는 placeholder를 남겨 흰 박스처럼 보이지 않도록 조정 by June */
             <Image
               source={{ uri: displayUriMap[item.uri] ?? item.uri }}
               style={[styles.image, styles.imageLayer, !isThumbnailReady && styles.imageHidden]}
@@ -3767,13 +3829,27 @@ export default function HomeScreen() {
           onPressDelete={handleViewerDelete}
         />
 
+        <Modal visible={slideshowPreparing} animationType="fade" transparent>
+          <View style={styles.mapPreparingOverlay}>
+            <View style={styles.mapPreparingCard}>
+              <ActivityIndicator size="large" color="#ffffff" />
+              <Text style={styles.mapPreparingTitle}>
+                Preparing slideshow...
+              </Text>
+              <Text style={styles.mapPreparingSubtitle}>
+                Please wait while we prepare the photos.
+              </Text>
+            </View>
+          </View>
+        </Modal>
+
         <Modal visible={slideshowVisible} animationType="fade">
           <SafeAreaView style={{ flex: 1, backgroundColor: "black" }}>
             <FlatList
               ref={(r) => {
                 slideshowListRef.current = r;
               }}
-              data={viewerImages} // { uri } 배열 이미 있음
+              data={slideshowImages}
               horizontal
               pagingEnabled
               showsHorizontalScrollIndicator={false}
@@ -4101,6 +4177,41 @@ const styles = StyleSheet.create({
     zIndex: 999,
     // 안드에서 가끔 zIndex만으로 부족하면:
     elevation: 10,
+  },
+  mapPreparingOverlay: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: "rgba(0,0,0,0.58)",
+    justifyContent: "center",
+    alignItems: "center",
+    paddingHorizontal: 24,
+  },
+  mapPreparingCard: {
+    width: "100%",
+    maxWidth: 320,
+    borderRadius: 20,
+    paddingHorizontal: 22,
+    paddingVertical: 24,
+    backgroundColor: "rgba(17,24,39,0.94)",
+    alignItems: "center",
+    shadowColor: "#000",
+    shadowOpacity: 0.28,
+    shadowRadius: 24,
+    shadowOffset: { width: 0, height: 14 },
+    elevation: 10,
+  },
+  mapPreparingTitle: {
+    marginTop: 14,
+    fontSize: 17,
+    fontWeight: "700",
+    color: "#FFFFFF",
+    textAlign: "center",
+  },
+  mapPreparingSubtitle: {
+    marginTop: 8,
+    fontSize: 13,
+    lineHeight: 18,
+    color: "rgba(255,255,255,0.78)",
+    textAlign: "center",
   },
 
   loadingBox: {
