@@ -23,6 +23,7 @@ import Share from "react-native-share";
 
 type Photo = {
   uri: string;
+  assetId?: string;
   takenAt?: number | null; // 있으면 쓰고, 아니면 빼도 됨
 
   //localUri: string;
@@ -36,6 +37,9 @@ type Photo = {
 type Props = {
   //images: Image[];
   images: Photo[];
+  onOpenRequest?: () => void | Promise<void>;
+  preparingLocations?: boolean;
+  preparingMessage?: string;
   onOpenPhotoFromMap?: (payload: {
     sourceUri: string;
     city?: string;
@@ -51,7 +55,22 @@ const FALLBACK_MARKER_URI =
     "<svg xmlns='http://www.w3.org/2000/svg' width='80' height='80'><rect width='100%' height='100%' rx='16' ry='16' fill='#EEF2FF'/><circle cx='40' cy='40' r='14' fill='#6366F1'/></svg>"
   );
 
-export default function MapView({ images, onOpenPhotoFromMap }: Props) {
+/* 2026.05.27 ph:// URI 변형(/L0/001, query)을 안전하게 정규화해 마커/상세 로딩에서 동일 assetId를 쓰도록 보강 by June */
+const getAssetIdFromPhUri = (uri: string): string | null => {
+  if (!uri?.startsWith("ph://")) return null;
+  const raw = uri.slice("ph://".length);
+  const withoutQuery = raw.split("?")[0];
+  const normalized = withoutQuery.split("/")[0];
+  return normalized || null;
+};
+
+export default function MapView({
+  images,
+  onOpenRequest,
+  preparingLocations = false,
+  preparingMessage,
+  onOpenPhotoFromMap,
+}: Props) {
   const { language } = useLanguage();
   const [visible, setVisible] = useState(false);
   const [detailVisible, setDetailVisible] = useState(false);
@@ -62,11 +81,39 @@ export default function MapView({ images, onOpenPhotoFromMap }: Props) {
   const [detailSourceUri, setDetailSourceUri] = useState<string | null>(null);
   // 2026-03-18 get proper coordinates by yen
   const [coordinates, setCoordinates] = useState<any[]>([]); // store base64 coords
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading] = useState(false);
+  /* 2026.05.28 지도 좌표 로딩과 마커 썸네일 변환 상태를 분리해 썸네일 준비 중 안내가 누락되지 않도록 추가 by June */
+  const [thumbnailLoading, setThumbnailLoading] = useState(false);
+  const [coordinatesReady, setCoordinatesReady] = useState(false);
   /* 2026.04.15 동일 이미지 입력에서 좌표 재계산/재설정 루프를 막기 위해 마지막 처리 시그니처를 저장 by June */
   const lastImagesSigRef = useRef<string>("");
   /* 2026.05.26 sourceUri별로 변환된 markerUri를 캐싱해 모달 재오픈/리렌더 시 재인코딩 비용을 제거 by yen */
   const markerCacheRef = useRef<Map<string, string>>(new Map());
+
+  const isFallbackMarker = (markerUri: string | undefined) =>
+    !markerUri || markerUri === FALLBACK_MARKER_URI;
+
+  const updateCoordinatesIfChanged = (next: any[]) => {
+    setCoordinates((prev) => {
+      const prevByUri = new Map(prev.map((coord) => [coord.sourceUri, coord]));
+      /* 2026.05.28 지도 재진입 시 placeholder 선표시가 이미 완성된 썸네일을 덮어쓰지 않도록 기존 markerUri를 보존 by June */
+      const merged = next.map((coord) => {
+        const prevCoord = prevByUri.get(coord.sourceUri);
+        if (
+          prevCoord &&
+          !isFallbackMarker(prevCoord.markerUri) &&
+          isFallbackMarker(coord.markerUri)
+        ) {
+          return { ...coord, markerUri: prevCoord.markerUri };
+        }
+        return coord;
+      });
+      const prevSig = JSON.stringify(prev);
+      const nextSig = JSON.stringify(merged);
+      if (prevSig === nextSig) return prev;
+      return merged;
+    });
+  };
 
   /* 2026.04.15 이미지 값 기준 시그니처를 만들어 부모 리렌더 시 불필요한 좌표 로딩을 건너뛰기 위해 추가 by June */
   const imagesSignature = useMemo(() => {
@@ -82,14 +129,67 @@ export default function MapView({ images, onOpenPhotoFromMap }: Props) {
   useEffect(() => {
     /* 2026.05.26 모달이 열릴 때까지 비용이 큰 썸네일 인코딩을 지연시켜 초기 렌더 비용을 제거 by yen */
     if (!visible) return;
-    /* 2026.04.15 동일 시그니처에서는 setCoordinates를 생략해 Maximum update depth 재발 가능성을 낮추기 위해 가드 추가 by June */
-    if (lastImagesSigRef.current === imagesSignature) return;
+    const hasPendingThumbnails = coordinates.some(
+      (coord) => coord?.markerUri === FALLBACK_MARKER_URI,
+    );
+    /* 2026.05.28 좌표만 있고 썸네일은 placeholder인 상태에서는 같은 signature라도 재시도해 마커 이미지 공백을 줄이기 위해 완화 by June */
+    if (
+      lastImagesSigRef.current === imagesSignature &&
+      coordinates.length > 0 &&
+      !hasPendingThumbnails
+    ) {
+      setCoordinatesReady(true);
+      setLoading(false);
+      setThumbnailLoading(false);
+      return;
+    }
     lastImagesSigRef.current = imagesSignature;
 
     let cancelled = false;
 
     const loadCoordinates = async () => {
+      setLoading(true);
+      setThumbnailLoading(false);
+      setCoordinatesReady(false);
       try {
+        /* 2026.05.28 좌표는 썸네일 변환을 기다리지 않고 placeholder로 먼저 세팅해 지도 마커를 안정적으로 선표시 by June */
+        const baseCoordinates = images
+          .filter((img) => img.location)
+          .map((img) => {
+            const latitude = Number(img.location!.latitude);
+            const longitude = Number(img.location!.longitude);
+            if (!Number.isFinite(latitude) || !Number.isFinite(longitude)) {
+              return null;
+            }
+            const sourceUri = String(img.uri ?? "");
+            const existingMarkerUri = coordinates.find(
+              (coord) => coord.sourceUri === sourceUri,
+            )?.markerUri;
+
+            return {
+              markerUri:
+                (!isFallbackMarker(existingMarkerUri) && existingMarkerUri) ||
+                markerCacheRef.current.get(sourceUri) ||
+                FALLBACK_MARKER_URI,
+              sourceUri,
+              latitude,
+              longitude,
+              city: img.city,
+              country: img.country,
+              takenAt: img.takenAt ?? null,
+            };
+          })
+          .filter(Boolean);
+
+        if (cancelled) return;
+
+        updateCoordinatesIfChanged(baseCoordinates);
+        setCoordinatesReady(true);
+        setLoading(false);
+        setThumbnailLoading(
+          baseCoordinates.some((coord: any) => isFallbackMarker(coord?.markerUri)),
+        );
+
         const settled = await Promise.allSettled(
           images
             .filter((img) => img.location)
@@ -114,11 +214,13 @@ export default function MapView({ images, onOpenPhotoFromMap }: Props) {
                   localFileUri = sourceUri;
                 } else if (sourceUri.startsWith("ph://")) {
                   try {
-                    const assetId = sourceUri.replace("ph://", "");
-                    const info = await MediaLibrary.getAssetInfoAsync(assetId);
-                    const resolved = info.localUri ?? info.uri ?? "";
-                    if (typeof resolved === "string" && resolved.startsWith("file://")) {
-                      localFileUri = resolved;
+                    const assetId = img.assetId ?? getAssetIdFromPhUri(sourceUri);
+                    if (assetId) {
+                      const info = await MediaLibrary.getAssetInfoAsync(assetId);
+                      const resolved = info?.localUri ?? info?.uri ?? "";
+                      if (typeof resolved === "string" && resolved.startsWith("file://")) {
+                        localFileUri = resolved;
+                      }
                     }
                   } catch {
                     localFileUri = "";
@@ -163,18 +265,15 @@ export default function MapView({ images, onOpenPhotoFromMap }: Props) {
               r.status === "fulfilled" && !!r.value
           )
           .map((r) => r.value);
-        /* 2026.04.15 동일 좌표 배열을 반복 설정하지 않도록 이전 상태와 비교 후에만 setState 하도록 수정 by June */
-        setCoordinates((prev) => {
-          const next = coords.filter(Boolean);
-          const prevSig = JSON.stringify(prev);
-          const nextSig = JSON.stringify(next);
-          if (prevSig === nextSig) return prev;
-          return next;
-        });
+        updateCoordinatesIfChanged(coords.filter(Boolean));
       } catch (e) {
         console.error("Failed to load marker thumbnails", e);
       } finally {
-        if (!cancelled) setLoading(false);
+        if (!cancelled) {
+          setCoordinatesReady(true);
+          setLoading(false);
+          setThumbnailLoading(false);
+        }
       }
     };
 
@@ -186,6 +285,13 @@ export default function MapView({ images, onOpenPhotoFromMap }: Props) {
   }, [visible, imagesSignature, images]);
   // Pass coordinates to WebView as JSON
   const coordJSON = JSON.stringify(coordinates);
+  const coordSignature = useMemo(
+    () =>
+      coordinates
+        .map((c) => `${c.sourceUri}|${c.latitude}|${c.longitude}|${c.markerUri}`)
+        .join("||"),
+    [coordinates],
+  );
 
   const html = `
       <!DOCTYPE html>
@@ -384,9 +490,10 @@ export default function MapView({ images, onOpenPhotoFromMap }: Props) {
         void (async () => {
           try {
             if (sourceUri.startsWith("ph://")) {
-              const assetId = sourceUri.replace("ph://", "");
+              const assetId = getAssetIdFromPhUri(sourceUri);
+              if (!assetId) throw new Error("invalid ph uri");
               const info = await MediaLibrary.getAssetInfoAsync(assetId);
-              setDetailUri(info.localUri ?? info.uri ?? sourceUri);
+              setDetailUri(info?.localUri ?? info?.uri ?? sourceUri);
             } else {
               setDetailUri(sourceUri);
             }
@@ -454,9 +561,17 @@ export default function MapView({ images, onOpenPhotoFromMap }: Props) {
     ]);
   };
 
+  const openMap = () => {
+    setLoading(true);
+    setThumbnailLoading(false);
+    setCoordinatesReady(false);
+    setVisible(true);
+    void onOpenRequest?.();
+  };
+
   return (
     <View>
-      <TouchableOpacity onPress={() => setVisible(true)} activeOpacity={0.8}>
+      <TouchableOpacity onPress={openMap} activeOpacity={0.8}>
           {/* Map button 변경 2026.03.18 by June */}
           <View style={styles.mapButtonBg}>
             <IconMapPin width={18} height={18} />
@@ -464,12 +579,39 @@ export default function MapView({ images, onOpenPhotoFromMap }: Props) {
       </TouchableOpacity>
       <Modal visible={visible} animationType="slide">
         <View style={styles.container}>
-          <WebView
-            originWhitelist={["*"]}
-            source={{ html }}
-            style={styles.webview}
-            onMessage={handleMessage}
-          />
+          {preparingLocations ? (
+            <View style={styles.mapStatusOverlay}>
+              <ActivityIndicator size="large" color="#6366F1" />
+              <Text style={styles.mapStatusText}>
+                {preparingMessage ?? "Preparing locations..."}
+              </Text>
+            </View>
+          ) : !coordinatesReady ? (
+            <View style={styles.mapStatusOverlay}>
+              <ActivityIndicator size="large" color="#6366F1" />
+              <Text style={styles.mapStatusText}>Loading map locations...</Text>
+            </View>
+          ) : coordinates.length === 0 ? (
+            <View style={styles.mapStatusOverlay}>
+              <Text style={styles.mapStatusText}>No photos with location info</Text>
+            </View>
+          ) : (
+            <WebView
+              key={coordSignature}
+              originWhitelist={["*"]}
+              source={{ html }}
+              style={styles.webview}
+              onMessage={handleMessage}
+            />
+          )}
+          {thumbnailLoading && coordinatesReady && coordinates.length > 0 ? (
+            <View style={styles.mapThumbnailOverlay} pointerEvents="auto">
+              <View style={styles.mapThumbnailBox}>
+                <ActivityIndicator size="small" color="#6366F1" />
+                <Text style={styles.mapThumbnailText}>Loading thumbnails...</Text>
+              </View>
+            </View>
+          ) : null}
           <View style={styles.closeButton}>
             <TouchableOpacity
               onPress={() => setVisible(false)}
@@ -557,5 +699,45 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
     backgroundColor: "rgba(0,0,0,0.85)",
+  },
+  mapStatusOverlay: {
+    flex: 1,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: "#F8FAFC",
+    gap: 12,
+  },
+  mapStatusText: {
+    color: "#374151",
+    fontSize: 15,
+    fontWeight: "600",
+  },
+  mapThumbnailOverlay: {
+    ...StyleSheet.absoluteFillObject,
+    zIndex: 8,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: "rgba(15,23,42,0.18)",
+  },
+  mapThumbnailBox: {
+    minWidth: 220,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 10,
+    borderRadius: 16,
+    backgroundColor: "rgba(255,255,255,0.96)",
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+    shadowColor: "#000",
+    shadowOpacity: 0.12,
+    shadowRadius: 12,
+    shadowOffset: { width: 0, height: 6 },
+    elevation: 4,
+  },
+  mapThumbnailText: {
+    color: "#374151",
+    fontSize: 13,
+    fontWeight: "600",
   },
 });
