@@ -2,6 +2,7 @@
 import { Photo } from "@/types/Photo";
 import { LinearGradient } from "expo-linear-gradient";
 import {
+  useCallback,
   useEffect,
   //useCallback, useMemo, ,
   useRef,
@@ -251,6 +252,18 @@ export default function DateTimeFilter({
   const [timeStart, setTimeStart] = useState(0);
   const [timeEnd, setTimeEnd] = useState(1439);
 
+  const normalizeTimeRange = useCallback((nextStart: number, nextEnd: number) => {
+    const clampTime = (value: number) => Math.max(0, Math.min(1439, value));
+    const start = clampTime(nextStart);
+    const end = clampTime(nextEnd);
+
+    if (start > end) {
+      return { timeStart: start, timeEnd: start };
+    }
+
+    return { timeStart: start, timeEnd: end };
+  }, []);
+
   // ---- 모달 표시 상태 ----
   const [dateModalVisible, setDateModalVisible] = useState(false);
   const [timeModalVisible, setTimeModalVisible] = useState(false);
@@ -458,6 +471,7 @@ export default function DateTimeFilter({
     dateEnd,
     dateModalVisible,
     dateStart,
+    normalizeTimeRange,
     onChange,
     onLocationChange,
     timeEnd,
@@ -485,8 +499,9 @@ export default function DateTimeFilter({
 
     setDateStart(nextDateStart);
     setDateEnd(nextDateEnd);
-    setTimeStart(value.timeStart);
-    setTimeEnd(value.timeEnd);
+    const normalizedTime = normalizeTimeRange(value.timeStart, value.timeEnd);
+    setTimeStart(normalizedTime.timeStart);
+    setTimeEnd(normalizedTime.timeEnd);
     lastEmittedRef.current = externalSig;
   }, [
     androidDateField,
@@ -494,6 +509,7 @@ export default function DateTimeFilter({
     dateEnd,
     dateModalVisible,
     dateStart,
+    normalizeTimeRange,
     timeEnd,
     timeModalVisible,
     timeStart,
@@ -558,13 +574,25 @@ export default function DateTimeFilter({
 
   const applyTimePreset = (s: number, e: number) => {
     bypassDebounceRef.current = true;
-
-    const clamp = (v: number) => Math.max(0, Math.min(1439, v));
-
-    setTimeStart(clamp(s));
-    setTimeEnd(clamp(e));
+    const normalized = normalizeTimeRange(s, e);
+    setTimeStart(normalized.timeStart);
+    setTimeEnd(normalized.timeEnd);
 
     flushPendingChange();
+  };
+
+  const onChangeTimeStartSafe = (d: Date) => {
+    const nextStart = d.getHours() * 60 + d.getMinutes();
+    const normalized = normalizeTimeRange(nextStart, timeEnd);
+    setTimeStart(normalized.timeStart);
+    setTimeEnd(normalized.timeEnd);
+  };
+
+  const onChangeTimeEndSafe = (d: Date) => {
+    const nextEnd = d.getHours() * 60 + d.getMinutes();
+    const normalized = normalizeTimeRange(timeStart, nextEnd);
+    setTimeStart(normalized.timeStart);
+    setTimeEnd(normalized.timeEnd);
   };
 
   /*
@@ -614,12 +642,6 @@ export default function DateTimeFilter({
   }; */
 
   // ---- Time 수정 유틸 (시/분을 분단위로) ----
-  const setTimeHM = (which: string, hours: number, minutes: number) => {
-    const mins = hours * 60 + minutes;
-    if (which === "start") setTimeStart(mins);
-    else setTimeEnd(mins);
-  };
-
   // ---- 렌더 ----
   const dateLabel = `${fmtDate(dateStart)} – ${fmtDate(dateEnd)}`;
   const timeLabel = `${fmtTime(timeStart)} – ${fmtTime(timeEnd)}`;
@@ -904,9 +926,7 @@ export default function DateTimeFilter({
                         timeStart % 60,
                       )
                     }
-                    onChange={(d) =>
-                      setTimeHM("start", d.getHours(), d.getMinutes())
-                    }
+                    onChange={onChangeTimeStartSafe}
                   />
                 </View>
 
@@ -922,9 +942,7 @@ export default function DateTimeFilter({
                         timeEnd % 60,
                       )
                     }
-                    onChange={(d) =>
-                      setTimeHM("end", d.getHours(), d.getMinutes())
-                    }
+                    onChange={onChangeTimeEndSafe}
                   />
                 </View>
               </View>

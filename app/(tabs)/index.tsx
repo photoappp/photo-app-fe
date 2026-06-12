@@ -284,8 +284,18 @@ export default function HomeScreen() {
     enabled: false,
     offset: 0,
   });
+  type DateTimeCoverageEntry = {
+    dateStartMs: number;
+    dateEndNextMs: number;
+    timeStart: number;
+    timeEnd: number;
+    photos: Photo[];
+    fullyLoaded: boolean;
+    updatedAt: number;
+  };
   const lastLoadedBaseFilterRef = useRef<FilterState | null>(null);
   const lastLoadedBaseFullyLoadedRef = useRef(false);
+  const loadedDateTimeCoverageRef = useRef<DateTimeCoverageEntry[]>([]);
   const [filterLoading, setFilterLoading] = useState(false);
   const [appendLoading, setAppendLoading] = useState(false);
   /** 2026.03.26 By June */
@@ -541,6 +551,62 @@ export default function HomeScreen() {
     }),
     [],
   );
+  const isDateTimeCoverageTimeCompatible = useCallback(
+    (coverageFilter: Pick<FilterState, "timeStart" | "timeEnd">, currentFilter: FilterState) =>
+      (coverageFilter.timeStart === 0 && coverageFilter.timeEnd === 1439) ||
+      (coverageFilter.timeStart === currentFilter.timeStart &&
+        coverageFilter.timeEnd === currentFilter.timeEnd),
+    [],
+  );
+  const mergeDateTimeCoverageEntries = useCallback(
+    (entries: DateTimeCoverageEntry[]) => {
+      const dedupedAndSorted = entries
+        .filter(
+          (entry) =>
+            entry.fullyLoaded &&
+            Number.isFinite(entry.dateStartMs) &&
+            Number.isFinite(entry.dateEndNextMs) &&
+            entry.dateStartMs < entry.dateEndNextMs,
+        )
+        .sort((a, b) => {
+          if (a.timeStart !== b.timeStart) return a.timeStart - b.timeStart;
+          if (a.timeEnd !== b.timeEnd) return a.timeEnd - b.timeEnd;
+          if (a.dateStartMs !== b.dateStartMs) return a.dateStartMs - b.dateStartMs;
+          return a.dateEndNextMs - b.dateEndNextMs;
+        });
+
+      const merged: DateTimeCoverageEntry[] = [];
+
+      for (const entry of dedupedAndSorted) {
+        const current = merged[merged.length - 1];
+        if (
+          current &&
+          current.timeStart === entry.timeStart &&
+          current.timeEnd === entry.timeEnd &&
+          current.dateEndNextMs >= entry.dateStartMs
+        ) {
+          current.dateStartMs = Math.min(current.dateStartMs, entry.dateStartMs);
+          current.dateEndNextMs = Math.max(
+            current.dateEndNextMs,
+            entry.dateEndNextMs,
+          );
+          current.photos = sortPhotosForDisplay(
+            dedupePhotosByUri([...current.photos, ...entry.photos]),
+          );
+          current.updatedAt = Math.max(current.updatedAt, entry.updatedAt);
+          continue;
+        }
+
+        merged.push({
+          ...entry,
+          photos: sortPhotosForDisplay(dedupePhotosByUri(entry.photos)),
+        });
+      }
+
+      return merged;
+    },
+    [dedupePhotosByUri, sortPhotosForDisplay],
+  );
   const cloneBaseFilterState = useCallback(
     (currentFilter: FilterState) => buildBaseDateTimeFilter(currentFilter),
     [buildBaseDateTimeFilter],
@@ -549,8 +615,33 @@ export default function HomeScreen() {
     (currentFilter: FilterState, fullyLoaded: boolean) => {
       lastLoadedBaseFilterRef.current = cloneBaseFilterState(currentFilter);
       lastLoadedBaseFullyLoadedRef.current = fullyLoaded;
+      if (fullyLoaded) {
+        const nextCoverage: DateTimeCoverageEntry = {
+          dateStartMs: dayStartMs(currentFilter.dateStart),
+          dateEndNextMs: dayEndNextMs(currentFilter.dateEnd),
+          timeStart: currentFilter.timeStart,
+          timeEnd: currentFilter.timeEnd,
+          photos: sortPhotosForDisplay(
+            dedupePhotosByUri(photosAllRef.current),
+          ),
+          fullyLoaded,
+          updatedAt: Date.now(),
+        };
+
+        loadedDateTimeCoverageRef.current = mergeDateTimeCoverageEntries([
+          ...loadedDateTimeCoverageRef.current,
+          nextCoverage,
+        ]);
+      }
     },
-    [cloneBaseFilterState],
+    [
+      cloneBaseFilterState,
+      dayEndNextMs,
+      dayStartMs,
+      dedupePhotosByUri,
+      mergeDateTimeCoverageEntries,
+      sortPhotosForDisplay,
+    ],
   );
   const isLocationFeatureUnlockActive = locationFeatureUnlockedUntil > Date.now();
   const requiresExtendedLocationFeature =
@@ -1477,33 +1568,36 @@ export default function HomeScreen() {
   };
 
   /** 위치 필터 */
-  const applyLocationFilter = (items: Photo[], currentFilter: FilterState) => {
-    const { countries, cities } = currentFilter;
+  const applyLocationFilter = useCallback(
+    (items: Photo[], currentFilter: FilterState) => {
+      const { countries, cities } = currentFilter;
 
-    if (countries.length === 0 && cities.length === 0) {
-      return items;
-    }
+      if (countries.length === 0 && cities.length === 0) {
+        return items;
+      }
 
-    return items.filter((photo) => {
-      const country = String(photo.country ?? "").trim();
-      const city = String(photo.city ?? "").trim();
-      const matchesCountry =
-        countries.length === 0 ? true : countries.includes(country);
+      return items.filter((photo) => {
+        const country = String(photo.country ?? "").trim();
+        const city = String(photo.city ?? "").trim();
+        const matchesCountry =
+          countries.length === 0 ? true : countries.includes(country);
 
-      if (!matchesCountry) return false;
-      if (cities.length === 0) return true;
-      if (!city) return true;
+        if (!matchesCountry) return false;
+        if (cities.length === 0) return true;
+        if (!city) return true;
 
-      return cities.includes(city);
-    });
-  };
+        return cities.includes(city);
+      });
+    },
+    [],
+  );
 
   const deriveVisiblePhotos = useCallback(
     (baseItems: Photo[], currentFilter: FilterState) =>
       sortPhotosForDisplay(
         dedupePhotosByUri(applyLocationFilter(baseItems, currentFilter)),
       ),
-    [applyLocationFilter],
+    [applyLocationFilter, dedupePhotosByUri, sortPhotosForDisplay],
   );
 
   async function loadPreparedPhotosFromDbForLocationSearch(
@@ -2858,13 +2952,17 @@ export default function HomeScreen() {
 
   const loadPhotosForDateTimeSegment = useCallback(
     async (currentFilter: FilterState, mode: "initial" | "filter-reset" | "append") => {
-      const dbLoaded = await loadAllPhotosFromDbForDateTime(currentFilter);
-      if (dbLoaded.isCacheHit) {
-        return {
-          photos: dbLoaded.photos,
-          totalCount: dbLoaded.totalCount,
-          source: "db" as const,
-        };
+      const hasLocationFilter =
+        currentFilter.countries.length > 0 || currentFilter.cities.length > 0;
+      if (!hasLocationFilter) {
+        const dbLoaded = await loadAllPhotosFromDbForDateTime(currentFilter);
+        if (dbLoaded.isCacheHit) {
+          return {
+            photos: dbLoaded.photos,
+            totalCount: dbLoaded.totalCount,
+            source: "db" as const,
+          };
+        }
       }
 
       const mediaLoaded = await collectAllPhotosForDateTimeRange(currentFilter, mode);
@@ -2875,6 +2973,122 @@ export default function HomeScreen() {
       };
     },
     [collectAllPhotosForDateTimeRange, loadAllPhotosFromDbForDateTime],
+  );
+
+  /* 2026.06.11 완전 로드된 coverage를 여러 조각까지 재사용하고, 빠진 구간만 보충해서 이어붙이도록 확장 by June */
+  const tryReuseLoadedBaseRangeFromMemory = useCallback(
+    async (currentFilter: FilterState) => {
+      const requestedStartMs = dayStartMs(currentFilter.dateStart);
+      const requestedEndNextMs = dayEndNextMs(currentFilter.dateEnd);
+
+      const candidateCoverages = loadedDateTimeCoverageRef.current
+        .filter(
+          (entry) =>
+            entry.fullyLoaded &&
+            isDateTimeCoverageTimeCompatible(entry, currentFilter) &&
+            entry.dateEndNextMs > requestedStartMs &&
+            entry.dateStartMs < requestedEndNextMs,
+        )
+        .sort((a, b) => {
+          if (a.dateStartMs !== b.dateStartMs) {
+            return a.dateStartMs - b.dateStartMs;
+          }
+          return a.dateEndNextMs - b.dateEndNextMs;
+        });
+
+      if (candidateCoverages.length === 0) return false;
+
+      const reusedPhotos: Photo[] = [];
+      const missingIntervals: { startMs: number; endMs: number }[] = [];
+      let cursor = requestedStartMs;
+
+      for (const coverage of candidateCoverages) {
+        const sliceStartMs = Math.max(requestedStartMs, coverage.dateStartMs);
+        const sliceEndNextMs = Math.min(requestedEndNextMs, coverage.dateEndNextMs);
+        if (sliceStartMs >= sliceEndNextMs) continue;
+
+        if (sliceStartMs > cursor) {
+          missingIntervals.push({
+            startMs: cursor,
+            endMs: sliceStartMs,
+          });
+        }
+
+        reusedPhotos.push(
+          ...coverage.photos.filter((photo) => {
+            const ts = photo.takenAt;
+            if (typeof ts !== "number" || !Number.isFinite(ts)) return true;
+            return ts >= sliceStartMs && ts < sliceEndNextMs;
+          }),
+        );
+
+        cursor = Math.max(cursor, sliceEndNextMs);
+      }
+
+      if (reusedPhotos.length === 0) return false;
+
+      if (cursor < requestedEndNextMs) {
+        missingIntervals.push({
+          startMs: cursor,
+          endMs: requestedEndNextMs,
+        });
+      }
+
+      const gapPhotos: Photo[] = [];
+      let gapSource: "db" | "medialibrary" = "db";
+
+      for (const gap of missingIntervals) {
+        if (gap.startMs >= gap.endMs) continue;
+
+        const gapFilter = {
+          ...currentFilter,
+          dateStart: new Date(gap.startMs),
+          dateEnd: new Date(gap.endMs - 1),
+        };
+        const gapResult = await loadPhotosForDateTimeSegment(
+          gapFilter,
+          "filter-reset",
+        );
+
+        if (gapResult.source === "medialibrary") {
+          gapSource = "medialibrary";
+        }
+        gapPhotos.push(...gapResult.photos);
+      }
+
+      const nextBase = sortPhotosForDisplay(
+        dedupePhotosByUri([...reusedPhotos, ...gapPhotos]),
+      );
+      const nextVisible = deriveVisiblePhotos(nextBase, currentFilter);
+
+      setCurrentDataSource(gapSource);
+      setPhotosAll(nextBase);
+      setPhotos(nextVisible);
+      photosAllRef.current = nextBase;
+      photosRef.current = nextVisible;
+      pruneDisplayUriCacheForPhotos(nextBase);
+      setEndCursor(null);
+      setHasNextPage(false);
+      dbDateTimePagingRef.current = { enabled: false, offset: 0 };
+      setLocationSearchTargetTotalCount(nextVisible.length);
+      void refreshFilterProgress(currentFilter, nextVisible.length);
+      markLoadedBaseRange(currentFilter, true);
+      setEmptyMessage(nextVisible.length === 0 ? EMPTY_DEFAULT_MESSAGE : null);
+      return true;
+    },
+    [
+      EMPTY_DEFAULT_MESSAGE,
+      dayEndNextMs,
+      dayStartMs,
+      dedupePhotosByUri,
+      deriveVisiblePhotos,
+      isDateTimeCoverageTimeCompatible,
+      loadPhotosForDateTimeSegment,
+      markLoadedBaseRange,
+      pruneDisplayUriCacheForPhotos,
+      refreshFilterProgress,
+      sortPhotosForDisplay,
+    ],
   );
 
   const tryApplyIncrementalDateRangeReload = useCallback(
@@ -3503,6 +3717,17 @@ export default function HomeScreen() {
     });
 
     try {
+      const reusedLoadedBase = await tryReuseLoadedBaseRangeFromMemory(
+        currentFilter,
+      );
+      if (reusedLoadedBase) {
+        reloadPath = "db";
+        setEmptyMessage(
+          photosRef.current.length === 0 ? EMPTY_DEFAULT_MESSAGE : null,
+        );
+        return;
+      }
+
       const incrementalApplied = await tryApplyIncrementalDateRangeReload(
         currentFilter,
       );
@@ -3621,6 +3846,7 @@ export default function HomeScreen() {
       markLoadedBaseRange,
       pruneDisplayUriCacheForPhotos,
       refreshFilterProgress,
+      tryReuseLoadedBaseRangeFromMemory,
       skipStalePhotoLoad,
       t,
       collectPhotosForTarget,
