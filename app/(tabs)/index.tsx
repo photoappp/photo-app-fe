@@ -5046,11 +5046,11 @@ export default function HomeScreen() {
         ),
     );
     if (remainingSeconds < 60) {
-      return `예상 남은 시간: ${remainingSeconds}초`;
+      // return `예상 남은 시간: ${remainingSeconds}초`;
     }
-    const min = Math.floor(remainingSeconds / 60);
-    const sec = remainingSeconds % 60;
-    return `예상 남은 시간: ${min}분 ${sec}초`;
+    // const min = Math.floor(remainingSeconds / 60);
+    // const sec = remainingSeconds % 60;
+    // return `예상 남은 시간: ${min}분 ${sec}초`;
   }, [effectiveLocationSearchEstimatedSeconds, locationSearchProgressPercent]);
 
   useEffect(() => {
@@ -5082,6 +5082,85 @@ export default function HomeScreen() {
     mainInteractionBlockReason,
     photos.length,
     thumbnailResolving,
+  ]);
+
+  useEffect(() => {
+    if (!isMainInteractionBlocked) return;
+
+    console.log("[OverlayDebug][1] main-block", {
+      didInitialLoad,
+      initialLoading,
+      filterLoading,
+      appendLoading,
+      backgroundLoading,
+      thumbnailResolving,
+      hasPendingDisplayThumbnails,
+      hasPendingVisibleThumbnailPaint,
+      isScanning,
+      mainInteractionBlockReason,
+    });
+  }, [
+    appendLoading,
+    backgroundLoading,
+    didInitialLoad,
+    filterLoading,
+    hasPendingDisplayThumbnails,
+    hasPendingVisibleThumbnailPaint,
+    initialLoading,
+    isMainInteractionBlocked,
+    isScanning,
+    mainInteractionBlockReason,
+    thumbnailResolving,
+  ]);
+
+  useEffect(() => {
+    if (!shouldShowLocationSearchModal) return;
+
+    console.log("[OverlayDebug][2] location-workflow", {
+      status: locationSearchWorkflowStatus,
+      entryPoint: locationSearchEntryPoint,
+      requiresExtendedLocationFeature,
+      isLocationFeatureUnlockActive,
+      currentDateTimeFilterSignature,
+      pendingPrompt:
+        pendingLocationSearchPromptSignatureRef.current ===
+        currentDateTimeFilterSignature,
+      prepared:
+        lastPreparedLocationSearchSignatureRef.current ===
+        currentDateTimeFilterSignature,
+      declined:
+        lastDeclinedLocationSearchSignatureRef.current ===
+        currentDateTimeFilterSignature,
+    });
+  }, [
+    currentDateTimeFilterSignature,
+    isLocationFeatureUnlockActive,
+    locationSearchEntryPoint,
+    locationSearchWorkflowStatus,
+    requiresExtendedLocationFeature,
+    shouldShowLocationSearchModal,
+  ]);
+
+  useEffect(() => {
+    if (!viewerVisible && !slideshowVisible && !slideshowPreparing) return;
+
+    console.log("[OverlayDebug][3] slideshow-viewer", {
+      viewerVisible,
+      slideshowVisible,
+      slideshowPreparing,
+      slideshowOn,
+      viewerIndex,
+      viewerPhotoCount: viewerPhotoUris.length,
+      slideshowPhotoCount: slideshowPhotoUris.length,
+    });
+  }, [
+    slideshowOn,
+    slideshowPhotoUris.length,
+    slideshowPreparing,
+    slideshowVisible,
+    viewerIndex,
+    viewerPhotoUris.length,
+    viewerVisible,
   ]);
 
   return (
@@ -5330,9 +5409,19 @@ export default function HomeScreen() {
           }}
         >
           <View style={styles.locationSearchModalBackdrop} pointerEvents="auto">
-            <View style={styles.locationSearchModalCard}>
-              {locationSearchWorkflowStatus === "ad-required" ? (
-                <>
+            {locationSearchWorkflowStatus === "ad-required" ? (
+              <LinearGradient
+                colors={["rgba(224,234,255,0.96)", "rgba(245,228,255,0.98)"]}
+                start={{ x: 0, y: 0 }}
+                end={{ x: 1, y: 1 }}
+                style={styles.locationSearchModalFrame}
+              >
+                <View
+                  style={[
+                    styles.locationSearchModalCard,
+                    { backgroundColor: "#FCF3FB" },
+                  ]}
+                >
                   <Text style={styles.locationSearchModalTitle}>
                     31일 초과 기간에서도 장소 검색과 지도 기능을 사용할 수 있습니다
                   </Text>
@@ -5341,29 +5430,53 @@ export default function HomeScreen() {
                   </Text>
                   <View style={styles.locationSearchModalActions}>
                     <TouchableOpacity
-                      style={styles.locationSearchSecondaryButton}
-                      activeOpacity={0.85}
+                      activeOpacity={0.9}
                       onPress={handleExtendedFeatureDecline}
                     >
-                      <Text style={styles.locationSearchSecondaryButtonText}>
-                        31일로 줄이기
-                      </Text>
+                      <LinearGradient
+                        colors={["#D8B4FE", "#A855F7"]}
+                        start={{ x: 0, y: 0 }}
+                        end={{ x: 1, y: 0 }}
+                        style={styles.locationSearchSecondaryGradientButton}
+                      >
+                        <Text style={styles.locationSearchButtonText}>
+                          31일로 줄이기
+                        </Text>
+                      </LinearGradient>
                     </TouchableOpacity>
                     <TouchableOpacity
-                      style={styles.locationSearchPrimaryButton}
-                      activeOpacity={0.9}
+                      activeOpacity={0.95}
                       onPress={() => void handleExtendedFeatureApprove()}
                     >
-                      <Text style={styles.locationSearchPrimaryButtonText}>
-                        광고 보기
-                      </Text>
+                      <LinearGradient
+                        colors={["#60A5FA", "#3B82F6"]}
+                        start={{ x: 0, y: 0 }}
+                        end={{ x: 1, y: 0 }}
+                        style={styles.locationSearchPrimaryGradientButton}
+                      >
+                        <Text style={styles.locationSearchButtonText}>
+                          광고 보기
+                        </Text>
+                      </LinearGradient>
                     </TouchableOpacity>
                   </View>
-                </>
-              ) : null}
+                </View>
+              </LinearGradient>
+            ) : null}
 
-              {locationSearchWorkflowStatus === "search-prompt" ? (
-                <>
+            {locationSearchWorkflowStatus === "search-prompt" ? (
+              <LinearGradient
+                colors={["rgba(233,241,255,0.96)", "rgba(245,230,255,0.98)"]}
+                start={{ x: 0, y: 0 }}
+                end={{ x: 1, y: 1 }}
+                style={styles.locationSearchModalFrame}
+              >
+                <View
+                  style={[
+                    styles.locationSearchModalCard,
+                    { backgroundColor: "#EEF2FF" },
+                  ]}
+                >
                   <Text style={styles.locationSearchModalTitle}>
                     {`${locationSearchTargetCountLabel}장의 사진을 검색해야 합니다.`}
                   </Text>
@@ -5377,29 +5490,53 @@ export default function HomeScreen() {
                   ) : null}
                   <View style={styles.locationSearchModalActions}>
                     <TouchableOpacity
-                      style={styles.locationSearchSecondaryButton}
-                      activeOpacity={0.85}
-                      onPress={handleLocationSearchDecline}
-                    >
-                      <Text style={styles.locationSearchSecondaryButtonText}>
-                        나중에
-                      </Text>
-                    </TouchableOpacity>
-                    <TouchableOpacity
-                      style={styles.locationSearchPrimaryButton}
-                      activeOpacity={0.9}
+                      activeOpacity={0.95}
                       onPress={() => void handleLocationSearchConfirm()}
                     >
-                      <Text style={styles.locationSearchPrimaryButtonText}>
-                        시작
-                      </Text>
+                      <LinearGradient
+                        colors={["#60A5FA", "#3B82F6"]}
+                        start={{ x: 0, y: 0 }}
+                        end={{ x: 1, y: 0 }}
+                        style={styles.locationSearchPrimaryGradientButton}
+                      >
+                        <Text style={styles.locationSearchButtonText}>
+                          시작
+                        </Text>
+                      </LinearGradient>
+                    </TouchableOpacity>
+                    <TouchableOpacity
+                      activeOpacity={0.9}
+                      onPress={handleLocationSearchDecline}
+                    >
+                      <LinearGradient
+                        colors={["#D8B4FE", "#A855F7"]}
+                        start={{ x: 0, y: 0 }}
+                        end={{ x: 1, y: 0 }}
+                        style={styles.locationSearchSecondaryGradientButton}
+                      >
+                        <Text style={styles.locationSearchButtonText}>
+                          나중에
+                        </Text>
+                      </LinearGradient>
                     </TouchableOpacity>
                   </View>
-                </>
-              ) : null}
+                </View>
+              </LinearGradient>
+            ) : null}
 
-              {locationSearchWorkflowStatus === "preparing" ? (
-                <>
+            {locationSearchWorkflowStatus === "preparing" ? (
+              <LinearGradient
+                colors={["rgba(248,245,255,0.96)", "rgba(255,242,251,0.98)"]}
+                start={{ x: 0, y: 0 }}
+                end={{ x: 1, y: 1 }}
+                style={styles.locationSearchModalFrame}
+              >
+                <View
+                  style={[
+                    styles.locationSearchModalCard,
+                    { backgroundColor: "#FCF3FB" },
+                  ]}
+                >
                   <Text style={styles.locationSearchModalTitle}>
                     선택한 범위의 사진을 정리하고 있습니다.
                   </Text>
@@ -5426,17 +5563,23 @@ export default function HomeScreen() {
                     {locationSearchPhaseText}
                   </Text>
                   <TouchableOpacity
-                    style={styles.locationSearchSecondaryButton}
-                    activeOpacity={0.85}
+                    activeOpacity={0.95}
                     onPress={handleLocationSearchCancel}
                   >
-                    <Text style={styles.locationSearchSecondaryButtonText}>
-                      선택취소
-                    </Text>
+                    <LinearGradient
+                      colors={["#7C3AED", "#D946EF"]}
+                      start={{ x: 0, y: 0 }}
+                      end={{ x: 1, y: 0 }}
+                      style={styles.locationSearchCancelGradientButton}
+                    >
+                      <Text style={styles.locationSearchButtonText}>
+                        선택취소
+                      </Text>
+                    </LinearGradient>
                   </TouchableOpacity>
-                </>
-              ) : null}
-            </View>
+                </View>
+              </LinearGradient>
+            ) : null}
           </View>
         </Modal>
 
@@ -6023,76 +6166,96 @@ const styles = StyleSheet.create({
     justifyContent: "center",
     paddingHorizontal: 28,
   },
-  locationSearchModalCard: {
+  locationSearchModalFrame: {
     width: "100%",
     maxWidth: 360,
-    borderRadius: 28,
-    backgroundColor: "#FFFFFF",
-    paddingHorizontal: 24,
-    paddingVertical: 28,
-    shadowColor: "#000",
-    shadowOpacity: 0.18,
+    borderRadius: 30,
+    padding: 2,
+    shadowColor: "#7C3AED",
+    shadowOpacity: 0.14,
     shadowRadius: 24,
     shadowOffset: { width: 0, height: 12 },
-    elevation: 10,
+    elevation: 12,
+  },
+  locationSearchModalCard: {
+    borderRadius: 28,
+    backgroundColor: "#F8FAFF",
+    paddingHorizontal: 24,
+    paddingTop: 30,
+    paddingBottom: 24,
   },
   locationSearchModalTitle: {
-    fontSize: 28,
-    lineHeight: 38,
-    fontWeight: "700",
-    color: "#111827",
+    fontSize: 24,
+    lineHeight: 34,
+    fontWeight: "800",
+    color: "#1F2937",
     textAlign: "center",
   },
   locationSearchModalBody: {
     marginTop: 16,
-    fontSize: 18,
-    lineHeight: 30,
+    fontSize: 17,
+    lineHeight: 28,
     fontWeight: "600",
-    color: "#1F2937",
+    color: "#4B5563",
     textAlign: "center",
   },
   locationSearchModalHint: {
     marginTop: 22,
-    fontSize: 16,
-    lineHeight: 28,
-    color: "#374151",
+    fontSize: 15,
+    lineHeight: 24,
+    color: "#6B7280",
     textAlign: "center",
   },
   locationSearchModalActions: {
     marginTop: 28,
     gap: 12,
   },
-  locationSearchPrimaryButton: {
+  locationSearchPrimaryGradientButton: {
     borderRadius: 18,
-    backgroundColor: "#111827",
+    minHeight: 54,
+    paddingHorizontal: 18,
     alignItems: "center",
     justifyContent: "center",
-    minHeight: 52,
-    paddingHorizontal: 16,
+    shadowColor: "#3B82F6",
+    shadowOpacity: 0.22,
+    shadowRadius: 12,
+    shadowOffset: { width: 0, height: 6 },
+    elevation: 4,
   },
-  locationSearchPrimaryButtonText: {
+  locationSearchSecondaryGradientButton: {
+    borderRadius: 18,
+    minHeight: 54,
+    paddingHorizontal: 18,
+    alignItems: "center",
+    justifyContent: "center",
+    shadowColor: "#A855F7",
+    shadowOpacity: 0.18,
+    shadowRadius: 12,
+    shadowOffset: { width: 0, height: 6 },
+    elevation: 4,
+  },
+  locationSearchCancelGradientButton: {
+    borderRadius: 18,
+    minHeight: 54,
+    paddingHorizontal: 18,
+    alignItems: "center",
+    justifyContent: "center",
+    shadowColor: "#8B5CF6",
+    shadowOpacity: 0.18,
+    shadowRadius: 12,
+    shadowOffset: { width: 0, height: 6 },
+    elevation: 4,
+  },
+  locationSearchButtonText: {
     color: "#FFFFFF",
-    fontSize: 18,
-    fontWeight: "700",
-  },
-  locationSearchSecondaryButton: {
-    borderRadius: 18,
-    backgroundColor: "#F3F4F6",
-    alignItems: "center",
-    justifyContent: "center",
-    minHeight: 52,
-    paddingHorizontal: 16,
-  },
-  locationSearchSecondaryButtonText: {
-    color: "#111827",
     fontSize: 17,
-    fontWeight: "700",
+    fontWeight: "800",
   },
   locationSearchProgressBody: {
     marginTop: 20,
-    fontSize: 18,
+    fontSize: 17,
     lineHeight: 28,
-    color: "#1F2937",
+    color: "#374151",
     textAlign: "center",
     fontWeight: "600",
   },
@@ -6106,19 +6269,19 @@ const styles = StyleSheet.create({
   locationSearchProgressFill: {
     height: "100%",
     borderRadius: 999,
-    backgroundColor: "#4F46E5",
+    backgroundColor: "#7C3AED",
   },
   locationSearchProgressPercentText: {
     marginTop: 14,
     fontSize: 17,
-    color: "#111827",
+    color: "#1F2937",
     textAlign: "center",
-    fontWeight: "700",
+    fontWeight: "800",
   },
   locationSearchProgressSubText: {
     marginTop: 8,
     fontSize: 15,
-    color: "#4B5563",
+    color: "#6B7280",
     textAlign: "center",
     lineHeight: 24,
   },
