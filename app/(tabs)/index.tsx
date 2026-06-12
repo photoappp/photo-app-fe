@@ -1981,6 +1981,7 @@ export default function HomeScreen() {
     locationSearchRunTokenRef.current += 1;
     locationSearchResumeSignatureRef.current = null;
     pendingLocationSearchPromptSignatureRef.current = null;
+    lastDeclinedLocationSearchSignatureRef.current = currentDateTimeFilterSignature;
     setLocationSearchWorkflowStatus("idle");
     setDeferredLocationFeatureOpen(null);
     setLocationSearchEntryPoint(null);
