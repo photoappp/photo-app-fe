@@ -577,8 +577,6 @@ export default function DateTimeFilter({
     const normalized = normalizeTimeRange(s, e);
     setTimeStart(normalized.timeStart);
     setTimeEnd(normalized.timeEnd);
-
-    flushPendingChange();
   };
 
   const onChangeTimeStartSafe = (d: Date) => {
