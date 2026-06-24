@@ -269,37 +269,69 @@ const LocationSelector = forwardRef<LocationSelectorHandle, Props>(
     };*/
 
     // 2026.05.13 설정에서 언어 변경 이후 위치필터에 문자열 반영 안되는 현상 수정 June START
-    const getLabelForSelection = (countriesInput: string[], citiesInput: string[]) => {
-      const countryIsAll = countriesInput.length === 0;
-      const cityIsAll = citiesInput.length === 0;
-    
-      if (countryIsAll && cityIsAll) {
-        return t("allLocations");
-      }
-    
-      const getTranslatedCountry = (item: string) =>
-        locationMap[item]?.country[language] ??
-        locationMap[item]?.country.en ??
-        item;
-    
-      const formatLabel = (items: string[], allLabel: string) => {
-        if (items.length === 0) return allLabel;
-        return items.length === 1
-          ? getTranslatedCountry(items[0])
-          : `${getTranslatedCountry(items[0])}+${items.length - 1}`;
-      };
-    
-      const countryLabel = formatLabel(
-        [...countriesInput].sort(),
-        t("allCountries")
-      );
-      const cityLabel = formatLabel(
-        [...citiesInput].sort(),
-        t("allCities")
-      );
-    
-      return [countryLabel, cityLabel].filter(Boolean).join(", ");
-    };
+    const getLabelForSelection = useCallback(
+      (countriesInput: string[], citiesInput: string[]) => {
+        const countryIsAll = countriesInput.length === 0;
+        const cityIsAll = citiesInput.length === 0;
+
+        if (countryIsAll && cityIsAll) {
+          return t("allLocations");
+        }
+
+        const getTranslatedCountry = (item: string) =>
+          locationMap[item]?.country[language] ??
+          locationMap[item]?.country.en ??
+          item;
+
+        const formatLabel = (items: string[], allLabel: string) => {
+          if (items.length === 0) return allLabel;
+          return items.length === 1
+            ? getTranslatedCountry(items[0])
+            : `${getTranslatedCountry(items[0])}+${items.length - 1}`;
+        };
+
+        const countryLabel = formatLabel(
+          [...countriesInput].sort(),
+          t("allCountries"),
+        );
+        const cityLabel = formatLabel([...citiesInput].sort(), t("allCities"));
+
+        return [countryLabel, cityLabel].filter(Boolean).join(", ");
+      },
+      [language, locationMap, t],
+    );
+
+    useEffect(() => {
+      const hasActiveSelection =
+        selectedCountries.length > 0 || selectedCities.length > 0;
+      if (!hasActiveSelection) return;
+
+      const appliedCountries = [...selectedCountries].sort();
+      const appliedCities = [...selectedCities].sort();
+      const isAllSelected =
+        allCountries.length > 0 &&
+        allCities.length > 0 &&
+        areListsEqual(appliedCountries, allCountries) &&
+        areListsEqual(appliedCities, allCities);
+      const nextLocationLabel = isAllSelected
+        ? t("allLocations")
+        : getLabelForSelection(appliedCountries, appliedCities);
+
+      onSelectionChange?.({
+        countries: appliedCountries,
+        cities: appliedCities,
+        locationLabel: nextLocationLabel,
+      });
+    }, [
+      allCities,
+      allCountries,
+      areListsEqual,
+      getLabelForSelection,
+      onSelectionChange,
+      selectedCities,
+      selectedCountries,
+      t,
+    ]);
 
     const handleReset = () => {
       setSelectedCountries([]);

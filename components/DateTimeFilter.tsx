@@ -2,6 +2,7 @@
 import { Photo } from "@/types/Photo";
 import { LinearGradient } from "expo-linear-gradient";
 import {
+  useCallback,
   useEffect,
   //useCallback, useMemo, ,
   useRef,
@@ -101,10 +102,10 @@ const fmtDate = (d: Date) =>
 const fmtTime = (m: number) => `${pad(Math.floor(m / 60))}:${pad(m % 60)}`;
 
 const today = new Date();
-const oneYearAgo = new Date(
-  today.getFullYear() - 1,
+const recent31DaysStart = new Date(
+  today.getFullYear(),
   today.getMonth(),
-  today.getDate(),
+  today.getDate() - 30,
 );
 
 type DateTimeFilterValue = {
@@ -115,6 +116,7 @@ type DateTimeFilterValue = {
 };
 
 type DateTimeFilterProps = {
+  value?: DateTimeFilterValue;
   onChange?: (value: DateTimeFilterValue) => void;
   photos: Photo[]; // add photos here
   /* 2026.04.22 All Dates 선택 시 실제 사진첩 최저 날짜를 외부(DB 우선)에서 주입받아 1970 고정 범위를 제거하기 위해 비동기 resolver prop을 추가 by June */
@@ -122,7 +124,8 @@ type DateTimeFilterProps = {
   /* 2026.05.28 위치 목록이 아직 인덱싱/지오코딩 중일 때 바텀시트 안에서 명확한 안내를 보여주기 위한 상태 by June */
   locationPreparing?: boolean;
   locationPreparingMessage?: string;
-  onOpenLocationRequest?: () => void | Promise<void>;
+  onOpenLocationRequest?: () => boolean | Promise<boolean>;
+  locationOpenToken?: number;
   interactionBlocked?: boolean;
   interactionBlockedReason?: string;
   onLocationChange: (value: {
@@ -229,23 +232,37 @@ const DATE_PRESETS: DatePreset[] = [
 ];
 
 export default function DateTimeFilter({
+  value,
   onChange,
   photos,
   resolveOldestPhotoDate,
   locationPreparing = false,
   locationPreparingMessage,
   onOpenLocationRequest,
+  locationOpenToken = 0,
   interactionBlocked = false,
   interactionBlockedReason,
   onLocationChange,
 }: DateTimeFilterProps) {
   // ---- 필터 상태 ----
-  const [dateStart, setDateStart] = useState(oneYearAgo);
+  const [dateStart, setDateStart] = useState(recent31DaysStart);
   const [dateEnd, setDateEnd] = useState(today);
 
   // 시간은 분 단위 (0~1439; 1439=24:00 허용)
   const [timeStart, setTimeStart] = useState(0);
   const [timeEnd, setTimeEnd] = useState(1439);
+
+  const normalizeTimeRange = useCallback((nextStart: number, nextEnd: number) => {
+    const clampTime = (value: number) => Math.max(0, Math.min(1439, value));
+    const start = clampTime(nextStart);
+    const end = clampTime(nextEnd);
+
+    if (start > end) {
+      return { timeStart: start, timeEnd: start };
+    }
+
+    return { timeStart: start, timeEnd: end };
+  }, []);
 
   // ---- 모달 표시 상태 ----
   const [dateModalVisible, setDateModalVisible] = useState(false);
@@ -305,8 +322,10 @@ export default function DateTimeFilter({
     if (isSheetTransitionLocked("date", `close:${source}`)) return;
     lockSheetTransition();
     console.log("[FilterSheet] close", { type: "date", source });
-    flushPendingChange();
     setDateModalVisible(false);
+    setTimeout(() => {
+      flushPendingChange();
+    }, 0);
   };
 
   const closeTimeSheet = (source: string, flush = true) => {
@@ -314,8 +333,12 @@ export default function DateTimeFilter({
     if (isSheetTransitionLocked("time", `close:${source}`)) return;
     lockSheetTransition();
     console.log("[FilterSheet] close", { type: "time", source });
-    if (flush) flushPendingChange();
     setTimeModalVisible(false);
+    if (flush) {
+      setTimeout(() => {
+        flushPendingChange();
+      }, 0);
+    }
   };
 
   const closeLocationSheet = (source: string) => {
@@ -370,7 +393,16 @@ export default function DateTimeFilter({
     setTimeModalVisible(true);
   };
 
-  const openLocationSheet = () => {
+  const performOpenLocationSheet = () => {
+    if (locationModalVisible) return;
+    if (isSheetTransitionLocked("location", "open")) return;
+    lockSheetTransition();
+    console.log("[FilterSheet] open", { type: "location" });
+    amplitude.track("tap_location_filter", { screen_name: "home" });
+    setLocationModalVisible(true);
+  };
+
+  const openLocationSheet = async () => {
     console.log("[FilterTap] location", {
       interactionBlocked,
       interactionBlockedReason: interactionBlockedReason ?? null,
@@ -385,17 +417,28 @@ export default function DateTimeFilter({
         sheetTransitionLockUntilRef.current - Date.now(),
       ),
     });
-    void onOpenLocationRequest?.();
-    if (locationModalVisible) return;
-    if (isSheetTransitionLocked("location", "open")) return;
-    lockSheetTransition();
-    console.log("[FilterSheet] open", { type: "location" });
-    amplitude.track("tap_location_filter", { screen_name: "home" });
-    setLocationModalVisible(true);
+    const shouldOpen = onOpenLocationRequest
+      ? await onOpenLocationRequest()
+      : true;
+    if (!shouldOpen) return;
+    performOpenLocationSheet();
   };
 
   useEffect(() => {
+    if (!locationOpenToken) return;
+    performOpenLocationSheet();
+  }, [locationOpenToken]);
+
+  useEffect(() => {
     if (!onChange) return;
+    if (
+      dateModalVisible ||
+      timeModalVisible ||
+      androidDateField !== null ||
+      androidTimeField !== null
+    ) {
+      return;
+    }
 
     // 즐겨찾기 버튼 클릭 시 딜레이 없음
     if (bypassDebounceRef.current) {
@@ -422,7 +465,56 @@ export default function DateTimeFilter({
       if (debounceTimerRef.current) clearTimeout(debounceTimerRef.current);
     };
     // 2026-03-04 add onLocationChange to emit value by yen
-  }, [dateStart, dateEnd, timeStart, timeEnd, onChange, onLocationChange]);
+  }, [
+    androidDateField,
+    androidTimeField,
+    dateEnd,
+    dateModalVisible,
+    dateStart,
+    normalizeTimeRange,
+    onChange,
+    onLocationChange,
+    timeEnd,
+    timeModalVisible,
+    timeStart,
+  ]);
+
+  useEffect(() => {
+    if (!value) return;
+    if (
+      dateModalVisible ||
+      timeModalVisible ||
+      androidDateField !== null ||
+      androidTimeField !== null
+    ) {
+      return;
+    }
+
+    const nextDateStart = clampToToday(value.dateStart);
+    const nextDateEnd = clampToToday(value.dateEnd);
+    const externalSig = `${nextDateStart.getTime()}|${nextDateEnd.getTime()}|${value.timeStart}|${value.timeEnd}`;
+    const localSig = `${dateStart.getTime()}|${dateEnd.getTime()}|${timeStart}|${timeEnd}`;
+
+    if (externalSig === localSig) return;
+
+    setDateStart(nextDateStart);
+    setDateEnd(nextDateEnd);
+    const normalizedTime = normalizeTimeRange(value.timeStart, value.timeEnd);
+    setTimeStart(normalizedTime.timeStart);
+    setTimeEnd(normalizedTime.timeEnd);
+    lastEmittedRef.current = externalSig;
+  }, [
+    androidDateField,
+    androidTimeField,
+    dateEnd,
+    dateModalVisible,
+    dateStart,
+    normalizeTimeRange,
+    timeEnd,
+    timeModalVisible,
+    timeStart,
+    value,
+  ]);
 
   /* 2026.04.22 현재 로드된 사진 배열에서도 최소 날짜를 계산할 수 있도록 fallback 헬퍼를 추가해 DB 미적재 구간의 All Dates 정확도를 보강하기 위해 추가 by June */
   const getOldestDateFromLoadedPhotos = () => {
@@ -482,13 +574,23 @@ export default function DateTimeFilter({
 
   const applyTimePreset = (s: number, e: number) => {
     bypassDebounceRef.current = true;
+    const normalized = normalizeTimeRange(s, e);
+    setTimeStart(normalized.timeStart);
+    setTimeEnd(normalized.timeEnd);
+  };
 
-    const clamp = (v: number) => Math.max(0, Math.min(1439, v));
+  const onChangeTimeStartSafe = (d: Date) => {
+    const nextStart = d.getHours() * 60 + d.getMinutes();
+    const normalized = normalizeTimeRange(nextStart, timeEnd);
+    setTimeStart(normalized.timeStart);
+    setTimeEnd(normalized.timeEnd);
+  };
 
-    setTimeStart(clamp(s));
-    setTimeEnd(clamp(e));
-
-    flushPendingChange();
+  const onChangeTimeEndSafe = (d: Date) => {
+    const nextEnd = d.getHours() * 60 + d.getMinutes();
+    const normalized = normalizeTimeRange(timeStart, nextEnd);
+    setTimeStart(normalized.timeStart);
+    setTimeEnd(normalized.timeEnd);
   };
 
   /*
@@ -538,12 +640,6 @@ export default function DateTimeFilter({
   }; */
 
   // ---- Time 수정 유틸 (시/분을 분단위로) ----
-  const setTimeHM = (which: string, hours: number, minutes: number) => {
-    const mins = hours * 60 + minutes;
-    if (which === "start") setTimeStart(mins);
-    else setTimeEnd(mins);
-  };
-
   // ---- 렌더 ----
   const dateLabel = `${fmtDate(dateStart)} – ${fmtDate(dateEnd)}`;
   const timeLabel = `${fmtTime(timeStart)} – ${fmtTime(timeEnd)}`;
@@ -619,7 +715,7 @@ export default function DateTimeFilter({
             <TouchableOpacity
               onPress={() => {
                 bypassDebounceRef.current = true;
-                setDateStart(oneYearAgo);
+                setDateStart(recent31DaysStart);
                 setDateEnd(today);
                 flushPendingChange();
                 setDateModalVisible(false);
@@ -828,9 +924,7 @@ export default function DateTimeFilter({
                         timeStart % 60,
                       )
                     }
-                    onChange={(d) =>
-                      setTimeHM("start", d.getHours(), d.getMinutes())
-                    }
+                    onChange={onChangeTimeStartSafe}
                   />
                 </View>
 
@@ -846,9 +940,7 @@ export default function DateTimeFilter({
                         timeEnd % 60,
                       )
                     }
-                    onChange={(d) =>
-                      setTimeHM("end", d.getHours(), d.getMinutes())
-                    }
+                    onChange={onChangeTimeEndSafe}
                   />
                 </View>
               </View>
