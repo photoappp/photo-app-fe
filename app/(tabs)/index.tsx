@@ -36,6 +36,7 @@ import {
 import { Edges, SafeAreaView } from "react-native-safe-area-context";
 import Share from "react-native-share";
 
+import { useRewardGate } from "@/components/context/RewardGateContext";
 import { useSlideshowTime } from "@/components/context/SlideshowTimeContext";
 import { useTheme } from "@/components/context/ThemeContext";
 import { useI18n } from "@/components/context/useI18n";
@@ -465,8 +466,12 @@ export default function HomeScreen() {
   const lastDeclinedLocationSearchSignatureRef = useRef<string | null>(null);
   const lastPreparedLocationSearchSignatureRef = useRef<string | null>(null);
   const locationSearchResumeSignatureRef = useRef<string | null>(null);
-  const [locationFeatureUnlockedUntil, setLocationFeatureUnlockedUntil] =
-    useState<number>(0);
+  /* 2026.06.23 해금 상태를 공용 리워드 게이트로 통합 — 광고 시청 시 모든 기능이 2시간 해금되고 위치 검색 게이트도 같은 해금을 공유 by yen */
+  const {
+    unlockedUntil: locationFeatureUnlockedUntil,
+    isUnlocked: isLocationFeatureUnlockActive,
+    requestAccess: requestRewardAccess,
+  } = useRewardGate();
   const [locationSearchWorkflowStatus, setLocationSearchWorkflowStatus] =
     useState<LocationSearchWorkflowStatus>("idle");
   const [locationSearchEntryPoint, setLocationSearchEntryPoint] =
@@ -643,7 +648,6 @@ export default function HomeScreen() {
       sortPhotosForDisplay,
     ],
   );
-  const isLocationFeatureUnlockActive = locationFeatureUnlockedUntil > Date.now();
   const requiresExtendedLocationFeature =
     currentDateRangeDayCount > DEFAULT_LOCATION_RANGE_DAYS;
 
@@ -745,30 +749,7 @@ export default function HomeScreen() {
     [locationFeatureUnlockedUntil, shouldRequireExtendedLocationFeature],
   );
 
-  useEffect(() => {
-    let mounted = true;
-
-    const loadLocationFeatureUnlock = async () => {
-      try {
-        const stored = await AsyncStorage.getItem(
-          LOCATION_FEATURE_UNLOCK_STORAGE_KEY,
-        );
-        if (!mounted || !stored) return;
-        const parsed = Number(JSON.parse(stored));
-        if (Number.isFinite(parsed) && parsed > 0) {
-          setLocationFeatureUnlockedUntil(parsed);
-        }
-      } catch (error) {
-        console.log("location feature unlock load error:", error);
-      }
-    };
-
-    void loadLocationFeatureUnlock();
-
-    return () => {
-      mounted = false;
-    };
-  }, []);
+  /* 2026.06.23 해금 상태 로드/만료 정리는 RewardGateProvider로 이동(통합) by yen */
 
   useEffect(() => {
     const subscription = AppState.addEventListener("change", (nextState) => {
@@ -794,17 +775,6 @@ export default function HomeScreen() {
     armLocationSearchWorkflowForFilter,
     currentDateTimeFilterSignature,
   ]);
-
-  useEffect(() => {
-    if (locationFeatureUnlockedUntil <= 0) return;
-    if (locationFeatureUnlockedUntil > Date.now()) return;
-
-    /* 2026.06.09 광고 해금 시간이 만료되면 다음 32일 초과 검색에서 다시 게이트를 타도록 만료 시점을 정리 by June */
-    setLocationFeatureUnlockedUntil(0);
-    AsyncStorage.removeItem(LOCATION_FEATURE_UNLOCK_STORAGE_KEY).catch((error) => {
-      console.log("location feature unlock clear error:", error);
-    });
-  }, [locationFeatureUnlockedUntil]);
 
   useEffect(() => {
     if (appStateStatus === "active") return;
@@ -2015,19 +1985,29 @@ export default function HomeScreen() {
     armLocationSearchWorkflowForFilter(nextFilter);
   }, [armLocationSearchWorkflowForFilter, prefetchLocationSearchTargetTotalCount]);
 
-  const handleExtendedFeatureApprove = useCallback(async () => {
-    const unlockedUntil = Date.now() + LOCATION_FEATURE_UNLOCK_MS;
-    setLocationFeatureUnlockedUntil(unlockedUntil);
-    try {
-      await AsyncStorage.setItem(
-        LOCATION_FEATURE_UNLOCK_STORAGE_KEY,
-        JSON.stringify(unlockedUntil),
-      );
-    } catch (error) {
-      console.log("location feature unlock persist error:", error);
-    }
-    setLocationSearchWorkflowStatus("search-prompt");
-  }, []);
+  /* 2026.06.23 [포인트1] 한 달(31일) 초과 날짜를 설정해 ad-required 상태가 되면 공용 리워드 팝업을 띄움 by yen
+     - 광고 시청(해금) → 검색 진행(search-prompt)
+     - 팝업 닫음 → 31일로 줄여 게이트 해제(기존 거절 동작 유지) */
+  useEffect(() => {
+    if (locationSearchWorkflowStatus !== "ad-required") return;
+    let cancelled = false;
+    void (async () => {
+      const granted = await requestRewardAccess("olderPhotos");
+      if (cancelled) return;
+      if (granted) {
+        setLocationSearchWorkflowStatus("search-prompt");
+      } else {
+        handleExtendedFeatureDecline();
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    locationSearchWorkflowStatus,
+    requestRewardAccess,
+    handleExtendedFeatureDecline,
+  ]);
 
   const requestLocationFeatureOpen = useCallback(
     async (entryPoint: LocationSearchEntryPoint) => {
@@ -5021,8 +5001,8 @@ export default function HomeScreen() {
     isScanning ||
     visibleLocationPreparing;
   const locationPreparingMessage = "Preparing location list. Please wait...";
+  /* 2026.06.23 ad-required(한 달 초과 게이트)는 이제 공용 리워드 팝업이 처리하므로 위치 검색 모달에서는 제외 by yen */
   const shouldShowLocationSearchModal =
-    locationSearchWorkflowStatus === "ad-required" ||
     locationSearchWorkflowStatus === "search-prompt" ||
     locationSearchWorkflowStatus === "preparing";
   const effectiveLocationSearchEstimatedSeconds =
@@ -5203,7 +5183,13 @@ export default function HomeScreen() {
                 >
                   <ShowOnMap
                     images={photosAll}
-                    onOpenRequest={() => requestLocationFeatureOpen("map")}
+                    /* 2026.06.23 [포인트2] 지도를 열기 전에 리워드 팝업(메인 화면 위)을 먼저 표시.
+                       광고를 보면 지도 열기 진행, 닫으면 지도 미오픈(앱은 계속 정상 이용) — Modal 중첩 프리즈 방지 by yen */
+                    onOpenRequest={async () => {
+                      const granted = await requestRewardAccess("map");
+                      if (!granted) return false;
+                      return requestLocationFeatureOpen("map");
+                    }}
                     openToken={mapOpenToken}
                     preparingLocations={visibleLocationPreparing}
                     preparingMessage="Preparing map markers. Please wait..."
@@ -5388,6 +5374,8 @@ export default function HomeScreen() {
               /* 2026.04.22 DateTimeFilter의 All Dates 프리셋이 DB 최소 날짜를 사용하도록 resolver prop을 연결하기 위해 추가 by June */
               resolveOldestPhotoDate={resolveOldestPhotoDate}
               onLocationChange={handleLocationChange}
+              /* 2026.06.23 [포인트3] 위치 메뉴 내부 버튼 클릭 시 공용 리워드 팝업 게이트 by yen */
+              onLocationGate={() => requestRewardAccess("placeSearch")}
               locationPreparing={isLocationListPreparing}
               locationPreparingMessage={locationPreparingMessage}
               onOpenLocationRequest={() =>
@@ -5409,60 +5397,7 @@ export default function HomeScreen() {
           }}
         >
           <View style={styles.locationSearchModalBackdrop} pointerEvents="auto">
-            {locationSearchWorkflowStatus === "ad-required" ? (
-              <LinearGradient
-                colors={["rgba(224,234,255,0.96)", "rgba(245,228,255,0.98)"]}
-                start={{ x: 0, y: 0 }}
-                end={{ x: 1, y: 1 }}
-                style={styles.locationSearchModalFrame}
-              >
-                <View
-                  style={[
-                    styles.locationSearchModalCard,
-                    { backgroundColor: "#FCF3FB" },
-                  ]}
-                >
-                  <Text style={styles.locationSearchModalTitle}>
-                    31일 초과 기간에서도 장소 검색과 지도 기능을 사용할 수 있습니다
-                  </Text>
-                  <Text style={styles.locationSearchModalBody}>
-                    광고를 시청하면 2시간 동안 확장 기간 검색을 사용할 수 있습니다.
-                  </Text>
-                  <View style={styles.locationSearchModalActions}>
-                    <TouchableOpacity
-                      activeOpacity={0.9}
-                      onPress={handleExtendedFeatureDecline}
-                    >
-                      <LinearGradient
-                        colors={["#D8B4FE", "#A855F7"]}
-                        start={{ x: 0, y: 0 }}
-                        end={{ x: 1, y: 0 }}
-                        style={styles.locationSearchSecondaryGradientButton}
-                      >
-                        <Text style={styles.locationSearchButtonText}>
-                          31일로 줄이기
-                        </Text>
-                      </LinearGradient>
-                    </TouchableOpacity>
-                    <TouchableOpacity
-                      activeOpacity={0.95}
-                      onPress={() => void handleExtendedFeatureApprove()}
-                    >
-                      <LinearGradient
-                        colors={["#60A5FA", "#3B82F6"]}
-                        start={{ x: 0, y: 0 }}
-                        end={{ x: 1, y: 0 }}
-                        style={styles.locationSearchPrimaryGradientButton}
-                      >
-                        <Text style={styles.locationSearchButtonText}>
-                          광고 보기
-                        </Text>
-                      </LinearGradient>
-                    </TouchableOpacity>
-                  </View>
-                </View>
-              </LinearGradient>
-            ) : null}
+            {/* 2026.06.23 한 달 초과 광고 게이트는 공용 리워드 팝업(RewardGateProvider)으로 대체됨 by yen */}
 
             {locationSearchWorkflowStatus === "search-prompt" ? (
               <LinearGradient
