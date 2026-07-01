@@ -16,6 +16,9 @@ import {
   View,
 } from "react-native";
 import { useI18n } from "@/components/context/useI18n";
+/* 2026.06.23 [포인트3] 메뉴 내부 버튼 게이트 팝업을 이 Modal 안에서 직접 렌더하기 위해 추가 by yen */
+import { useRewardGate } from "@/components/context/RewardGateContext";
+import RewardPopup from "@/components/RewardPopup";
 import { SUPPORTED_LANGUAGES, SupportedLanguage } from "@/constants/Translations";
 /* 2026.04.22 위치 선택 번역 재구현을 위해 지원 언어 기반 로컬라이즈 라벨 타입을 명시적으로 정의 by June */
 type LocalizedLabel = {
@@ -45,6 +48,9 @@ type Props = {
     cities: string[];
     locationLabel: string;
   }) => void;
+  /* 2026.06.23 [포인트3] 메뉴 안의 버튼을 누를 때 공용 리워드 게이트를 먼저 통과시키기 위한 콜백 by yen
+     - true(또는 미지정) 면 동작 수행, false 면 동작 취소 */
+  onGate?: () => Promise<boolean>;
 };
 // 2026-03-04 to to push reset function to parent with forwardRef by yen
 const LocationSelector = forwardRef<LocationSelectorHandle, Props>(
@@ -56,6 +62,7 @@ const LocationSelector = forwardRef<LocationSelectorHandle, Props>(
       isPreparing = false,
       preparingMessage,
       onSelectionChange,
+      onGate,
     },
     ref,
   ) => {
@@ -70,6 +77,14 @@ const LocationSelector = forwardRef<LocationSelectorHandle, Props>(
     const [tempCities, setTempCities] = useState<string[]>([]);
     /* 2026.04.22 TRANSLATIONS 직접 접근을 제거하고 공용 i18n 훅을 사용해 번역 처리 방식을 통일하기 위해 변경 by June */
     const { language, t } = useI18n();
+    /* 2026.06.23 [포인트3] 게이트 팝업 상태/콜백 — placeSearch일 때만 이 Modal 안에서 오버레이로 렌더 by yen */
+    const {
+      popupVisible: gatePopupVisible,
+      activeFeature: gateActiveFeature,
+      adLoading: gateAdLoading,
+      watchAd: gateWatchAd,
+      closePopup: gateClosePopup,
+    } = useRewardGate();
     const shouldShowPreparingOverlay = isPreparing;
     const areListsEqual = useCallback((left: string[], right: string[]) => {
       if (left.length !== right.length) return false;
@@ -375,6 +390,24 @@ const LocationSelector = forwardRef<LocationSelectorHandle, Props>(
       onClose();
     };
 
+    /* 2026.06.23 [포인트3] 메뉴 내부 버튼은 리워드 게이트를 먼저 통과한 뒤 동작 수행 by yen
+       - 해금 중이면 즉시 통과, 아니면 팝업을 띄우고 광고 시청 시에만 동작 수행 */
+    const runGated = (action: () => void) => {
+      if (!onGate) {
+        action();
+        return;
+      }
+      void (async () => {
+        const granted = await onGate();
+        if (granted !== false) {
+          action();
+        } else {
+          /* 2026.06.23 광고를 보지 않고 팝업을 닫으면 위치 메뉴도 함께 닫음 by yen */
+          onClose();
+        }
+      })();
+    };
+
     return (
       <Modal
         transparent
@@ -419,7 +452,7 @@ const LocationSelector = forwardRef<LocationSelectorHandle, Props>(
                   }}
                 >
                   <TouchableOpacity
-                    onPress={applyCurrentSelection}
+                    onPress={() => runGated(applyCurrentSelection)}
                   >
                     {/* 2026-03-04 change to close icon by yen */}
                     <ICON_CLOSE width={20} height={20} />
@@ -454,7 +487,7 @@ const LocationSelector = forwardRef<LocationSelectorHandle, Props>(
                     return (
                       <Pressable
                         key={item}
-                        onPress={() => toggleCountry(item)}
+                        onPress={() => runGated(() => toggleCountry(item))}
                         style={({ pressed }) => [
                           {
                             backgroundColor: pressed
@@ -502,7 +535,7 @@ const LocationSelector = forwardRef<LocationSelectorHandle, Props>(
                       return (
                         <Pressable
                           key={item}
-                          onPress={() => toggleCity(item)}
+                          onPress={() => runGated(() => toggleCity(item))}
                           style={({ pressed }) => [
                             {
                               backgroundColor: pressed
@@ -528,10 +561,12 @@ const LocationSelector = forwardRef<LocationSelectorHandle, Props>(
             </View>
             <View style={styles.buttonContainer}>
               <TouchableOpacity
-                onPress={() => {
-                  handleReset();
-                  onClose();
-                }}
+                onPress={() =>
+                  runGated(() => {
+                    handleReset();
+                    onClose();
+                  })
+                }
               >
                 <LinearGradient
                   colors={["#2B7FFF", "#AD46FF"]}
@@ -545,6 +580,14 @@ const LocationSelector = forwardRef<LocationSelectorHandle, Props>(
               </TouchableOpacity>
             </View>
           </Pressable>
+          {/* 2026.06.23 [포인트3] 장소 메뉴 버튼 게이트 팝업 — 이 Modal 위에 오버레이로 표시 by yen */}
+          <RewardPopup
+            asOverlay
+            visible={gatePopupVisible && gateActiveFeature === "placeSearch"}
+            loading={gateAdLoading}
+            onWatchAd={gateWatchAd}
+            onClose={gateClosePopup}
+          />
         </Pressable>
       </Modal>
     );

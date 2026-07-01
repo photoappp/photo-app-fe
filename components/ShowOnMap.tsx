@@ -39,6 +39,8 @@ type Props = {
   //images: Image[];
   images: Photo[];
   onOpenRequest?: () => boolean | Promise<boolean>;
+  /* 2026.06.23 지도가 실제로 열린 직후 호출 — 지도 화면 위에 리워드 팝업을 띄우기 위해 추가 by yen */
+  onAfterOpen?: () => void;
   openToken?: number;
   preparingLocations?: boolean;
   preparingMessage?: string;
@@ -114,6 +116,7 @@ const isCoordinateInBounds = (
 export default function MapView({
   images,
   onOpenRequest,
+  onAfterOpen,
   openToken = 0,
   preparingLocations = false,
   preparingMessage,
@@ -1034,6 +1037,8 @@ export default function MapView({
     setWebViewLoaded(false);
     hasAutoFitMapRef.current = false;
     setVisible(true);
+    /* 2026.06.23 지도가 열린 직후 부모가 리워드 팝업을 지도 위에 띄울 수 있도록 통지 by yen */
+    onAfterOpen?.();
   };
 
   const openMap = async () => {

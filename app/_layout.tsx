@@ -8,6 +8,7 @@ import 'react-native-reanimated';
 import mobileAds from "react-native-google-mobile-ads";
 
 import { LanguageProvider } from '@/components/context/LanguageContext';
+import { RewardGateProvider } from '@/components/context/RewardGateContext';
 import { SlideshowTimeProvider } from '@/components/context/SlideshowTimeContext';
 import { ThemeProvider } from '@/components/context/ThemeContext';
 import { UserDataProvider } from '@/components/context/UserDataContext';
@@ -82,12 +83,14 @@ export default function RootLayout() {
 			<ThemeProvider>
 				<LanguageProvider>
 					<SlideshowTimeProvider>
-						<Stack>
-							<Stack.Screen name="(tabs)" options={{ headerShown: false }} />
-							<Stack.Screen name="settings" options={{ headerShown: false }} />
-							<Stack.Screen name="+not-found" />
-						</Stack>
-						<StatusBar style="auto" />
+						<RewardGateProvider>
+							<Stack>
+								<Stack.Screen name="(tabs)" options={{ headerShown: false }} />
+								<Stack.Screen name="settings" options={{ headerShown: false }} />
+								<Stack.Screen name="+not-found" />
+							</Stack>
+							<StatusBar style="auto" />
+						</RewardGateProvider>
 					</SlideshowTimeProvider>
 				</LanguageProvider>
 			</ThemeProvider>

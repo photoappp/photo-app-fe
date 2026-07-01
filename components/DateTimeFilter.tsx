@@ -133,6 +133,8 @@ type DateTimeFilterProps = {
     cities: string[];
     locationLabel: string;
   }) => void;
+  /* 2026.06.23 [포인트3] 위치 메뉴 내부 버튼용 리워드 게이트 콜백을 LocationSelector로 전달 by yen */
+  onLocationGate?: () => Promise<boolean>;
 };
 
 type TimePreset = {
@@ -243,6 +245,7 @@ export default function DateTimeFilter({
   interactionBlocked = false,
   interactionBlockedReason,
   onLocationChange,
+  onLocationGate,
 }: DateTimeFilterProps) {
   // ---- 필터 상태 ----
   const [dateStart, setDateStart] = useState(recent31DaysStart);
@@ -1016,6 +1019,7 @@ export default function DateTimeFilter({
           photos={photos}
           isPreparing={locationPreparing}
           preparingMessage={locationPreparingMessage}
+          onGate={onLocationGate}
         />
       }
       {/* Time Bottom Sheet END */}
