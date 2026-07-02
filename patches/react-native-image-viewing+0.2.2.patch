@@ -1,8 +1,8 @@
 diff --git a/node_modules/react-native-image-viewing/dist/ImageViewing.js b/node_modules/react-native-image-viewing/dist/ImageViewing.js
+index 3d7641a..48b592e 100644
 --- a/node_modules/react-native-image-viewing/dist/ImageViewing.js
 +++ b/node_modules/react-native-image-viewing/dist/ImageViewing.js
-@@ -21,20 +21,28 @@ function ImageViewing({ images, keyExtractor, imageIndex, visible, onRequestClose, onLongPress = () => { }, onImageIndexChange, animationType = DEFAULT_ANIMATION_TYPE, backgroundColor = DEFAULT_BG_COLOR, presentationStyle, swipeToCloseEnabled, doubleTapToZoomEnabled, delayLongPress = DEFAULT_DELAY_LONG_PRESS, HeaderComponent, FooterComponent, }) {
-     const imageList = useRef(null);
+@@ -23,6 +23,16 @@ function ImageViewing({ images, keyExtractor, imageIndex, visible, onRequestClos
      const [opacity, onRequestCloseEnhanced] = useRequestClose(onRequestClose);
      const [currentImageIndex, onScroll] = useImageIndexChange(imageIndex, SCREEN);
      const [headerTransform, footerTransform, toggleBarsVisible] = useAnimatedComponents();
@@ -19,9 +19,8 @@ diff --git a/node_modules/react-native-image-viewing/dist/ImageViewing.js b/node
      useEffect(() => {
          if (onImageIndexChange) {
              onImageIndexChange(currentImageIndex);
-         }
-     }, [currentImageIndex]);
-@@ -92,4 +100,4 @@ const styles = StyleSheet.create({
+@@ -82,5 +92,5 @@ const styles = StyleSheet.create({
+         bottom: 0,
      },
  });
 -const EnhancedImageViewing = (props) => (<ImageViewing key={props.imageIndex} {...props}/>);
