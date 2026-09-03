@@ -2882,8 +2882,16 @@ export default function HomeScreen() {
       let cursor: string | null = null;
       let nextPage = true;
       let totalCount = 0;
+      /* 2026.09.02 필터 변경으로 최신 요청이 아니게 된 스캔이 끝까지 도는 문제를 막기 위해 시작 시점 요청 ID를 캡처 by Claude */
+      const requestIdAtStart = photoLoadRequestIdRef.current;
+      let aborted = false;
 
       while (nextPage) {
+        /* 2026.09.02 페이지 단위로 최신 요청 여부를 확인해 stale 스캔을 조기 종료 by Claude */
+        if (photoLoadRequestIdRef.current !== requestIdAtStart) {
+          aborted = true;
+          break;
+        }
         const result = await fetchAssetsPage({
           after: cursor,
           first: FETCH_PAGE_SIZE,
@@ -2916,6 +2924,7 @@ export default function HomeScreen() {
       return {
         photos: sortPhotosForDisplay(dedupePhotosByUri(collected)),
         totalCount,
+        aborted,
       };
     },
     [
@@ -2942,6 +2951,7 @@ export default function HomeScreen() {
             photos: dbLoaded.photos,
             totalCount: dbLoaded.totalCount,
             source: "db" as const,
+            aborted: false,
           };
         }
       }
@@ -2951,6 +2961,7 @@ export default function HomeScreen() {
         photos: mediaLoaded.photos,
         totalCount: mediaLoaded.totalCount,
         source: "medialibrary" as const,
+        aborted: mediaLoaded.aborted,
       };
     },
     [collectAllPhotosForDateTimeRange, loadAllPhotosFromDbForDateTime],
@@ -3031,6 +3042,10 @@ export default function HomeScreen() {
           "filter-reset",
         );
 
+        /* 2026.09.02 stale 스캔이 중단된 경우 부분 결과를 완전 로드로 오기록하지 않도록 적용을 건너뜀 (대기 중 재검색이 최신 필터로 다시 실행됨) by Claude */
+        if (gapResult.aborted) {
+          return true;
+        }
         if (gapResult.source === "medialibrary") {
           gapSource = "medialibrary";
         }
@@ -3142,6 +3157,11 @@ export default function HomeScreen() {
           loadPhotosForDateTimeSegment(segmentFilter, "filter-reset"),
         ),
       );
+
+      /* 2026.09.02 stale 스캔 중단 시 부분 세그먼트를 적용/캐시하지 않도록 조기 반환 (대기 중 재검색이 최신 필터로 다시 실행됨) by Claude */
+      if (additionalSegments.some((segment) => segment.aborted)) {
+        return true;
+      }
 
       const nextBase = sortPhotosForDisplay(
         dedupePhotosByUri([
@@ -3611,6 +3631,12 @@ export default function HomeScreen() {
       );
       setInitialLoading(false);
       requestInFlightRef.current = false;
+      /* 2026.09.02 진행 중 요청 종료 시 대기 중인 필터 재검색을 즉시 실행해 큐잉된 리로드가 유실되는 문제 수정 by Claude */
+      if (pendingReloadRef.current) {
+        pendingReloadRef.current = false;
+        setPendingReloadVisible(false);
+        void reloadPhotosForFilterRef.current();
+      }
       if (!didInitialLoad) {
         initialLoadStartedRef.current = false;
       }
@@ -3815,6 +3841,12 @@ export default function HomeScreen() {
       });
       setFilterLoading(false);
       requestInFlightRef.current = false;
+      /* 2026.09.02 진행 중 요청 종료 시 대기 중인 필터 재검색을 즉시 실행해 큐잉된 리로드가 유실되는 문제 수정 by Claude */
+      if (pendingReloadRef.current) {
+        pendingReloadRef.current = false;
+        setPendingReloadVisible(false);
+        void reloadPhotosForFilterRef.current();
+      }
     }
   }, [
     filter,
@@ -3987,6 +4019,12 @@ export default function HomeScreen() {
             setBackgroundLoading(false);
           }
           requestInFlightRef.current = false;
+          /* 2026.09.02 진행 중 요청 종료 시 대기 중인 필터 재검색을 즉시 실행해 큐잉된 리로드가 유실되는 문제 수정 by Claude */
+          if (pendingReloadRef.current) {
+            pendingReloadRef.current = false;
+            setPendingReloadVisible(false);
+            void reloadPhotosForFilterRef.current();
+          }
         }
       }
     },
