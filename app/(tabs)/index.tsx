@@ -52,6 +52,7 @@ import {
   enqueueGeocodeJobs,
   getDisplayUriCacheBySourceUris,
   getGeocodeCacheByKey,
+  getGeocodeCacheByKeys,
   getGeocodeCacheCount,
   getGeocodePendingJobCount,
   getOldestPhotoTakenAt,
@@ -68,6 +69,11 @@ import {
   syncPhotoMetadataInBackground,
   upsertPhotoMetadataFromAssets,
 } from "@/lib/services/photoMetadataSync";
+/* 2026.09.02 geocode 큐 드레인/시딩을 홈 화면 백그라운드 루프에 연결하기 위해 import 추가 by Claude */
+import {
+  processGeocodeJobsInBackground,
+  seedGeocodeJobsFromPhotoMetadata,
+} from "@/lib/services/geocodeJobWorker";
 
 /* 2026.09.02 keyset 페이지네이션 이어가기용: 이미 로드된 사진 중 가장 오래된 (takenAt, assetId) 커서 계산 헬퍼 by Claude */
 const oldestCursorOfPhotos = (
@@ -97,6 +103,14 @@ const BACKGROUND_SYNC_BUSY_RETRY_MS = 1000;
 const BACKGROUND_SYNC_ERROR_RETRY_MS = 15000;
 const BACKGROUND_SYNC_MAX_ERROR_STREAK = 3;
 const BACKGROUND_SYNC_FALLBACK_START_MS = 10000;
+
+/* 2026.09.02 geocode 큐 드레인 루프 운영값 — 메타데이터 인덱싱 완료 후에만 시작 by Claude */
+const GEOCODE_DRAIN_INITIAL_DELAY_MS = 2000;
+const GEOCODE_DRAIN_IDLE_DELAY_MS = 1200;
+const GEOCODE_DRAIN_BUSY_RETRY_MS = 1000;
+const GEOCODE_DRAIN_ERROR_RETRY_MS = 15000;
+const GEOCODE_DRAIN_THROTTLE_BACKOFF_MS = 120000;
+const GEOCODE_DRAIN_MAX_ERROR_STREAK = 3;
 
 // Responsive image grid calculations
 const screenWidth = Dimensions.get("window").width;
@@ -1284,21 +1298,95 @@ export default function HomeScreen() {
     });
   }, [prepareAndStartSlideshow, viewerPhotoUris]);
 
+  /* 2026.09.02 사진 단위 직렬 처리(좌표조회→캐시조회→지오코딩 각각 N회)를 geo-key 단위로 재구성 —
+     좌표 복구는 제한 병렬, 캐시는 1회 배치 조회, 지오코딩은 고유 키에만 수행. 시그니처/반환 형태는 기존과 동일 by Claude */
   async function imagesWithLocation(
     images: any[],
     opts?: { maxLookups?: number; precision?: number; delayMs?: number },
   ) {
-    /* 2026.04.22 위치 보강 전체 지연을 계측해 캐시 hit율과 reverse geocode 병목을 함께 분석하기 위해 타이머를 추가 by June */
     const geocodeStartedAt = Date.now();
     const maxLookups = opts?.maxLookups ?? 60; // 한 번 로드에서 지오코딩 최대 호출 수
     const precision = opts?.precision ?? 2; // 좌표 라운딩 자릿수(2 ≈ ~1km)
-    const delayMs = opts?.delayMs ?? 150; // 호출 간 지연(ms)
-    /* 2026.04.22 단일 요청 내 중복 좌표 재계산을 막기 위해 메모리 캐시를 유지하되 DB 캐시와 함께 사용하도록 확장 by June */
-    const cache = new Map<
-      string,
-      { country: string | null; city: string | null }
-    >();
-    /* 2026.04.22 reverse geocode 성공 결과를 배치 업서트로 저장해 쓰기 트랜잭션 횟수를 줄이기 위해 수집 배열 추가 by June */
+    const delayMs = opts?.delayMs ?? 150; // 호출 간 지연(ms) — CLGeocoder 레이트리밋 보호
+
+    type Place = { country: string | null; city: string | null };
+    type Coord = { latitude: number; longitude: number };
+
+    /* 1단계: 좌표 확보 — 이미 있는 좌표는 그대로, 없는 사진만 제한 병렬(6)로 상세조회 */
+    const resolvedCoords: (Coord | null)[] = new Array(images.length).fill(null);
+    const recoveryIndices: number[] = [];
+
+    images.forEach((img, index) => {
+      const loc = img.location;
+      if (loc) {
+        const latitude = Number(loc.latitude);
+        const longitude = Number(loc.longitude);
+        if (Number.isFinite(latitude) && Number.isFinite(longitude)) {
+          resolvedCoords[index] = { latitude, longitude };
+          return;
+        }
+      }
+      if (typeof img.uri === "string") recoveryIndices.push(index);
+    });
+
+    if (recoveryIndices.length > 0) {
+      const RECOVERY_CONCURRENCY = 6;
+      let cursor = 0;
+      const workers = Array.from(
+        { length: Math.min(RECOVERY_CONCURRENCY, recoveryIndices.length) },
+        async () => {
+          while (cursor < recoveryIndices.length) {
+            const index = recoveryIndices[cursor];
+            cursor += 1;
+            const img = images[index];
+            try {
+              // 2026-05-12: location이 비어 있으면 ph:// URI로 좌표를 보강해 위치 필터 적용 시 모든 사진이 사라지는 버그 수정 by yen
+              const targetAssetId = img.assetId ?? getAssetIdFromPhUri(img.uri);
+              const info = targetAssetId
+                ? await MediaLibrary.getAssetInfoAsync(targetAssetId)
+                : await MediaLibrary.getAssetInfoAsync(img.uri as any);
+              if (info?.location) {
+                const latitude = Number(info.location.latitude);
+                const longitude = Number(info.location.longitude);
+                if (Number.isFinite(latitude) && Number.isFinite(longitude)) {
+                  resolvedCoords[index] = { latitude, longitude };
+                }
+              }
+            } catch {}
+          }
+        },
+      );
+      await Promise.all(workers);
+    }
+
+    /* 2단계: geo-key로 그룹핑 — 여행 사진 수백 장이 보통 5~8개 키로 수렴 */
+    const keyByIndex: (string | null)[] = new Array(images.length).fill(null);
+    const coordByKey = new Map<string, Coord>();
+    resolvedCoords.forEach((coord, index) => {
+      if (!coord) return;
+      const key = `${coord.latitude.toFixed(precision)},${coord.longitude.toFixed(precision)}`;
+      keyByIndex[index] = key;
+      if (!coordByKey.has(key)) coordByKey.set(key, coord);
+    });
+
+    /* 3단계: 캐시를 1회 배치 조회 — 기존 사진 단위 직렬 조회 N회를 대체 */
+    const placeByKey = new Map<string, Place>();
+    let dbCacheHits = 0;
+    try {
+      const cachedPlaces = await getGeocodeCacheByKeys([...coordByKey.keys()]);
+      for (const [key, place] of cachedPlaces) {
+        placeByKey.set(key, {
+          country: place.country ?? null,
+          city: place.city ?? null,
+        });
+      }
+      dbCacheHits = cachedPlaces.size;
+    } catch (e: any) {
+      /* 2026.04.22 캐시 조회 실패가 전체 로딩을 막지 않도록 오류를 로깅하고 런타임 geocode로 계속 진행하기 위해 추가 by June */
+      console.log("geocode cache read error:", e);
+    }
+
+    /* 4단계: 미캐시 키만 직렬 지오코딩(150ms 지연 유지), 상한 초과/실패 키는 큐로 */
     const cacheUpsertRows: {
       geoKey: string;
       latitude: number;
@@ -1307,111 +1395,67 @@ export default function HomeScreen() {
       city: string | null;
       updatedAt: number;
     }[] = [];
-    /* 2026.04.22 geocode miss 좌표를 작업 큐에 누적해 이후 백그라운드 보강 대상으로 추적하기 위해 map 추가 by June */
-    const pendingJobMap = new Map<
-      string,
-      { geoKey: string; latitude: number; longitude: number }
-    >();
-    const updated: any[] = [];
+    const pendingJobMap = new Map<string, { geoKey: string; latitude: number; longitude: number }>();
     let lookups = 0;
-    /* 2026.04.22 캐시 효율을 수치화하기 위해 런타임/DB 캐시 hit 카운터를 추가 by June */
-    let memoryCacheHits = 0;
-    let dbCacheHits = 0;
 
-    for (const img of images) {
-      // 2026-05-12: location이 비어 있으면 ph:// URI로 좌표를 보강해 위치 필터 적용 시 모든 사진이 사라지는 버그 수정 by yen
-      let imgLocation = img.location;
-      if (!imgLocation && typeof img.uri === "string") {
-        try {
-          const targetAssetId = img.assetId ?? getAssetIdFromPhUri(img.uri);
-          const info = targetAssetId
-            ? await MediaLibrary.getAssetInfoAsync(targetAssetId)
-            : await MediaLibrary.getAssetInfoAsync(img.uri as any);
-          if (info?.location) {
-            const lat0 = Number(info.location.latitude);
-            const lon0 = Number(info.location.longitude);
-            if (Number.isFinite(lat0) && Number.isFinite(lon0)) {
-              imgLocation = { latitude: lat0, longitude: lon0 };
-            }
-          }
-        } catch {}
-      }
-      if (!imgLocation) {
-        updated.push({ ...img, country: null, city: null });
+    for (const [key, coord] of coordByKey) {
+      if (placeByKey.has(key)) continue;
+
+      if (lookups >= maxLookups) {
+        /* 2026.04.22 이번 로드의 geocode 상한으로 미처리된 좌표를 작업 큐에 적재해 단계적 보강 대상에 포함시키기 위해 추가 by June */
+        pendingJobMap.set(key, {
+          geoKey: key,
+          latitude: coord.latitude,
+          longitude: coord.longitude,
+        });
         continue;
       }
 
-      const lat = Number(imgLocation.latitude);
-      const lon = Number(imgLocation.longitude);
-      const key = `${lat.toFixed(precision)},${lon.toFixed(precision)}`;
-      let place = cache.get(key);
-      if (place) {
-        memoryCacheHits += 1;
+      try {
+        const [res] = await Location.reverseGeocodeAsync({
+          latitude: coord.latitude,
+          longitude: coord.longitude,
+        });
+        const place: Place = {
+          country: res?.country ?? null,
+          city: res?.city ?? res?.subregion ?? null,
+        };
+        placeByKey.set(key, place);
+        cacheUpsertRows.push({
+          geoKey: key,
+          latitude: coord.latitude,
+          longitude: coord.longitude,
+          country: place.country,
+          city: place.city,
+          updatedAt: Date.now(),
+        });
+        lookups += 1;
+        if (delayMs > 0) await sleep(delayMs);
+      } catch (e: any) {
+        // 레이트리밋/기타 에러 → 해당 좌표는 빈 값으로 두고 큐에 남겨 백그라운드 재시도
+        placeByKey.set(key, { country: null, city: null });
+        pendingJobMap.set(key, {
+          geoKey: key,
+          latitude: coord.latitude,
+          longitude: coord.longitude,
+        });
+        await sleep(delayMs * 4);
       }
-
-      if (!place) {
-        try {
-          /* 2026.04.22 영속 geocode 캐시를 우선 조회해 동일 좌표 reverse geocode 재호출을 제거하기 위해 추가 by June */
-          const cached = await getGeocodeCacheByKey(key);
-          if (cached) {
-            place = {
-              country: cached.country ?? null,
-              city: cached.city ?? null,
-            };
-            cache.set(key, place);
-            dbCacheHits += 1;
-          }
-        } catch (e: any) {
-          /* 2026.04.22 캐시 조회 실패가 전체 로딩을 막지 않도록 오류를 로깅하고 런타임 geocode로 계속 진행하기 위해 추가 by June */
-          console.log("geocode cache read error:", e);
-        }
-      }
-
-      if (!place && lookups < maxLookups) {
-        try {
-          const [res] = await Location.reverseGeocodeAsync({
-            latitude: lat,
-            longitude: lon,
-          });
-          place = {
-            country: res?.country ?? null,
-            city: res?.city ?? res?.subregion ?? null,
-          };
-          cache.set(key, place);
-          /* 2026.04.22 새 geocode 결과를 캐시에 저장하기 위해 배치 업서트 목록에 추가 by June */
-          cacheUpsertRows.push({
-            geoKey: key,
-            latitude: lat,
-            longitude: lon,
-            country: place.country,
-            city: place.city,
-            updatedAt: Date.now(),
-          });
-          lookups += 1;
-          if (delayMs > 0) await sleep(delayMs);
-        } catch (e: any) {
-          // 레이트리밋/기타 에러 → 해당 좌표는 빈 값 캐시하고 진행
-          place = { country: null, city: null };
-          cache.set(key, place);
-          /* 2026.04.22 현재 배치에서 처리 실패한 좌표를 geocode 작업 큐에 남겨 추후 재시도 가능하게 하기 위해 추가 by June */
-          pendingJobMap.set(key, {
-            geoKey: key,
-            latitude: lat,
-            longitude: lon,
-          });
-          // 간단 백오프
-          await sleep(delayMs * 4);
-        }
-      } else if (!place) {
-        /* 2026.04.22 이번 로드의 geocode 상한으로 미처리된 좌표를 작업 큐에 적재해 단계적 보강 대상에 포함시키기 위해 추가 by June */
-        pendingJobMap.set(key, { geoKey: key, latitude: lat, longitude: lon });
-      }
-
-      // 상한 초과 or 캐시된 값 사용
-      if (!place) place = { country: null, city: null };
-      /* 2026.05.27 ph:// 폴백으로 복구한 좌표(imgLocation)를 결과 photo에 반영 — 그래야 ShowOnMap이 마커를 표시할 수 있음 by yen */
-      updated.push({ ...img, location: imgLocation, ...place });
     }
+
+    const photosWithCoords = resolvedCoords.filter(Boolean).length;
+
+    /* 5단계: 키 결과를 사진에 매핑(순수 JS) */
+    const updated = images.map((img, index) => {
+      const key = keyByIndex[index];
+      const coord = resolvedCoords[index];
+      if (!key || !coord) {
+        return { ...img, country: null, city: null };
+      }
+      const place = placeByKey.get(key) ?? { country: null, city: null };
+      /* 2026.05.27 ph:// 폴백으로 복구한 좌표(imgLocation)를 결과 photo에 반영 — 그래야 ShowOnMap이 마커를 표시할 수 있음 by yen */
+      return { ...img, location: coord, ...place };
+    });
 
     if (cacheUpsertRows.length > 0) {
       try {
@@ -1431,7 +1475,8 @@ export default function HomeScreen() {
       }
     }
 
-    /* 2026.04.22 위치 보강 처리 시간을 캐시 hit/lookup/큐 적재량과 함께 기록해 다음 최적화 근거를 확보하기 위해 계측을 추가 by June */
+    /* 2026.04.22 위치 보강 처리 시간을 캐시 hit/lookup/큐 적재량과 함께 기록해 다음 최적화 근거를 확보하기 위해 계측을 추가 by June
+       (2026.09.02 memoryCacheHits는 키 그룹핑으로 흡수된 중복 사진 수를 의미하도록 재정의 by Claude) */
     recordPerfMetric(
       "home.images_with_location.ms",
       Date.now() - geocodeStartedAt,
@@ -1439,7 +1484,7 @@ export default function HomeScreen() {
         context: {
           inputCount: images.length,
           reverseLookups: lookups,
-          memoryCacheHits,
+          memoryCacheHits: Math.max(0, photosWithCoords - coordByKey.size),
           dbCacheHits,
           queuedJobs: pendingJobMap.size,
         },
@@ -2304,7 +2349,9 @@ export default function HomeScreen() {
 
   /* 2026.05.06 초기 썸네일 선노출 후 위치(좌표→도시/국가)를 백그라운드에서 보강해 위치 누락 체감을 줄이기 위해 팔로업 함수를 추가 by June */
   /* 2026.05.06 초기 썸네일 노출 후 화면 상단 가시 범위 후보를 점진 보강해 썸네일 속도는 유지하면서 위치 누락을 줄이기 위해 추가 by June */
-  const followUpVisibleLocations = useCallback(async () => {
+  const followUpVisibleLocations = useCallback(async (opts?: {
+    maxLookups?: number;
+  }) => {
     if (locationFollowUpInFlightRef.current) return;
     if (photosRef.current.length === 0) return;
 
@@ -2351,7 +2398,8 @@ export default function HomeScreen() {
       );
 
       const withPlaces = await imagesWithLocation(withCoordinates, {
-        maxLookups: 20,
+        /* 2026.09.02 드레인 루프의 진행형 라벨 갱신은 maxLookups 0으로 캐시만 읽도록 옵션화 by Claude */
+        maxLookups: opts?.maxLookups ?? 20,
         precision: 2,
         delayMs: 80,
       });
@@ -4504,6 +4552,66 @@ export default function HomeScreen() {
     void loadInitialPhotos();
   }, [didInitialLoad, loadInitialPhotos]);
 
+  /* 2026.09.02 메타데이터 인덱싱 완료 후 geocode 큐를 소모하는 드레인 루프 — 같은 pause 규칙, 스로틀 백오프, 큐 소진 시 종료.
+     시딩은 인덱스 완성 시 1회. 취소 플래그는 메타데이터 루프와 공유(언마운트 시 함께 중단) by Claude */
+  const geocodeDrainStartedRef = useRef(false);
+
+  const startGeocodeQueueDrain = useCallback(() => {
+    if (geocodeDrainStartedRef.current) return;
+    geocodeDrainStartedRef.current = true;
+
+    const sleep = (ms: number) =>
+      new Promise<void>((resolve) => setTimeout(resolve, ms));
+
+    void (async () => {
+      await sleep(GEOCODE_DRAIN_INITIAL_DELAY_MS);
+
+      /* 2026.09.02 인덱스가 완성된 경우에만 라이브러리 전체 고유 좌표를 1회 시딩 by Claude */
+      try {
+        const syncState = await getPhotoSyncState();
+        if (!syncState.hasNextPage) {
+          await seedGeocodeJobsFromPhotoMetadata();
+        }
+      } catch (err) {
+        console.log("geocode seed error:", err);
+      }
+
+      let errorStreak = 0;
+      while (!backgroundMetadataSyncCancelledRef.current) {
+        if (requestInFlightRef.current) {
+          await sleep(GEOCODE_DRAIN_BUSY_RETRY_MS);
+          continue;
+        }
+        try {
+          const result = await processGeocodeJobsInBackground({
+            batchSize: 10,
+          });
+          errorStreak = 0;
+          if (result?.throttled) {
+            /* 2026.09.02 스로틀링 감지 시 분 단위 백오프 — 남은 작업 재시도 카운트를 태우지 않음 by Claude */
+            await sleep(GEOCODE_DRAIN_THROTTLE_BACKOFF_MS);
+            continue;
+          }
+          if ((result?.claimedJobs ?? 0) > 0) {
+            /* 2026.09.02 사이클마다 보이는 사진의 라벨을 캐시에서만 갱신(진행형 표시) by Claude */
+            void followUpVisibleLocations({ maxLookups: 0 });
+          }
+        } catch (err) {
+          errorStreak += 1;
+          console.log("geocode drain error:", err);
+          if (errorStreak >= GEOCODE_DRAIN_MAX_ERROR_STREAK) break;
+          await sleep(GEOCODE_DRAIN_ERROR_RETRY_MS);
+          continue;
+        }
+        try {
+          const pending = await getGeocodePendingJobCount();
+          if (pending === 0) break;
+        } catch {}
+        await sleep(GEOCODE_DRAIN_IDLE_DELAY_MS);
+      }
+    })();
+  }, [followUpVisibleLocations]);
+
   /* 2026.09.02 첫 페인트 이후 사진 메타데이터 인덱스를 백그라운드에서 완성하는 폴라이트 드레인 루프.
      a42ee9a에서 제거된 상시 동기화의 스케줄링 재설계: 초기 로드 완료 후 시작, 사용자 요청 진행 중에는 양보,
      첫 패스는 위치 보강 없이 타임스탬프만 인덱싱 by Claude */
@@ -4543,8 +4651,13 @@ export default function HomeScreen() {
         if (!syncState.hasNextPage) break;
         await sleep(BACKGROUND_SYNC_IDLE_DELAY_MS);
       }
+
+      /* 2026.09.02 메타데이터 패스 종료 후 geocode 큐 드레인으로 전환 — 두 백그라운드 루프가 동시에 돌지 않도록 순차화 by Claude */
+      if (!backgroundMetadataSyncCancelledRef.current) {
+        startGeocodeQueueDrain();
+      }
     })();
-  }, []);
+  }, [startGeocodeQueueDrain]);
 
   useEffect(() => {
     if (!didInitialLoad) return;
@@ -4558,9 +4671,16 @@ export default function HomeScreen() {
     }, BACKGROUND_SYNC_FALLBACK_START_MS);
     return () => {
       clearTimeout(timer);
-      backgroundMetadataSyncCancelledRef.current = true;
     };
   }, [startBackgroundMetadataSync]);
+
+  useEffect(() => {
+    /* 2026.09.02 취소 플래그는 언마운트 시에만 설정 — 의존성 변화로 cleanup이 재실행되며
+       백그라운드 루프가 영구 중단되는 문제 방지(빈 deps 필수) by Claude */
+    return () => {
+      backgroundMetadataSyncCancelledRef.current = true;
+    };
+  }, []);
 
   const onRefresh = useCallback(async () => {
     setRefreshing(true);

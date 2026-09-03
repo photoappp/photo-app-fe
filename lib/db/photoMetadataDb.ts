@@ -566,6 +566,82 @@ export const enqueueGeocodeJobs = async (
   });
 };
 
+/* 2026.09.02 위치 보강을 사진 단위가 아닌 geo-key 단위로 처리하기 위한 배치 캐시 조회 추가 — 수백 건 직렬 조회를 1회 쿼리로 대체 by Claude */
+export const getGeocodeCacheByKeys = async (geoKeys: string[]) => {
+  const result = new Map<string, { country: string | null; city: string | null }>();
+  const uniqueKeys = [...new Set(geoKeys)].filter(Boolean);
+  if (uniqueKeys.length === 0) return result;
+
+  await initPhotoMetadataDb();
+  const db = await getDb();
+
+  /* 2026.09.02 IN 파라미터 상한을 피하기 위해 500개 단위로 나눠 조회 by Claude */
+  for (let i = 0; i < uniqueKeys.length; i += 500) {
+    const chunk = uniqueKeys.slice(i, i + 500);
+    const placeholders = chunk.map(() => "?").join(",");
+    const rows = await db.getAllAsync<{
+      geo_key: string;
+      country: string | null;
+      city: string | null;
+    }>(
+      `
+      SELECT geo_key, country, city
+      FROM geocode_cache
+      WHERE geo_key IN (${placeholders})
+      `,
+      ...chunk
+    );
+    for (const row of rows) {
+      result.set(row.geo_key, { country: row.country, city: row.city });
+    }
+  }
+
+  return result;
+};
+
+/* 2026.09.02 라이브러리 전체 위치를 한 번에 시딩하기 위해 인덱싱된 사진의 고유 좌표를 조회 — 라운딩/키 생성은 JS(toFixed)와 일치시키기 위해 호출부에서 수행 by Claude */
+export const getDistinctPhotoCoords = async () => {
+  await initPhotoMetadataDb();
+  const db = await getDb();
+  const rows = await db.getAllAsync<{ latitude: number; longitude: number }>(
+    `
+    SELECT DISTINCT latitude, longitude
+    FROM photo_metadata
+    WHERE is_deleted = 0
+      AND latitude IS NOT NULL
+      AND longitude IS NOT NULL
+    `
+  );
+  return rows;
+};
+
+/* 2026.09.02 시딩 시 이미 캐시되었거나 큐에 있는 geo-key를 제외하기 위한 필터 조회 추가 by Claude */
+export const filterUncachedGeoKeys = async (geoKeys: string[]) => {
+  const uniqueKeys = [...new Set(geoKeys)].filter(Boolean);
+  if (uniqueKeys.length === 0) return [] as string[];
+
+  await initPhotoMetadataDb();
+  const db = await getDb();
+
+  const known = new Set<string>();
+  for (let i = 0; i < uniqueKeys.length; i += 500) {
+    const chunk = uniqueKeys.slice(i, i + 500);
+    const placeholders = chunk.map(() => "?").join(",");
+    const cachedRows = await db.getAllAsync<{ geo_key: string }>(
+      `SELECT geo_key FROM geocode_cache WHERE geo_key IN (${placeholders})`,
+      ...chunk
+    );
+    for (const row of cachedRows) known.add(row.geo_key);
+    const jobRows = await db.getAllAsync<{ geo_key: string }>(
+      `SELECT geo_key FROM geocode_jobs WHERE geo_key IN (${placeholders})`,
+      ...chunk
+    );
+    for (const row of jobRows) known.add(row.geo_key);
+  }
+
+  return uniqueKeys.filter((key) => !known.has(key));
+};
+
 /* 2026.04.22 지오코딩 캐시 누적량을 UI 진행표시에 활용하기 위해 캐시 row 카운트 조회 함수를 추가 by June */
 export const getGeocodeCacheCount = async () => {
   await initPhotoMetadataDb();
@@ -588,6 +664,68 @@ export const getGeocodePendingJobCount = async () => {
     `
   );
   return row?.count ?? 0;
+};
+
+/* 2026.09.02 앱 킬로 running에 고착된 작업(5분 초과)과 오래된 failed(7일 초과)를 pending으로 복귀시켜 큐가 영구히 막히지 않도록 추가 by Claude */
+export const resetStuckGeocodeJobs = async () => {
+  await initPhotoMetadataDb();
+  const db = await getDb();
+
+  const now = Date.now();
+  const RUNNING_STALE_MS = 5 * 60 * 1000;
+  const FAILED_RETRY_MS = 7 * 24 * 60 * 60 * 1000;
+
+  let resetRunning = 0;
+  let resetFailed = 0;
+  await enqueueWrite(async () => {
+    const runningResult = await db.runAsync(
+      `
+      UPDATE geocode_jobs
+      SET status = 'pending',
+          updated_at = ?
+      WHERE status = 'running'
+        AND updated_at < ?
+      `,
+      now,
+      now - RUNNING_STALE_MS
+    );
+    resetRunning = runningResult.changes ?? 0;
+
+    const failedResult = await db.runAsync(
+      `
+      UPDATE geocode_jobs
+      SET status = 'pending',
+          retry_count = 0,
+          updated_at = ?
+      WHERE status = 'failed'
+        AND updated_at < ?
+      `,
+      now,
+      now - FAILED_RETRY_MS
+    );
+    resetFailed = failedResult.changes ?? 0;
+  });
+
+  return { resetRunning, resetFailed };
+};
+
+/* 2026.09.02 스로틀링 감지 시 재시도 카운트를 소모하지 않고 작업을 큐로 되돌리기 위해 추가 by Claude */
+export const requeueGeocodeJob = async (geoKey: string) => {
+  await initPhotoMetadataDb();
+  const db = await getDb();
+
+  await enqueueWrite(async () => {
+    await db.runAsync(
+      `
+      UPDATE geocode_jobs
+      SET status = 'pending',
+          updated_at = ?
+      WHERE geo_key = ?
+      `,
+      Date.now(),
+      geoKey
+    );
+  });
 };
 
 /* 2026.04.22 백그라운드 워커가 처리할 geocode 작업을 선점(claim)해 중복 처리 경쟁을 방지하기 위해 추가 by June */
