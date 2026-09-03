@@ -70,9 +70,38 @@ export const TRANSLATIONS = {
 			reloadPhotosError: "There was a problem while reloading photos.",
 			shareFailedMessage: "Failed to share the photo.",
 			sharePhotoMessagePrefix: "Check out this photo!",
-			loadingPhotos: "Loading photos...",
-			/* 2026.04.22 날짜 필터 로딩 프로그레스에 표출/총 건수 라벨을 표시하기 위해 번역 키를 추가 by June */
-			filteredPhotos: "Filtered photos",
+		loadingPhotos: "Loading photos...",
+		locationSearchPreparing: "Preparing...",
+		locationSearchPermission: "Checking permissions...",
+		locationSearchTarget: "Finding target photos...",
+		locationSearchDb: "Searching the database...",
+		locationSearchSort: "Organizing photo order...",
+		locationSearchEnrich: "Processing photo information...",
+		locationSearchThumbnail: "Preparing thumbnails...",
+		locationSearchApply: "Applying the results...",
+		locationSearchExtendedFeatureTitle:
+			"Over 31 days? You can still use location search and map features.",
+		locationSearchExtendedFeatureBody:
+			"Watch an ad to unlock all features for 2 hours.",
+		locationSearchReduceTo31Days: "Reduce to 31 days",
+		locationSearchStart: "Start",
+		locationSearchLater: "Later",
+		locationSearchCancel: "Cancel",
+		locationSearchPreparingTitle: "Organizing photos in the selected range...",
+		locationSearchProgressBody: "{count} photos being checked",
+		locationSearchProgressPercentLabel: "Progress {percent}%",
+		locationSearchRemainingTimeShort: "Estimated remaining time: {seconds} sec",
+		locationSearchRemainingTimeLong: "Estimated remaining time: {minutes} min {seconds} sec",
+		locationSearchEstimatedTimeShort: "{seconds} sec",
+		locationSearchEstimatedTimeLong: "{minutes} min {seconds} sec",
+		locationSearchSearchPromptTitle:
+			"{count} photos need to be searched.",
+		locationSearchSearchPromptBody:
+			"Estimated time is about {time}.",
+		locationSearchSearchPromptHint:
+			"Try narrowing the year/month, time, and location filters. This reduces the search range and can shorten the sorting time.",
+		/* 2026.04.22 날짜 필터 로딩 프로그레스에 표출/총 건수 라벨을 표시하기 위해 번역 키를 추가 by June */
+		filteredPhotos: "Filtered photos",
 			/* 2026.04.22 하단 명시적 append UX를 위해 더 불러오기/로딩/완료 안내 문구 키를 추가 by June */
 			loadMorePhotos: "Load more photos",
 			loadingMorePhotos: "Loading more photos...",
@@ -132,7 +161,36 @@ export const TRANSLATIONS = {
 		selectDate: "날짜 선택",
 		selectTime: "시간 선택",
 		selectLocation: "위치 선택",
-		all: "전체"
+		all: "전체",
+		locationSearchPreparing: "준비 중입니다",
+		locationSearchPermission: "권한 확인 중입니다.",
+		locationSearchTarget: "대상 사진을 찾는 중입니다.",
+		locationSearchDb: "DB에서 찾는 중입니다.",
+		locationSearchSort: "사진 순서를 정리하는 중입니다.",
+		locationSearchEnrich: "사진 정보를 정리하는 중입니다.",
+		locationSearchThumbnail: "썸네일을 준비하는 중입니다.",
+		locationSearchApply: "정리 결과를 반영하는 중입니다.",
+		locationSearchExtendedFeatureTitle:
+			"31일 초과 기간에서도 장소 검색과 지도 기능을 사용할 수 있습니다",
+		locationSearchExtendedFeatureBody:
+			"광고를 시청하면 2시간 동안 모든 기능을 사용할 수 있습니다.",
+		locationSearchReduceTo31Days: "31일로 줄이기",
+		locationSearchStart: "시작",
+		locationSearchLater: "나중에",
+		locationSearchCancel: "선택취소",
+		locationSearchPreparingTitle: "선택한 범위의 사진을 정리하고 있습니다",
+		locationSearchProgressBody: "{count}장 확인 중",
+		locationSearchProgressPercentLabel: "진행률 {percent}%",
+		locationSearchRemainingTimeShort: "예상 남은 시간: {seconds}초",
+		locationSearchRemainingTimeLong: "예상 남은 시간: {minutes}분 {seconds}초",
+		locationSearchEstimatedTimeShort: "{seconds}초",
+		locationSearchEstimatedTimeLong: "{minutes}분 {seconds}초",
+		locationSearchSearchPromptTitle:
+			"{count}장의 사진을 검색해야 합니다.",
+		locationSearchSearchPromptBody:
+			"예상 시간은 약 {time}입니다.",
+		locationSearchSearchPromptHint:
+			"연월, 시간, 장소 조건을 좁혀 보세요. 검색 범위가 줄어 정리 시간을 줄일 수 있습니다."
 	},
 	ja: {
 		settings: '設定',
@@ -182,7 +240,36 @@ export const TRANSLATIONS = {
 		selectDate: "日付を選択",
 		selectTime: "時間を選択",
 		selectLocation: "場所を選択",
-		all: "すべて"
+		all: "すべて",
+		locationSearchPreparing: "準備中です...",
+		locationSearchPermission: "権限を確認しています...",
+		locationSearchTarget: "対象の写真を探しています...",
+		locationSearchDb: "データベースを検索しています...",
+		locationSearchSort: "写真の順番を整理しています...",
+		locationSearchEnrich: "写真情報を整理しています...",
+		locationSearchThumbnail: "サムネイルを準備しています...",
+		locationSearchApply: "整理結果を反映しています...",
+		locationSearchExtendedFeatureTitle:
+			"31日を超えても、場所検索と地図機能を使用できます。",
+		locationSearchExtendedFeatureBody:
+			"広告を視聴すると、2時間すべての機能を使用できます。",
+		locationSearchReduceTo31Days: "31日に縮小する",
+		locationSearchStart: "開始",
+		locationSearchLater: "後で",
+		locationSearchCancel: "選択をキャンセル",
+		locationSearchPreparingTitle: "選択した範囲の写真を整理しています",
+		locationSearchProgressBody: "{count}枚確認中",
+		locationSearchProgressPercentLabel: "進行率 {percent}%",
+		locationSearchRemainingTimeShort: "推定残り時間: {seconds}秒",
+		locationSearchRemainingTimeLong: "推定残り時間: {minutes}分 {seconds}秒",
+		locationSearchEstimatedTimeShort: "{seconds}秒",
+		locationSearchEstimatedTimeLong: "{minutes}分 {seconds}秒",
+		locationSearchSearchPromptTitle:
+			"{count}枚の写真を検索する必要があります。",
+		locationSearchSearchPromptBody:
+			"推定時間は約 {time} です。",
+		locationSearchSearchPromptHint:
+			"年月、時間、場所の条件を絞ってみてください。検索範囲が狭まり、整理時間を短縮できます。"
 	},
 	'zh-Hant': { // 기존 ChineseTraditional
 		settings: '設定',
@@ -232,7 +319,36 @@ export const TRANSLATIONS = {
 		selectDate: "選擇日期",
 		selectTime: "選擇時間",
 		selectLocation: "選擇地點",
-		all: "全部"
+		all: "全部",
+		locationSearchPreparing: "準備中...",
+		locationSearchPermission: "正在檢查權限...",
+		locationSearchTarget: "正在尋找目標照片...",
+		locationSearchDb: "正在搜尋資料庫...",
+		locationSearchSort: "正在整理照片順序...",
+		locationSearchEnrich: "正在整理照片資訊...",
+		locationSearchThumbnail: "正在準備縮圖...",
+		locationSearchApply: "正在套用整理結果...",
+		locationSearchExtendedFeatureTitle:
+			"超過31天也可以使用地點搜尋和地圖功能。",
+		locationSearchExtendedFeatureBody:
+			"觀看廣告後，即可在2小時內使用所有功能。",
+		locationSearchReduceTo31Days: "縮減為31天",
+		locationSearchStart: "開始",
+		locationSearchLater: "稍後",
+		locationSearchCancel: "取消選取",
+		locationSearchPreparingTitle: "正在整理所選範圍的照片",
+		locationSearchProgressBody: "正在確認 {count} 張",
+		locationSearchProgressPercentLabel: "進行率 {percent}%",
+		locationSearchRemainingTimeShort: "預估剩餘時間：{seconds}秒",
+		locationSearchRemainingTimeLong: "預估剩餘時間：{minutes}分 {seconds}秒",
+		locationSearchEstimatedTimeShort: "{seconds}秒",
+		locationSearchEstimatedTimeLong: "{minutes}分 {seconds}秒",
+		locationSearchSearchPromptTitle:
+			"需要搜尋 {count} 張照片。",
+		locationSearchSearchPromptBody:
+			"預估時間約為 {time}。",
+		locationSearchSearchPromptHint:
+			"請嘗試縮小年月、時間和地點條件。這樣可以減少搜尋範圍，縮短整理時間。"
 	},
 	'zh-Hans': { // 기존 ChineseSimplified
 		settings: '设置',
@@ -282,7 +398,36 @@ export const TRANSLATIONS = {
 		selectDate: "选择日期",
 		selectTime: "选择时间",
 		selectLocation: "选择地点",
-		all: "全部"
+		all: "全部",
+		locationSearchPreparing: "准备中...",
+		locationSearchPermission: "正在检查权限...",
+		locationSearchTarget: "正在查找目标照片...",
+		locationSearchDb: "正在搜索数据库...",
+		locationSearchSort: "正在整理照片顺序...",
+		locationSearchEnrich: "正在整理照片信息...",
+		locationSearchThumbnail: "正在准备缩略图...",
+		locationSearchApply: "正在应用整理结果...",
+		locationSearchExtendedFeatureTitle:
+			"超过31天也可以使用地点搜索和地图功能。",
+		locationSearchExtendedFeatureBody:
+			"观看广告后，即可在2小时内使用所有功能。",
+		locationSearchReduceTo31Days: "缩减为31天",
+		locationSearchStart: "开始",
+		locationSearchLater: "稍后",
+		locationSearchCancel: "取消选择",
+		locationSearchPreparingTitle: "正在整理所选范围的照片",
+		locationSearchProgressBody: "正在确认 {count} 张",
+		locationSearchProgressPercentLabel: "进度 {percent}%",
+		locationSearchRemainingTimeShort: "预计剩余时间：{seconds}秒",
+		locationSearchRemainingTimeLong: "预计剩余时间：{minutes}分 {seconds}秒",
+		locationSearchEstimatedTimeShort: "{seconds}秒",
+		locationSearchEstimatedTimeLong: "{minutes}分 {seconds}秒",
+		locationSearchSearchPromptTitle:
+			"需要搜索 {count} 张照片。",
+		locationSearchSearchPromptBody:
+			"预计时间约为 {time}。",
+		locationSearchSearchPromptHint:
+			"请尝试缩小年月、时间和地点条件。这样可以减少搜索范围，缩短整理时间。"
 	},
 	fr: {
 		settings: 'Settings',
@@ -318,11 +463,11 @@ export const TRANSLATIONS = {
 		city: 'Ville',
 		picqlyPro: 'PicQly Pro',
 		adDescription: 'Regardez une publicité et profitez de toutes les fonctionnalités de PicQly Pro pendant 12 heures, sans publicité vidéo.',
-		watchAd: 'Voir la publicité',
 		rewardPopupTitle: 'Regardez une publicité\npour utiliser toutes les fonctionnalités\npendant 2 heures.',
 		rewardFeatureOlderPhotos: 'Rechercher d\'anciennes photos',
 		rewardFeatureViewOnMap: 'Voir les photos sur la carte',
 		rewardFeaturePlaceSearch: 'Recherche de lieux illimitée',
+		watchAd: 'Voir la pub',
 		one_year_ago: 'Il y a 1 an',
 		one_month_ago: 'Il y a 1 mois',
 		one_week_ago: 'Il y a 1 semaine',
@@ -332,7 +477,36 @@ export const TRANSLATIONS = {
 		selectDate: "Choisir une date",
 		selectTime: "Choisir l'heure",
 		selectLocation: "Choisir un lieu",
-		all: "Tout"
+		all: "Tout",
+		locationSearchPreparing: "Préparation...",
+		locationSearchPermission: "Vérification des autorisations...",
+		locationSearchTarget: "Recherche des photos cibles...",
+		locationSearchDb: "Recherche dans la base de données...",
+		locationSearchSort: "Organisation de l'ordre des photos...",
+		locationSearchEnrich: "Traitement des informations des photos...",
+		locationSearchThumbnail: "Préparation des miniatures...",
+		locationSearchApply: "Application des résultats...",
+		locationSearchExtendedFeatureTitle:
+			"Au-delà de 31 jours, vous pouvez toujours utiliser la recherche de lieu et la carte.",
+		locationSearchExtendedFeatureBody:
+			"Regardez une publicité pour utiliser toutes les fonctionnalités pendant 2 heures.",
+		locationSearchReduceTo31Days: "Réduire à 31 jours",
+		locationSearchStart: "Démarrer",
+		locationSearchLater: "Plus tard",
+		locationSearchCancel: "Annuler la sélection",
+		locationSearchPreparingTitle: "Organisation des photos de la plage sélectionnée...",
+		locationSearchProgressBody: "{count} photos en cours de vérification",
+		locationSearchProgressPercentLabel: "Progression {percent}%",
+		locationSearchRemainingTimeShort: "Temps restant estimé : {seconds} s",
+		locationSearchRemainingTimeLong: "Temps restant estimé : {minutes} min {seconds} s",
+		locationSearchEstimatedTimeShort: "{seconds} s",
+		locationSearchEstimatedTimeLong: "{minutes} min {seconds} s",
+		locationSearchSearchPromptTitle:
+			"{count} photos doivent être recherchées.",
+		locationSearchSearchPromptBody:
+			"Le temps estimé est d’environ {time}.",
+		locationSearchSearchPromptHint:
+			"Essayez de réduire les filtres par année/mois, heure et lieu. Cela réduit la plage de recherche et peut raccourcir le temps de tri."
 	},
 	es: {
 		settings: 'Settings',
@@ -382,7 +556,36 @@ export const TRANSLATIONS = {
 		selectDate: "Seleccionar fecha",
 		selectTime: "Seleccionar hora",
 		selectLocation: "Seleccionar ubicación",
-		all: "Todo"
+		all: "Todo",
+		locationSearchPreparing: "Preparando...",
+		locationSearchPermission: "Verificando permisos...",
+		locationSearchTarget: "Buscando las fotos objetivo...",
+		locationSearchDb: "Buscando en la base de datos...",
+		locationSearchSort: "Organizando el orden de las fotos...",
+		locationSearchEnrich: "Procesando la información de las fotos...",
+		locationSearchThumbnail: "Preparando miniaturas...",
+		locationSearchApply: "Aplicando los resultados...",
+		locationSearchExtendedFeatureTitle:
+			"Si superas los 31 días, aún puedes usar la búsqueda por ubicación y el mapa.",
+		locationSearchExtendedFeatureBody:
+			"Mira un anuncio para usar todas las funciones durante 2 horas.",
+		locationSearchReduceTo31Days: "Reducir a 31 días",
+		locationSearchStart: "Inicio",
+		locationSearchLater: "Más tarde",
+		locationSearchCancel: "Cancelar selección",
+		locationSearchPreparingTitle: "Organizando fotos del rango seleccionado...",
+		locationSearchProgressBody: "{count} fotos en verificación",
+		locationSearchProgressPercentLabel: "Progreso {percent}%",
+		locationSearchRemainingTimeShort: "Tiempo restante estimado: {seconds} s",
+		locationSearchRemainingTimeLong: "Tiempo restante estimado: {minutes} min {seconds} s",
+		locationSearchEstimatedTimeShort: "{seconds} s",
+		locationSearchEstimatedTimeLong: "{minutes} min {seconds} s",
+		locationSearchSearchPromptTitle:
+			"Se deben buscar {count} fotos.",
+		locationSearchSearchPromptBody:
+			"El tiempo estimado es de aproximadamente {time}.",
+		locationSearchSearchPromptHint:
+			"Intenta limitar los filtros de año/mes, hora y ubicación. Esto reduce el rango de búsqueda y puede acortar el tiempo de organización."
 	},
 } as const;
 

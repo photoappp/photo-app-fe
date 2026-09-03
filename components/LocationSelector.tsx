@@ -4,7 +4,7 @@ import { Colors } from "@/constants/Colors";
 import { Photo } from "@/types/Photo";
 import { LinearGradient } from "expo-linear-gradient";
 // 2026-03-04 added forwardRef, useImperativeHandle, useState for reset by yen
-import { forwardRef, useCallback, useEffect, useImperativeHandle, useMemo, useState } from "react";
+import { forwardRef, useCallback, useEffect, useImperativeHandle, useMemo, useRef, useState } from "react";
 import {
   ActivityIndicator,
   FlatList,
@@ -75,6 +75,7 @@ const LocationSelector = forwardRef<LocationSelectorHandle, Props>(
 
     const [tempCountries, setTempCountries] = useState<string[]>([]);
     const [tempCities, setTempCities] = useState<string[]>([]);
+    const hasCommittedSelectionRef = useRef(false);
     /* 2026.04.22 TRANSLATIONS 직접 접근을 제거하고 공용 i18n 훅을 사용해 번역 처리 방식을 통일하기 위해 변경 by June */
     const { language, t } = useI18n();
     /* 2026.06.23 [포인트3] 게이트 팝업 상태/콜백 — placeSearch일 때만 이 Modal 안에서 오버레이로 렌더 by yen */
@@ -317,9 +318,7 @@ const LocationSelector = forwardRef<LocationSelectorHandle, Props>(
     );
 
     useEffect(() => {
-      const hasActiveSelection =
-        selectedCountries.length > 0 || selectedCities.length > 0;
-      if (!hasActiveSelection) return;
+      if (!hasCommittedSelectionRef.current) return;
 
       const appliedCountries = [...selectedCountries].sort();
       const appliedCities = [...selectedCities].sort();
@@ -349,6 +348,7 @@ const LocationSelector = forwardRef<LocationSelectorHandle, Props>(
     ]);
 
     const handleReset = () => {
+      hasCommittedSelectionRef.current = true;
       setSelectedCountries([]);
       setSelectedCities([]);
       setTempCities([]);
@@ -367,6 +367,7 @@ const LocationSelector = forwardRef<LocationSelectorHandle, Props>(
     }));
 
     const applyCurrentSelection = () => {
+      hasCommittedSelectionRef.current = true;
       const appliedCountries = [...tempCountries].sort();
       const appliedCities = [...tempCities].sort();
       const isAllSelected =
