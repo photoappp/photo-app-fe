@@ -58,14 +58,45 @@ import {
   getPhotoMetadataCount,
   getPhotoSyncState,
   initPhotoMetadataDb,
+  type PhotoPageCursor,
   queryPhotoMetadataByDateTime,
   upsertDisplayUriCacheRows,
   upsertGeocodeCacheRows
 } from "@/lib/db/photoMetadataDb";
 import { recordPerfMetric } from "@/lib/services/perfMetrics";
 import {
+  syncPhotoMetadataInBackground,
   upsertPhotoMetadataFromAssets,
 } from "@/lib/services/photoMetadataSync";
+
+/* 2026.09.02 keyset 페이지네이션 이어가기용: 이미 로드된 사진 중 가장 오래된 (takenAt, assetId) 커서 계산 헬퍼 by Claude */
+const oldestCursorOfPhotos = (
+  photos: { takenAt?: number | null; assetId?: string }[],
+): PhotoPageCursor | null => {
+  let oldest: PhotoPageCursor | null = null;
+  for (const photo of photos) {
+    const takenAt = photo.takenAt;
+    const assetId = photo.assetId;
+    if (typeof takenAt !== "number" || !Number.isFinite(takenAt)) continue;
+    if (typeof assetId !== "string" || assetId.length === 0) continue;
+    if (
+      !oldest ||
+      takenAt < oldest.takenAt ||
+      (takenAt === oldest.takenAt && assetId < oldest.assetId)
+    ) {
+      oldest = { takenAt, assetId };
+    }
+  }
+  return oldest;
+};
+
+/* 2026.09.02 백그라운드 인덱싱 폴라이트 드레인 루프 운영값 by Claude */
+const BACKGROUND_SYNC_INITIAL_DELAY_MS = 3000;
+const BACKGROUND_SYNC_IDLE_DELAY_MS = 1500;
+const BACKGROUND_SYNC_BUSY_RETRY_MS = 1000;
+const BACKGROUND_SYNC_ERROR_RETRY_MS = 15000;
+const BACKGROUND_SYNC_MAX_ERROR_STREAK = 3;
+const BACKGROUND_SYNC_FALLBACK_START_MS = 10000;
 
 // Responsive image grid calculations
 const screenWidth = Dimensions.get("window").width;
@@ -281,9 +312,12 @@ export default function HomeScreen() {
   const photoGridListRef = useRef<FlatList<Photo> | null>(null);
   const photoGridScrollOffsetRef = useRef(0);
   /* 2026.04.22 날짜/시간 DB 경로에서도 스크롤 append를 지원하기 위해 현재 DB 페이지네이션 오프셋/활성 상태를 ref로 관리하도록 추가 by June */
-  const dbDateTimePagingRef = useRef<{ enabled: boolean; offset: number }>({
+  const dbDateTimePagingRef = useRef<{
+    enabled: boolean;
+    after: PhotoPageCursor | null;
+  }>({
     enabled: false,
-    offset: 0,
+    after: null,
   });
   type DateTimeCoverageEntry = {
     dateStartMs: number;
@@ -1606,7 +1640,6 @@ export default function HomeScreen() {
       timeStart: currentFilter.timeStart,
       timeEnd: currentFilter.timeEnd,
       limit: totalCount,
-      offset: 0,
     });
 
     const photosFromDb = sortPhotosForDisplay(
@@ -1751,7 +1784,7 @@ export default function HomeScreen() {
         setHasNextPage(false);
         dbDateTimePagingRef.current = {
           enabled: true,
-          offset: dbPrepared.photos.length,
+          after: oldestCursorOfPhotos(dbPrepared.photos),
         };
 
         await ensureVisiblePhotosLocationReady();
@@ -1837,7 +1870,7 @@ export default function HomeScreen() {
         nextPage = result.hasNextPage;
         setEndCursor(cursor);
         setHasNextPage(nextPage);
-        dbDateTimePagingRef.current = { enabled: false, offset: 0 };
+        dbDateTimePagingRef.current = { enabled: false, after: null };
 
         processedCount = Math.min(total, mergedBase.length);
         setLocationSearchProgressChecked(processedCount);
@@ -2680,7 +2713,11 @@ export default function HomeScreen() {
 
   /* 2026.04.15 날짜/시간 전용 DB 조회 경로를 분리해 로케이션 필터 영역 영향 없이 성능 테스트 가능한 모듈 단위를 만들기 위해 추가 by June */
   const tryLoadPhotosFromDbForDateTime = useCallback(
-    async (currentFilter: FilterState, limit: number, offset: number = 0) => {
+    async (
+      currentFilter: FilterState,
+      limit: number,
+      after: PhotoPageCursor | null = null,
+    ) => {
       /* 2026.04.22 DB 날짜/시간 조회 지연을 계측해 MediaLibrary fallback 대비 성능 차이를 수치화하기 위해 타이머를 추가 by June */
       const dbLoadStartedAt = Date.now();
       const hasLocationFilter =
@@ -2701,7 +2738,7 @@ export default function HomeScreen() {
           usedDb: false as const,
           photos: [] as Photo[],
           dbHasMore: false,
-          nextOffset: offset,
+          nextAfter: after,
           isIndexComplete: false,
           totalCount: 0,
         };
@@ -2722,7 +2759,7 @@ export default function HomeScreen() {
           usedDb: false as const,
           photos: [] as Photo[],
           dbHasMore: false,
-          nextOffset: offset,
+          nextAfter: after,
           isIndexComplete: false,
           totalCount: 0,
         };
@@ -2746,7 +2783,7 @@ export default function HomeScreen() {
         timeStart: currentFilter.timeStart,
         timeEnd: currentFilter.timeEnd,
         limit,
-        offset,
+        after: after ? after.takenAt : null,
         isIndexComplete,
         indexedCount: metadataCount,
       });
@@ -2758,8 +2795,8 @@ export default function HomeScreen() {
         timeEnd: currentFilter.timeEnd,
         /* 2026.04.22 hasMore 판정을 위해 limit+1을 조회하고 1건 초과 시 다음 페이지 존재로 판단하도록 수정 by June */
         limit: limit + 1,
-        /* 2026.04.22 같은 날짜 필터에서 append 시 이어서 조회할 수 있도록 DB 조회 오프셋을 전달 by June */
-        offset,
+        /* 2026.09.02 append 이어읽기를 OFFSET 대신 keyset 커서로 수행해 백그라운드 인덱싱 중 페이지 밀림을 방지 by Claude */
+        after,
       });
 
       /* 2026.04.22 limit+1 조회 결과에서 초과 1건 존재 여부를 hasMore로 변환해 스크롤 추가 로딩 가능 여부를 계산하기 위해 추가 by June */
@@ -2786,7 +2823,7 @@ export default function HomeScreen() {
           usedDb: false as const,
           photos: [] as Photo[],
           dbHasMore: false,
-          nextOffset: offset,
+          nextAfter: after,
           isIndexComplete,
           totalCount,
         };
@@ -2801,7 +2838,7 @@ export default function HomeScreen() {
             usedDb: true,
             resultCount: photosFromDb.length,
             limit,
-            offset,
+            after: after ? after.takenAt : null,
             dbHasMore,
             isIndexComplete,
           },
@@ -2815,8 +2852,15 @@ export default function HomeScreen() {
         dbHasMore,
         isIndexComplete,
         totalCount,
-        /* 2026.04.22 다음 append 시작 오프셋을 한 곳에서 계산해 호출부의 중복 계산/오차를 방지하기 위해 반환값에 포함 by June */
-        nextOffset: offset + photosFromDb.length,
+        /* 2026.09.02 다음 append 시작점을 마지막 raw row의 (takenAt, assetId) keyset 커서로 계산해 OFFSET 드리프트를 제거 by Claude */
+        nextAfter:
+          trimmedRows.length > 0 &&
+          typeof trimmedRows[trimmedRows.length - 1].takenAt === "number"
+            ? {
+                takenAt: trimmedRows[trimmedRows.length - 1].takenAt as number,
+                assetId: trimmedRows[trimmedRows.length - 1].assetId,
+              }
+            : after,
       };
     },
     [
@@ -2852,7 +2896,6 @@ export default function HomeScreen() {
         timeStart: baseFilter.timeStart,
         timeEnd: baseFilter.timeEnd,
         limit: totalCount,
-        offset: 0,
       });
 
       return {
@@ -3065,7 +3108,7 @@ export default function HomeScreen() {
       pruneDisplayUriCacheForPhotos(nextBase);
       setEndCursor(null);
       setHasNextPage(false);
-      dbDateTimePagingRef.current = { enabled: false, offset: 0 };
+      dbDateTimePagingRef.current = { enabled: false, after: null };
       setLocationSearchTargetTotalCount(nextVisible.length);
       void refreshFilterProgress(currentFilter, nextVisible.length);
       markLoadedBaseRange(currentFilter, true);
@@ -3181,7 +3224,7 @@ export default function HomeScreen() {
       setHasNextPage(false);
       dbDateTimePagingRef.current = {
         enabled: true,
-        offset: nextBase.length,
+        after: oldestCursorOfPhotos(nextBase),
       };
       setLocationSearchTargetTotalCount(nextBase.length);
       void refreshFilterProgress(currentFilter, nextVisible.length);
@@ -3535,7 +3578,7 @@ export default function HomeScreen() {
       const initialDbResult = await tryLoadPhotosFromDbForDateTime(
         buildBaseDateTimeFilter(initialFilterForLoad),
         INITIAL_TARGET_COUNT,
-        0,
+        null,
       );
 
       let initialBase: Photo[] = [];
@@ -3550,7 +3593,7 @@ export default function HomeScreen() {
           initialDbResult.dbHasMore || !initialDbResult.isIndexComplete;
         dbDateTimePagingRef.current = {
           enabled: true,
-          offset: initialDbResult.nextOffset,
+          after: initialDbResult.nextAfter,
         };
         setLocationSearchTargetTotalCount(
           initialDbResult.totalCount > 0 ? initialDbResult.totalCount : null,
@@ -3570,7 +3613,7 @@ export default function HomeScreen() {
         ).slice(0, INITIAL_TARGET_COUNT);
         nextCursor = result.endCursor ?? null;
         nextHasPage = result.hasNextPage;
-        dbDateTimePagingRef.current = { enabled: false, offset: 0 };
+        dbDateTimePagingRef.current = { enabled: false, after: null };
         setLocationSearchTargetTotalCount(
           typeof result.totalCount === "number" && result.totalCount > 0
             ? result.totalCount
@@ -3716,7 +3759,7 @@ export default function HomeScreen() {
     setEndCursor(null); // 새 필터는 처음부터 다시 시작
     setHasNextPage(true); // 새 필터는 다시 탐색 가능 상태로 초기화
     /* 2026.04.22 필터 변경 시 이전 DB 오프셋이 남아 다음 조회가 어긋나는 문제를 막기 위해 페이지네이션 상태를 먼저 초기화 by June */
-    dbDateTimePagingRef.current = { enabled: false, offset: 0 };
+    dbDateTimePagingRef.current = { enabled: false, after: null };
     console.log("[Filter] changed", {
       requestId,
       pending: false,
@@ -3750,7 +3793,7 @@ export default function HomeScreen() {
       const dbResult = await tryLoadPhotosFromDbForDateTime(
         buildBaseDateTimeFilter(currentFilter),
         FILTER_RESET_TARGET_COUNT,
-        0,
+        null,
       );
 
       let sortedBase: Photo[] = [];
@@ -3766,7 +3809,7 @@ export default function HomeScreen() {
         nextHasPage = dbResult.dbHasMore || !dbResult.isIndexComplete;
         dbDateTimePagingRef.current = {
           enabled: true,
-          offset: dbResult.nextOffset,
+          after: dbResult.nextAfter,
         };
         setLocationSearchTargetTotalCount(
           dbResult.totalCount > 0 ? dbResult.totalCount : null,
@@ -3790,7 +3833,7 @@ export default function HomeScreen() {
         sorted = deriveVisiblePhotos(sortedBase, currentFilter);
         nextCursor = result.endCursor;
         nextHasPage = result.hasNextPage;
-        dbDateTimePagingRef.current = { enabled: false, offset: 0 };
+        dbDateTimePagingRef.current = { enabled: false, after: null };
       }
       console.log("[PhotoLoad] fetched", {
         requestId,
@@ -3924,7 +3967,7 @@ export default function HomeScreen() {
           const dbResult = await tryLoadPhotosFromDbForDateTime(
             buildBaseDateTimeFilter(currentFilter),
             APPEND_TARGET_COUNT,
-            dbDateTimePagingRef.current.offset,
+            dbDateTimePagingRef.current.after,
           );
 
           if (dbResult.usedDb) {
@@ -3933,7 +3976,7 @@ export default function HomeScreen() {
             nextHasPage = dbResult.dbHasMore || !dbResult.isIndexComplete;
             dbDateTimePagingRef.current = {
               enabled: true,
-              offset: dbResult.nextOffset,
+              after: dbResult.nextAfter,
             };
             setLocationSearchTargetTotalCount(
               dbResult.totalCount > 0 ? dbResult.totalCount : null,
@@ -3963,7 +4006,7 @@ export default function HomeScreen() {
           fetchedPhotos = result.photos;
           nextCursor = result.endCursor;
           nextHasPage = result.hasNextPage;
-          dbDateTimePagingRef.current = { enabled: false, offset: 0 };
+          dbDateTimePagingRef.current = { enabled: false, after: null };
         } else {
           setCurrentDataSource("db");
         }
@@ -4460,6 +4503,64 @@ export default function HomeScreen() {
     if (didInitialLoad) return;
     void loadInitialPhotos();
   }, [didInitialLoad, loadInitialPhotos]);
+
+  /* 2026.09.02 첫 페인트 이후 사진 메타데이터 인덱스를 백그라운드에서 완성하는 폴라이트 드레인 루프.
+     a42ee9a에서 제거된 상시 동기화의 스케줄링 재설계: 초기 로드 완료 후 시작, 사용자 요청 진행 중에는 양보,
+     첫 패스는 위치 보강 없이 타임스탬프만 인덱싱 by Claude */
+  const backgroundMetadataSyncStartedRef = useRef(false);
+  const backgroundMetadataSyncCancelledRef = useRef(false);
+
+  const startBackgroundMetadataSync = useCallback(() => {
+    if (backgroundMetadataSyncStartedRef.current) return;
+    backgroundMetadataSyncStartedRef.current = true;
+
+    const sleep = (ms: number) =>
+      new Promise<void>((resolve) => setTimeout(resolve, ms));
+
+    void (async () => {
+      await sleep(BACKGROUND_SYNC_INITIAL_DELAY_MS);
+      let errorStreak = 0;
+      while (!backgroundMetadataSyncCancelledRef.current) {
+        /* 2026.09.02 사용자 요청이 진행 중이면 동기화를 양보해 6월 장애(초기 로드 경합) 재발을 방지 by Claude */
+        if (requestInFlightRef.current) {
+          await sleep(BACKGROUND_SYNC_BUSY_RETRY_MS);
+          continue;
+        }
+        try {
+          await syncPhotoMetadataInBackground({
+            maxPages: 3,
+            enrichLocation: false,
+          });
+          errorStreak = 0;
+        } catch (err) {
+          errorStreak += 1;
+          console.log("background metadata sync error:", err);
+          if (errorStreak >= BACKGROUND_SYNC_MAX_ERROR_STREAK) break;
+          await sleep(BACKGROUND_SYNC_ERROR_RETRY_MS);
+          continue;
+        }
+        const syncState = await getPhotoSyncState();
+        if (!syncState.hasNextPage) break;
+        await sleep(BACKGROUND_SYNC_IDLE_DELAY_MS);
+      }
+    })();
+  }, []);
+
+  useEffect(() => {
+    if (!didInitialLoad) return;
+    startBackgroundMetadataSync();
+  }, [didInitialLoad, startBackgroundMetadataSync]);
+
+  useEffect(() => {
+    /* 2026.09.02 초기 로드가 지연/중단돼도 인덱싱이 시작되도록 10초 후 fallback 시작을 보장 by Claude */
+    const timer = setTimeout(() => {
+      startBackgroundMetadataSync();
+    }, BACKGROUND_SYNC_FALLBACK_START_MS);
+    return () => {
+      clearTimeout(timer);
+      backgroundMetadataSyncCancelledRef.current = true;
+    };
+  }, [startBackgroundMetadataSync]);
 
   const onRefresh = useCallback(async () => {
     setRefreshing(true);

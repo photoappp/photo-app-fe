@@ -4,7 +4,7 @@ import * as SQLite from "expo-sqlite";
 /* 2026.04.15 메타데이터 전용 DB 파일명/버전을 고정해 추후 마이그레이션 기준점을 만들기 위해 추가 by June */
 const DB_NAME = "picqly_metadata.db";
 /* 2026.04.15 스키마 변경 시 버전 증가를 통해 구조 변경을 안전하게 적용하기 위해 추가 by June */
-const DB_SCHEMA_VERSION = 4;
+const DB_SCHEMA_VERSION = 5;
 
 /* 2026.04.15 DB 핸들을 싱글톤으로 재사용해 중복 open 비용과 상태 불일치를 줄이기 위해 추가 by June */
 let dbPromise: Promise<SQLite.SQLiteDatabase> | null = null;
@@ -32,6 +32,12 @@ export type PhotoSummaryRow = {
   takenAt: number | null;
   latitude: number | null;
   longitude: number | null;
+};
+
+/* 2026.09.02 OFFSET 드리프트 없이 DB 페이지네이션을 이어가기 위한 keyset 커서 타입 추가 by Claude */
+export type PhotoPageCursor = {
+  takenAt: number;
+  assetId: string;
 };
 
 /* 2026.04.22 reverse geocode 캐시 입출력 구조를 고정해 위치 성능 개선 로직을 타입 안정적으로 연결하기 위해 추가 by June */
@@ -118,6 +124,8 @@ export const initPhotoMetadataDb = async () => {
         next_cursor TEXT,
         has_next_page INTEGER NOT NULL DEFAULT 1,
         last_synced_at INTEGER,
+        /* 2026.09.02 재검증 패스 시작 시각을 보존해 완주 시 삭제된 사진 row를 판별하기 위해 추가 by Claude */
+        pass_started_at INTEGER,
         updated_at INTEGER NOT NULL
       );
 
@@ -217,6 +225,19 @@ export const initPhotoMetadataDb = async () => {
         updated_at INTEGER NOT NULL
       );
     `);
+
+    /* 2026.09.02 기존 설치본에 pass_started_at 컬럼을 추가해 삭제 사진 정리(패스 완주 diff) 기준 시각을 보존하기 위해 마이그레이션 추가 by Claude */
+    const syncStateInfo = await db.getAllAsync<{ name: string }>(
+      `PRAGMA table_info(photo_sync_state)`
+    );
+    const hasPassStartedAt = syncStateInfo.some(
+      (c: { name: string }) => c.name === "pass_started_at"
+    );
+    if (!hasPassStartedAt) {
+      await db.execAsync(`
+        ALTER TABLE photo_sync_state ADD COLUMN pass_started_at INTEGER;
+      `);
+    }
 
     await db.execAsync(`PRAGMA user_version = ${DB_SCHEMA_VERSION};`);
   }).catch((err) => {
@@ -344,9 +365,10 @@ export const getPhotoSyncState = async () => {
     next_cursor: string | null;
     has_next_page: number;
     last_synced_at: number | null;
+    pass_started_at: number | null;
   }>(
     `
-    SELECT next_cursor, has_next_page, last_synced_at
+    SELECT next_cursor, has_next_page, last_synced_at, pass_started_at
     FROM photo_sync_state
     WHERE id = 1
     `
@@ -356,6 +378,7 @@ export const getPhotoSyncState = async () => {
     nextCursor: row?.next_cursor ?? null,
     hasNextPage: (row?.has_next_page ?? 1) === 1,
     lastSyncedAt: row?.last_synced_at ?? null,
+    passStartedAt: row?.pass_started_at ?? null,
   };
 };
 
@@ -364,6 +387,8 @@ export const updatePhotoSyncState = async (params: {
   nextCursor: string | null;
   hasNextPage: boolean;
   lastSyncedAt: number;
+  /* 2026.09.02 패스 시작 시각을 상태와 함께 원자적으로 갱신해 앱 킬 후에도 삭제 판별 기준을 유지하기 위해 추가 by Claude */
+  passStartedAt: number | null;
 }) => {
   const db = await getDb();
 
@@ -375,15 +400,41 @@ export const updatePhotoSyncState = async (params: {
       SET next_cursor = ?,
           has_next_page = ?,
           last_synced_at = ?,
+          pass_started_at = ?,
           updated_at = ?
       WHERE id = 1
       `,
       params.nextCursor,
       params.hasNextPage ? 1 : 0,
       params.lastSyncedAt,
+      params.passStartedAt,
       Date.now()
     );
   });
+};
+
+/* 2026.09.02 재검증 패스 완주 시 방문되지 않은(=라이브러리에서 삭제된) row를 일괄 soft-delete 처리하기 위해 추가 by Claude */
+export const markPhotoMetadataDeletedBefore = async (cutoffMs: number) => {
+  await initPhotoMetadataDb();
+  const db = await getDb();
+
+  let changes = 0;
+  await enqueueWrite(async () => {
+    const result = await db.runAsync(
+      `
+      UPDATE photo_metadata
+      SET is_deleted = 1,
+          updated_at = ?
+      WHERE is_deleted = 0
+        AND updated_at < ?
+      `,
+      Date.now(),
+      cutoffMs
+    );
+    changes = result.changes ?? 0;
+  });
+
+  return changes;
 };
 
 /* 2026.04.15 DB 적재량을 확인해 초기 인덱싱 진행률/완료 여부 판단에 쓰기 위해 카운트 함수를 추가 by June */
@@ -671,12 +722,21 @@ export const queryPhotoMetadataByDateTime = async (params: {
   timeStart: number;
   timeEnd: number;
   limit: number;
-  /* 2026.04.22 날짜/시간 DB 결과를 스크롤 append로 이어붙이기 위해 OFFSET 기반 페이지네이션 파라미터를 추가 by June */
-  offset?: number;
+  /* 2026.09.02 백그라운드 인덱싱 중 row 삽입으로 OFFSET이 밀리는 문제를 없애기 위해 keyset 커서 기반 페이지네이션으로 교체 by Claude */
+  after?: PhotoPageCursor | null;
 }) => {
   /* 2026.04.15 taken_minute 컬럼 추가 전 쿼리 실행으로 no such column 에러가 나는 문제를 막기 위해 조회 전 초기화를 강제 by June */
   await initPhotoMetadataDb();
   const db = await getDb();
+
+  const after = params.after ?? null;
+  /* 2026.09.02 커서가 있으면 (taken_at, asset_id)보다 과거인 row만 조회해 동시 삽입에도 페이지 경계가 흔들리지 않도록 함 by Claude */
+  const keysetClause = after
+    ? "AND (taken_at < ? OR (taken_at = ? AND asset_id < ?))"
+    : "";
+  const keysetArgs: (number | string)[] = after
+    ? [after.takenAt, after.takenAt, after.assetId]
+    : [];
 
   const rows = await db.getAllAsync<PhotoSummaryRow>(
     `
@@ -692,11 +752,13 @@ export const queryPhotoMetadataByDateTime = async (params: {
         OR (? >= ? AND taken_minute >= ? AND taken_minute <= ?)
         OR (? < ? AND taken_minute >= ? AND taken_minute <= ?)
       )
+      ${keysetClause}
     ORDER BY
       /* 2026.05.28 홈 썸네일 정책과 동일하게 최신 사진이 먼저 나오도록 DB 조회 정렬을 최신순으로 변경 by June */
-      taken_at DESC
+      taken_at DESC,
+      /* 2026.09.02 같은 촬영 시각에서 페이지 경계가 흔들리지 않도록 asset_id를 2차 정렬 키로 고정 by Claude */
+      asset_id DESC
     LIMIT ?
-    OFFSET ?
     `,
     params.dateStartMs,
     params.dateEndNextMs,
@@ -710,9 +772,8 @@ export const queryPhotoMetadataByDateTime = async (params: {
     params.timeStart,
     params.timeStart,
     params.timeEnd,
-    params.limit,
-    /* 2026.04.22 호출부에서 offset 미지정 시 기존 동작과 동일하게 0부터 조회되도록 기본값을 적용 by June */
-    params.offset ?? 0
+    ...keysetArgs,
+    params.limit
   );
 
   /* 2026.04.15 시간 필터를 SQL로 완전 이관해 긴 기간 검색 시 JS 후처리 비용을 제거하기 위해 반환 필터를 제거 by June */

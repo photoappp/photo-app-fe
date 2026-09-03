@@ -3,8 +3,10 @@ import * as MediaLibrary from "expo-media-library";
 
 import {
   PhotoMetadataRow,
+  getPhotoMetadataCount,
   getPhotoSyncState,
   initPhotoMetadataDb,
+  markPhotoMetadataDeletedBefore,
   updatePhotoSyncState,
   upsertPhotoMetadataRows,
 } from "@/lib/db/photoMetadataDb";
@@ -95,6 +97,8 @@ export const upsertPhotoMetadataFromAssets = async (
 /* 2026.04.15 증분 동기화를 백그라운드에서 일정 페이지씩 진행해 UI 블로킹 없이 인덱싱을 누적하기 위해 추가 by June */
 export const syncPhotoMetadataInBackground = async (params?: {
   maxPages?: number;
+  /* 2026.09.02 첫 패스에서 위치 상세조회를 생략해 네이티브 API 경합과 패스 시간을 줄이기 위한 옵션 추가 by Claude */
+  enrichLocation?: boolean;
 }) => {
   if (inFlightSync) {
     return inFlightSync;
@@ -104,13 +108,46 @@ export const syncPhotoMetadataInBackground = async (params?: {
     await initPhotoMetadataDb();
 
     const maxPages = params?.maxPages ?? 3;
-    let { nextCursor, hasNextPage } = await getPhotoSyncState();
+    const enrichLocation = params?.enrichLocation ?? true;
+    let { nextCursor, hasNextPage, passStartedAt } = await getPhotoSyncState();
 
     /* 2026.04.15 이전 동기화가 끝났다면 다음 실행은 첫 페이지부터 재검증하도록 커서를 초기화하기 위해 추가 by June */
     if (!hasNextPage) {
+      /* 2026.09.02 라이브러리/DB 건수가 같으면 재검증 패스를 생략해 불필요한 전체 재탐색 비용을 제거 by Claude
+         (알려진 사각지대: 같은 수의 삭제+추가는 건수가 같아 다음 건수 변화 때까지 반영이 늦어질 수 있음 — 정책상 허용) */
+      try {
+        const librarySnapshot = await MediaLibrary.getAssetsAsync({
+          first: 1,
+          mediaType: MediaLibrary.MediaType.photo,
+        });
+        const dbCount = await getPhotoMetadataCount();
+        if (
+          typeof librarySnapshot.totalCount === "number" &&
+          librarySnapshot.totalCount === dbCount
+        ) {
+          recordPerfMetric("metadata.sync_pass_skip.ms", 0, {
+            context: { totalCount: dbCount },
+            logEvery: 5,
+          });
+          return;
+        }
+      } catch {
+        // 건수 비교 실패 시에는 기존처럼 재검증 패스를 진행
+      }
       nextCursor = null;
       hasNextPage = true;
+      /* 2026.09.02 패스 시작 시각을 기록해 완주 시 방문되지 않은 row(삭제된 사진)를 판별하기 위해 추가 by Claude */
+      passStartedAt = Date.now();
+      await updatePhotoSyncState({
+        nextCursor,
+        hasNextPage,
+        lastSyncedAt: Date.now(),
+        passStartedAt,
+      });
     }
+    /* 2026.09.02 진행 중이던 패스에 시작 시각이 없으면(마이그레이션 직후/최초 패스) 이번 완주에서는 삭제 정리를 생략 —
+       이전 런치에서 이미 방문한 row의 updated_at이 지금 시각보다 과거라 살아있는 사진을 오삭제할 수 있기 때문.
+       다음 패스가 시작 시각을 제대로 기록하고 정리를 수행함 by Claude */
 
     let pages = 0;
     let cursor = nextCursor;
@@ -139,6 +176,7 @@ export const syncPhotoMetadataInBackground = async (params?: {
           let location = readLocation((asset as any).location);
 
           if (
+            enrichLocation &&
             enrichedCount < LOCATION_ENRICH_PER_PAGE &&
             location.latitude === null &&
             location.longitude === null
@@ -165,6 +203,7 @@ export const syncPhotoMetadataInBackground = async (params?: {
         nextCursor: cursor,
         hasNextPage: keepPaging,
         lastSyncedAt: Date.now(),
+        passStartedAt,
       });
 
       /* 2026.04.22 동기화 페이지 처리 시간을 기록해 사진 수/계속여부와 함께 p50/p95를 분석할 수 있도록 계측을 추가 by June */
@@ -176,6 +215,20 @@ export const syncPhotoMetadataInBackground = async (params?: {
         },
         logEvery: 2,
       });
+    }
+
+    /* 2026.09.02 패스 완주 시 이번 패스에서 방문되지 않은 row를 삭제 처리해 삭제된 사진이 DB 경로에 남는 문제를 방지 by Claude */
+    if (!keepPaging && typeof passStartedAt === "number") {
+      const reconcileStartedAt = Date.now();
+      const deletedCount = await markPhotoMetadataDeletedBefore(passStartedAt);
+      recordPerfMetric(
+        "metadata.deleted_reconcile.ms",
+        Date.now() - reconcileStartedAt,
+        {
+          context: { deletedCount },
+          logEvery: 1,
+        }
+      );
     }
   })().finally(() => {
     inFlightSync = null;
