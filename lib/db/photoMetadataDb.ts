@@ -55,13 +55,6 @@ export type GeocodeJobRow = {
   updatedAt: number;
 };
 
-export type DisplayUriCacheRow = {
-  sourceUri: string;
-  assetId: string | null;
-  displayUri: string;
-  updatedAt: number;
-};
-
 /* 2026.04.15 DB open 과 초기화 순서를 한 함수로 고정해 호출부에서 안전하게 재사용하기 위해 추가 by June */
 const getDb = async () => {
   if (!dbPromise) {
@@ -148,13 +141,6 @@ export const initPhotoMetadataDb = async () => {
       CREATE INDEX IF NOT EXISTS idx_geocode_jobs_status_updated
         ON geocode_jobs (status ASC, updated_at ASC);
 
-      /* 2026.05.28 앱 재기동 후에도 이미 변환한 iOS ph:// 썸네일 URI를 즉시 재사용하기 위한 display URI 캐시 테이블 추가 by June */
-      CREATE TABLE IF NOT EXISTS display_uri_cache (
-        source_uri TEXT PRIMARY KEY NOT NULL,
-        asset_id TEXT,
-        display_uri TEXT NOT NULL,
-        updated_at INTEGER NOT NULL
-      );
     `);
 
     /* 2026.04.15 기존 설치본에도 taken_minute 컬럼을 추가해 장기 범위 시간 필터를 SQL 인덱스로 처리하기 위해 마이그레이션 추가 by June */
@@ -209,13 +195,6 @@ export const initPhotoMetadataDb = async () => {
       CREATE INDEX IF NOT EXISTS idx_geocode_jobs_status_updated
         ON geocode_jobs (status ASC, updated_at ASC);
 
-      /* 2026.05.28 기존 설치본에서도 display URI 캐시 테이블을 보장해 앱 재시작 후 썸네일 재변환을 줄이기 위해 추가 by June */
-      CREATE TABLE IF NOT EXISTS display_uri_cache (
-        source_uri TEXT PRIMARY KEY NOT NULL,
-        asset_id TEXT,
-        display_uri TEXT NOT NULL,
-        updated_at INTEGER NOT NULL
-      );
     `);
 
     await db.execAsync(`PRAGMA user_version = ${DB_SCHEMA_VERSION};`);
@@ -269,67 +248,6 @@ export const upsertPhotoMetadataRows = async (rows: PhotoMetadataRow[]) => {
         row.createdAt,
         row.updatedAt,
         row.isDeleted
-      );
-    }
-  });
-};
-
-export const getDisplayUriCacheBySourceUris = async (sourceUris: string[]) => {
-  await initPhotoMetadataDb();
-  const uniqueUris = [...new Set(sourceUris)].filter(Boolean);
-  if (uniqueUris.length === 0) return [] as DisplayUriCacheRow[];
-
-  const db = await getDb();
-  const placeholders = uniqueUris.map(() => "?").join(",");
-  const rows = await db.getAllAsync<{
-    source_uri: string;
-    asset_id: string | null;
-    display_uri: string;
-    updated_at: number;
-  }>(
-    `
-    SELECT source_uri, asset_id, display_uri, updated_at
-    FROM display_uri_cache
-    WHERE source_uri IN (${placeholders})
-    `,
-    ...uniqueUris
-  );
-
-  return rows.map((row) => ({
-    sourceUri: row.source_uri,
-    assetId: row.asset_id,
-    displayUri: row.display_uri,
-    updatedAt: row.updated_at,
-  }));
-};
-
-export const upsertDisplayUriCacheRows = async (
-  rows: DisplayUriCacheRow[]
-) => {
-  if (rows.length === 0) return;
-  await initPhotoMetadataDb();
-  const db = await getDb();
-
-  await enqueueWrite(async () => {
-    for (const row of rows) {
-      await db.runAsync(
-        `
-        INSERT INTO display_uri_cache (
-          source_uri,
-          asset_id,
-          display_uri,
-          updated_at
-        )
-        VALUES (?, ?, ?, ?)
-        ON CONFLICT(source_uri) DO UPDATE SET
-          asset_id = excluded.asset_id,
-          display_uri = excluded.display_uri,
-          updated_at = excluded.updated_at
-        `,
-        row.sourceUri,
-        row.assetId,
-        row.displayUri,
-        row.updatedAt
       );
     }
   });

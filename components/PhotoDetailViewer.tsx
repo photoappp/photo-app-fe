@@ -10,10 +10,12 @@ import {
 import ImageViewing from "react-native-image-viewing";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import IconPlay from "@/assets/icons/ic_play.svg";
+import PhotoDetailImage from "@/components/photos/PhotoDetailImage";
+import type { PhotoDetailImageSource } from "@/components/photos/PhotoDetailImage.types";
 
 type Props = {
   visible: boolean;
-  images: Array<{ uri: string }>;
+  images: PhotoDetailImageSource[];
   imageIndex: number;
   onImageIndexChange?: (index: number) => void;
   onRequestClose: () => void;
@@ -123,6 +125,7 @@ export default function PhotoDetailViewer({
       onImageIndexChange={onImageIndexChange}
       HeaderComponent={Header}
       FooterComponent={Footer}
+      ImageComponent={PhotoDetailImage}
       backgroundColor={backgroundColor}
       animationType={animationType}
       presentationStyle={presentationStyle}

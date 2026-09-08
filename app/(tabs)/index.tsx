@@ -1,6 +1,7 @@
 import DateTimeFilter from "@/components/DateTimeFilter";
 // import AsyncWorkDebugOverlay from "@/components/debug/AsyncWorkDebugOverlay";
 import PhotoDetailViewer from "@/components/PhotoDetailViewer";
+import PhotoThumbnail from "@/components/photos/PhotoThumbnail";
 import ShowOnMap from "@/components/ShowOnMap";
 import { Photo } from "@/types/Photo";
 import { Ionicons } from "@expo/vector-icons";
@@ -51,7 +52,6 @@ import * as amplitude from "@amplitude/analytics-react-native";
 import {
   countPhotoMetadataByDateTime,
   enqueueGeocodeJobs,
-  getDisplayUriCacheBySourceUris,
   getGeocodeCacheByKey,
   getGeocodeCacheCount,
   getGeocodePendingJobCount,
@@ -60,7 +60,6 @@ import {
   getPhotoSyncState,
   initPhotoMetadataDb,
   queryPhotoMetadataByDateTime,
-  upsertDisplayUriCacheRows,
   upsertGeocodeCacheRows
 } from "@/lib/db/photoMetadataDb";
 import { recordPerfMetric } from "@/lib/services/perfMetrics";
@@ -81,14 +80,7 @@ const usableWidth = screenWidth - (24 + horizontalPadding) * 2;
 const imageWidth = Math.floor(
   (usableWidth - numColumns * imageMargin * 2) / numColumns,
 );
-/* 2026.05.28 iOS ph:// 썸네일을 한 번에 대량 변환하면 메모리 피크가 커져 앱이 종료될 수 있어 화면 근처 항목만 작은 묶음으로 처리하기 위한 상수 by June */
-const IOS_THUMBNAIL_RESOLVE_INITIAL_LIMIT = 30;
-const IOS_THUMBNAIL_RESOLVE_LOOKAHEAD = 20;
-const IOS_THUMBNAIL_RESOLVE_BATCH_SIZE = 5;
-const IOS_THUMBNAIL_RESOLVE_BATCH_DELAY_MS = 80;
-const DISPLAY_URI_CACHE_MAX = 300;
 const THUMBNAIL_BLOCKING_TARGET_COUNT = 20;
-const SLIDESHOW_PREP_TIMEOUT_MS = 1200;
 const DEFAULT_LOCATION_RANGE_DAYS = 31;
 const LOCATION_FEATURE_UNLOCK_STORAGE_KEY = "locationFeatureUnlockedUntil";
 const LOCATION_FEATURE_UNLOCK_MS = 2 * 60 * 60 * 1000;
@@ -202,9 +194,6 @@ export default function HomeScreen() {
   /* 2026.05.06 사용자가 선택한 사진의 우선 위치 로딩 중복 실행을 막기 위해 URI 기준 in-flight 집합을 추가 by June */
   /* 2026.05.06 사용자가 연속 탭/스와이프할 때 같은 URI 우선 로딩 중복 요청을 막아 체감 지연과 배터리 소모를 줄이기 위해 추가 by June */
   const priorityLocationInFlightRef = useRef<Set<string>>(new Set());
-  /* 2026.04.15 iOS ph:// URI를 localUri로 변환한 결과를 재사용해 반복 조회 비용과 이미지 로더 충돌 노출을 줄이기 위해 캐시 추가 by June */
-  const resolvedUriCacheRef = useRef<Map<string, string>>(new Map());
-
   // ---- 사진 목록/페이지네이션 ----
   const [photos, setPhotos] = useState<Photo[]>([]); // 화면에 뿌릴 가공된 데이터 (위치 필터 적용 후)
   const [photosAll, setPhotosAll] = useState<Photo[]>([]); // 날짜/시간 기준 원본 사진
@@ -219,45 +208,12 @@ export default function HomeScreen() {
   const [viewerEntryPoint, setViewerEntryPoint] = useState<"home" | "map">(
     "home",
   );
-  /* 2026.04.22 썸네일 리스트는 경량 URI를 유지하고 상세 뷰어에서만 고해상도 URI를 점진 교체하기 위해 뷰어 전용 URI 맵 상태를 추가 by June */
-  const [viewerDetailUriMap, setViewerDetailUriMap] = useState<
-    Record<string, string>
-  >({});
-  /* 2026.04.28 썸네일 단계에서 ph:// 로더 충돌을 줄이기 위해 표시용 URI 캐시를 별도로 유지하도록 추가 by June */
-  const [displayUriMap, setDisplayUriMap] = useState<Record<string, string>>(
-    {},
-  );
-  /* 2026.05.28 iOS 썸네일 URI 변환 중에도 로딩 안내/딤처리를 표시하고 중복 터치를 막기 위한 상태 by June */
-  const [thumbnailResolving, setThumbnailResolving] = useState(false);
   /* 2026.06.02 실제 썸네일 이미지가 화면에 그려질 때까지 로딩 딤처리를 유지하기 위해 초기 배치 ready 상태를 추적 by June */
   const [thumbnailReadyByUri, setThumbnailReadyByUri] = useState<
     Record<string, true>
   >({});
-  /* 2026.05.28 displayUriMap 변경으로 변환 effect가 반복 취소되지 않도록 최신 캐시를 ref로 보관 by June */
-  const displayUriMapRef = useRef<Record<string, string>>({});
   const thumbnailReadyByUriRef = useRef<Record<string, true>>({});
-  const thumbnailResolveRunIdRef = useRef(0);
-  const [thumbnailResolveRunId, setThumbnailResolveRunId] = useState(0);
-  const [thumbnailResolveLimit, setThumbnailResolveLimit] = useState(
-    IOS_THUMBNAIL_RESOLVE_INITIAL_LIMIT,
-  );
   const thumbnailSkeletonAnim = useRef(new Animated.Value(0)).current;
-  const thumbnailViewabilityConfigRef = useRef({
-    itemVisiblePercentThreshold: 10,
-  });
-  const thumbnailViewableItemsChangedRef = useRef(
-    ({ viewableItems }: { viewableItems: Array<{ index: number | null }> }) => {
-      const maxVisibleIndex = viewableItems.reduce((max, item) => {
-        if (typeof item.index !== "number") return max;
-        return Math.max(max, item.index);
-      }, -1);
-
-      if (maxVisibleIndex < 0) return;
-      setThumbnailResolveLimit((prev) =>
-        Math.max(prev, maxVisibleIndex + 1 + IOS_THUMBNAIL_RESOLVE_LOOKAHEAD),
-      );
-    },
-  );
 
   /** 2026.03.26 By June - 사진 목록/페이지네이션 관련 */
   const [initialLoading, setInitialLoading] = useState(false);
@@ -304,12 +260,21 @@ export default function HomeScreen() {
 
   // ImageViewing 에 넘길 images 배열 (형식: { uri: string }[])
   const viewerImages = useMemo(
-    /* 2026.04.22 상세 진입 후 해상도 보강된 URI가 있으면 뷰어에서 우선 사용하도록 병합해 썸네일/상세 로딩 경로를 분리하기 위해 수정 by June */
-    () =>
-      viewerPhotoUris.map((uri) => ({
-        uri: viewerDetailUriMap[uri] ?? displayUriMap[uri] ?? uri,
-      })),
-    [displayUriMap, viewerDetailUriMap, viewerPhotoUris],
+    () => {
+      const assetIdByUri = new Map<string, string>();
+      for (const photo of photosAll) {
+        if (photo.assetId) assetIdByUri.set(photo.uri, photo.assetId);
+      }
+      for (const photo of photos) {
+        if (photo.assetId) assetIdByUri.set(photo.uri, photo.assetId);
+      }
+
+      return viewerPhotoUris.map((uri) => ({
+        uri,
+        assetId: assetIdByUri.get(uri) ?? getAssetIdFromPhUri(uri) ?? undefined,
+      }));
+    },
+    [photos, photosAll, viewerPhotoUris],
   );
 
   const photosRef = useRef<Photo[]>(photos);
@@ -1080,70 +1045,6 @@ export default function HomeScreen() {
     [],
   );
 
-  const pruneDisplayUriCacheForPhotos = useCallback((sourcePhotos: Photo[]) => {
-    const keep = new Set(sourcePhotos.map((photo) => photo.uri));
-    setDisplayUriMap((prev) => {
-      const keptEntries = Object.entries(prev).filter(([uri]) =>
-        keep.has(uri),
-      );
-      const fallbackEntries = Object.entries(prev).slice(
-        -DISPLAY_URI_CACHE_MAX,
-      );
-      const next = Object.fromEntries(
-        [...fallbackEntries, ...keptEntries].slice(-DISPLAY_URI_CACHE_MAX),
-      );
-      displayUriMapRef.current = next;
-      console.log("[Cache] displayUriMap size", {
-        previous: Object.keys(prev).length,
-        next: Object.keys(next).length,
-      });
-      return next;
-    });
-  }, []);
-
-  const hydratePersistedDisplayUriCache = useCallback(
-    async (sourcePhotos: Photo[], scope: string) => {
-      if (Platform.OS !== "ios") return;
-      const sourceUris = sourcePhotos
-        .map((photo) => photo.uri)
-        .filter((uri) => uri.startsWith("ph://"));
-      if (sourceUris.length === 0) return;
-
-      try {
-        const rows = await getDisplayUriCacheBySourceUris(sourceUris);
-        if (rows.length === 0) {
-          console.log("[Cache] displayUri persistent miss", {
-            scope,
-            requested: sourceUris.length,
-          });
-          return;
-        }
-
-        setDisplayUriMap((prev) => {
-          const next = { ...prev };
-          for (const row of rows) {
-            if (!row.displayUri.startsWith("file://")) continue;
-            next[row.sourceUri] = row.displayUri;
-            resolvedUriCacheRef.current.set(row.sourceUri, row.displayUri);
-          }
-          displayUriMapRef.current = next;
-          console.log("[Cache] displayUri persistent hit", {
-            scope,
-            requested: sourceUris.length,
-            hit: rows.length,
-            nextSize: Object.keys(next).length,
-          });
-          return next;
-        });
-      } catch (err) {
-        console.log("[Cache] displayUri persistent load error", {
-          scope,
-          err,
-        });
-      }
-    },
-    [],
-  );
   /** 2026.03.26 by June Edit End */
 
   // 슬라이드쇼 관련
@@ -1890,19 +1791,11 @@ export default function HomeScreen() {
         setLocationSearchProgressTotal(total);
         setLocationSearchProgressChecked(processedCount);
 
-        await showLocationSearchPhaseText(locationSearchPhaseLabels.thumbnail);
-        await hydratePersistedDisplayUriCache(
-          dbPrepared.photos,
-          "location-search-db",
-        );
-        if (runToken !== locationSearchRunTokenRef.current) return;
-
         await showLocationSearchPhaseText(locationSearchPhaseLabels.enrich);
         setPhotosAll(dbPrepared.photos);
         setPhotos(deriveVisiblePhotos(dbPrepared.photos, filterRef.current));
         photosAllRef.current = dbPrepared.photos;
         photosRef.current = deriveVisiblePhotos(dbPrepared.photos, filterRef.current);
-        pruneDisplayUriCacheForPhotos(dbPrepared.photos);
         setEndCursor(null);
         setHasNextPage(false);
         dbDateTimePagingRef.current = {
@@ -1984,14 +1877,11 @@ export default function HomeScreen() {
         await showLocationSearchPhaseText(locationSearchPhaseLabels.sort);
         const nextVisible = deriveVisiblePhotos(mergedBase, filterRef.current);
 
-        await showLocationSearchPhaseText(locationSearchPhaseLabels.thumbnail);
-        await hydratePersistedDisplayUriCache(photosChunk, "location-search");
         await showLocationSearchPhaseText(locationSearchPhaseLabels.apply);
         setPhotosAll(mergedBase);
         setPhotos(nextVisible);
         photosAllRef.current = mergedBase;
         photosRef.current = nextVisible;
-        pruneDisplayUriCacheForPhotos(mergedBase);
         void refreshFilterProgress(filterRef.current, nextVisible.length);
 
         cursor = result.endCursor ?? null;
@@ -2025,7 +1915,6 @@ export default function HomeScreen() {
       fetchAssetsPage,
       hasNextPage,
       hydrateAssetsToPhotos,
-      hydratePersistedDisplayUriCache,
       imagesWithLocation,
       loadPreparedPhotosFromDbForLocationSearch,
       markLoadedBaseRange,
@@ -2036,9 +1925,7 @@ export default function HomeScreen() {
       locationSearchPhaseLabels.enrich,
       locationSearchPhaseLabels.sort,
       locationSearchPhaseLabels.target,
-      locationSearchPhaseLabels.thumbnail,
       progress.total,
-      pruneDisplayUriCacheForPhotos,
       refreshFilterProgress,
       showLocationSearchPhaseText,
     ],
@@ -2561,64 +2448,6 @@ export default function HomeScreen() {
     return out;
   }, []);
 
-  /* 2026.04.15 iOS에서 ph:// URI를 file://(localUri)로 정규화해 RCTImageURLLoaders 충돌 에러를 회피하기 위해 추가 by June */
-  const resolveDisplayUri = useCallback(async (uri: string) => {
-    if (Platform.OS !== "ios") return uri;
-    if (!uri.startsWith("ph://")) return uri;
-
-    const cached = resolvedUriCacheRef.current.get(uri);
-    if (cached) return cached;
-
-    try {
-      const assetId = getAssetIdFromPhUri(uri);
-      if (!assetId) return uri;
-      const info = await MediaLibrary.getAssetInfoAsync(assetId);
-      const resolved = info?.localUri ?? "";
-      if (!resolved.startsWith("file://")) {
-        return uri;
-      }
-      resolvedUriCacheRef.current.set(uri, resolved);
-      if (resolved !== uri) {
-        void upsertDisplayUriCacheRows([
-          {
-            sourceUri: uri,
-            assetId,
-            displayUri: resolved,
-            updatedAt: Date.now(),
-          },
-        ]).catch((err) => {
-          console.log("[Cache] displayUri persistent save error", err);
-        });
-      }
-      return resolved;
-    } catch (err) {
-      console.log("resolveDisplayUri error:", err);
-      return uri;
-    }
-  }, []);
-
-  /* 2026.04.22 사용자가 사진을 눌렀을 때 해당 항목만 고해상도 URI로 보강해 리스트 전체 변환 없이 상세 품질을 확보하기 위해 뷰어 전용 로더를 추가 by June */
-  const resolveViewerDetailUri = useCallback(
-    async (sourceUri: string) => {
-      const resolved = await resolveDisplayUri(sourceUri);
-      setViewerDetailUriMap((prev) => {
-        if (prev[sourceUri] === resolved) return prev;
-        return { ...prev, [sourceUri]: resolved };
-      });
-    },
-    [resolveDisplayUri],
-  );
-
-  const waitWithTimeout = useCallback(
-    async (work: Promise<unknown>, timeoutMs: number) => {
-      await Promise.race([
-        work,
-        new Promise((resolve) => setTimeout(resolve, timeoutMs)),
-      ]);
-    },
-    [],
-  );
-
   async function prepareAndStartSlideshow(params?: {
     startIndex?: number;
     sourceUris?: string[];
@@ -2645,9 +2474,6 @@ export default function HomeScreen() {
 
       startSlideshow(safeIndex, currentUris);
 
-      const currentUri = currentUris[safeIndex];
-      /* 2026.06.03 슬라이드쇼 시작은 즉시성을 우선하고 위치 reverse geocode까지 기다리지는 않도록 현재 장 상세 URI만 짧게 준비 by Codex */
-      void waitWithTimeout(resolveViewerDetailUri(currentUri), SLIDESHOW_PREP_TIMEOUT_MS).catch(() => {});
       if (sourcePhoto) {
         void prioritizePhotoLocation(sourcePhoto);
       }
@@ -2655,10 +2481,6 @@ export default function HomeScreen() {
       setSlideshowPreparing(false);
     }
   }
-
-  useEffect(() => {
-    displayUriMapRef.current = displayUriMap;
-  }, [displayUriMap]);
 
   useEffect(() => {
     thumbnailReadyByUriRef.current = thumbnailReadyByUri;
@@ -2680,10 +2502,6 @@ export default function HomeScreen() {
       return next;
     });
   }, []);
-
-  useEffect(() => {
-    setThumbnailResolveLimit(IOS_THUMBNAIL_RESOLVE_INITIAL_LIMIT);
-  }, [filter.dateStart, filter.dateEnd, filter.timeStart, filter.timeEnd, filter.countries, filter.cities]);
 
   useEffect(() => {
     const loop = Animated.loop(
@@ -2712,122 +2530,6 @@ export default function HomeScreen() {
       }),
     [thumbnailSkeletonAnim],
   );
-
-  useEffect(() => {
-    if (Platform.OS !== "ios") {
-      setThumbnailResolving(false);
-      return;
-    }
-
-    /* 2026.05.28 기존 200장 동시 변환은 iOS 메모리 피크를 만들 수 있어 현재 화면 근처 항목만 순차 배치로 해상하도록 변경 by June */
-    const targets = photos
-      .slice(0, thumbnailResolveLimit)
-      .map((p) => p.uri)
-      .filter(
-        (uri) => uri.startsWith("ph://") && !displayUriMapRef.current[uri],
-      );
-
-    if (targets.length === 0) {
-      setThumbnailResolving(false);
-      return;
-    }
-
-    let cancelled = false;
-    const runId = thumbnailResolveRunIdRef.current + 1;
-    thumbnailResolveRunIdRef.current = runId;
-    setThumbnailResolveRunId(runId);
-    setThumbnailResolving(true);
-    console.log("[Thumbnail] queue", {
-      runId,
-      total: targets.length,
-      cached: Object.keys(displayUriMapRef.current).length,
-      limit: thumbnailResolveLimit,
-    });
-
-    void (async () => {
-      try {
-        for (
-          let i = 0;
-          i < targets.length;
-          i += IOS_THUMBNAIL_RESOLVE_BATCH_SIZE
-        ) {
-          if (cancelled || thumbnailResolveRunIdRef.current !== runId) {
-            console.log("[Thumbnail] skipped stale request", {
-              runId,
-              current: thumbnailResolveRunIdRef.current,
-              start: i,
-            });
-            return;
-          }
-
-          const batch = targets.slice(
-            i,
-            i + IOS_THUMBNAIL_RESOLVE_BATCH_SIZE,
-          );
-          console.log("[Thumbnail] batch start", {
-            runId,
-            start: i,
-            size: batch.length,
-          });
-          const pairs = await Promise.all(
-            batch.map(
-              async (uri) => [uri, await resolveDisplayUri(uri)] as const,
-            ),
-          );
-
-          if (cancelled || thumbnailResolveRunIdRef.current !== runId) {
-            console.log("[Thumbnail] skipped stale request", {
-              runId,
-              current: thumbnailResolveRunIdRef.current,
-              start: i,
-            });
-            return;
-          }
-
-          setDisplayUriMap((prev) => {
-            let changed = false;
-            const next = { ...prev };
-            for (const [sourceUri, resolvedUri] of pairs) {
-              if (
-                !next[sourceUri] &&
-                resolvedUri &&
-                resolvedUri !== sourceUri
-              ) {
-                next[sourceUri] = resolvedUri;
-                changed = true;
-              }
-            }
-            if (changed) displayUriMapRef.current = next;
-            if (changed) {
-              console.log("[Cache] displayUriMap size", {
-                size: Object.keys(next).length,
-              });
-            }
-            return changed ? next : prev;
-          });
-          console.log("[Thumbnail] batch done", {
-            runId,
-            start: i,
-            resolved: pairs.length,
-          });
-
-          if (i + IOS_THUMBNAIL_RESOLVE_BATCH_SIZE < targets.length) {
-            await new Promise((resolve) =>
-              setTimeout(resolve, IOS_THUMBNAIL_RESOLVE_BATCH_DELAY_MS),
-            );
-          }
-        }
-      } finally {
-        if (!cancelled && thumbnailResolveRunIdRef.current === runId) {
-          setThumbnailResolving(false);
-        }
-      }
-    })();
-
-    return () => {
-      cancelled = true;
-    };
-  }, [photos, resolveDisplayUri, thumbnailResolveLimit]);
 
   /* 2026.06.02 초기/필터 로드 직후 자동 위치 보강은 사용자가 요청하지 않은 추가 작업이라 비활성화.
      위치 정보는 위치 필터 적용, 지도 진입, 썸네일 탭 같은 명시적 액션에서만 확장되도록 유지 by June */
@@ -3254,7 +2956,6 @@ export default function HomeScreen() {
       setPhotos(nextVisible);
       photosAllRef.current = nextBase;
       photosRef.current = nextVisible;
-      pruneDisplayUriCacheForPhotos(nextBase);
       setEndCursor(null);
       setHasNextPage(false);
       dbDateTimePagingRef.current = { enabled: false, offset: 0 };
@@ -3278,7 +2979,6 @@ export default function HomeScreen() {
       locationSearchPhaseLabels.thumbnail,
       loadPhotosForDateTimeSegment,
       markLoadedBaseRange,
-      pruneDisplayUriCacheForPhotos,
       refreshFilterProgress,
       sortPhotosForDisplay,
       showLocationSearchPhaseText,
@@ -3312,7 +3012,6 @@ export default function HomeScreen() {
         setPhotos(nextVisible);
         photosAllRef.current = nextBase;
         photosRef.current = nextVisible;
-        pruneDisplayUriCacheForPhotos(nextBase);
         setEndCursor(null);
         setHasNextPage(false);
         dbDateTimePagingRef.current = { enabled: false, offset: 0 };
@@ -3398,14 +3097,11 @@ export default function HomeScreen() {
       );
       const nextVisible = deriveVisiblePhotos(nextBase, currentFilter);
 
-      await showLocationSearchPhaseText(locationSearchPhaseLabels.thumbnail);
-      await hydratePersistedDisplayUriCache(nextBase, "incremental-date-reload");
       await showLocationSearchPhaseText(locationSearchPhaseLabels.apply);
       setPhotosAll(nextBase);
       setPhotos(nextVisible);
       photosAllRef.current = nextBase;
       photosRef.current = nextVisible;
-      pruneDisplayUriCacheForPhotos(nextBase);
       setEndCursor(null);
       setHasNextPage(false);
       dbDateTimePagingRef.current = {
@@ -3424,13 +3120,11 @@ export default function HomeScreen() {
       dedupePhotosByUri,
       deriveVisiblePhotos,
       diffDaysDateOnly,
-      hydratePersistedDisplayUriCache,
       locationSearchPhaseLabels.apply,
       locationSearchPhaseLabels.target,
       locationSearchPhaseLabels.thumbnail,
       loadPhotosForDateTimeSegment,
       markLoadedBaseRange,
-      pruneDisplayUriCacheForPhotos,
       refreshFilterProgress,
       sortPhotosForDisplay,
       showLocationSearchPhaseText,
@@ -3835,7 +3529,6 @@ export default function HomeScreen() {
         return;
       }
 
-      await hydratePersistedDisplayUriCache(initialBase, "initial-medialibrary");
       setPhotos(initial);
       setPhotosAll(initialBase);
       /* 2026.04.22 초기 MediaLibrary 경로에서도 현재 표출 건수를 progress에 반영해 사용자에게 로드 상태를 보여주기 위해 추가 by June */
@@ -3885,7 +3578,6 @@ export default function HomeScreen() {
     collectPhotosForTarget,
     dedupePhotosByUri,
     deriveVisiblePhotos,
-    hydratePersistedDisplayUriCache,
     isLatestPhotoLoad,
     markLoadedBaseRange,
     defaultRangeStart,
@@ -3941,11 +3633,6 @@ export default function HomeScreen() {
     setEmptyMessage(null);
     setAppendLoading(false);
     setBackgroundLoading(false);
-    setThumbnailResolving(false);
-    thumbnailResolveRunIdRef.current += 1;
-    setThumbnailResolveRunId(thumbnailResolveRunIdRef.current);
-    /* 2026.04.22 필터 변경 시 이전 상세 URI 캐시를 비워 누적 메모리 증가를 방지하기 위해 초기화 추가 by June */
-    setViewerDetailUriMap({});
     /* 2026.04.22 필터 재검색 시작 시 progress를 초기화해 이전 필터 값이 남아 혼동되는 것을 방지하기 위해 추가 by June */
     setProgress({ loaded: 0, total: null });
     setLocationSearchTargetTotalCount(null);
@@ -4048,12 +3735,9 @@ export default function HomeScreen() {
         return;
       }
 
-      await showLocationSearchPhaseText(locationSearchPhaseLabels.thumbnail);
-      await hydratePersistedDisplayUriCache(sortedBase, "filter-medialibrary");
       await showLocationSearchPhaseText(locationSearchPhaseLabels.apply);
       setPhotos(sorted);
       setPhotosAll(sortedBase);
-      pruneDisplayUriCacheForPhotos(sortedBase);
       /* 2026.04.22 MediaLibrary 경로에서도 현재 필터의 표출/전체 건수를 동기화해 append 전 진행률 기준을 맞추기 위해 추가 by June */
       void refreshFilterProgress(currentFilter, sorted.length);
       setEndCursor(nextCursor);
@@ -4092,10 +3776,8 @@ export default function HomeScreen() {
     buildBaseDateTimeFilter,
     formatFilterForLog,
       deriveVisiblePhotos,
-      hydratePersistedDisplayUriCache,
       isLatestPhotoLoad,
       markLoadedBaseRange,
-      pruneDisplayUriCacheForPhotos,
       refreshFilterProgress,
       tryReuseLoadedBaseRangeFromMemory,
       skipStalePhotoLoad,
@@ -4228,10 +3910,8 @@ export default function HomeScreen() {
           return;
         }
 
-        await hydratePersistedDisplayUriCache(sortedBase, `${mode}-medialibrary`);
         setPhotos(sorted);
         setPhotosAll(sortedBase);
-        pruneDisplayUriCacheForPhotos(sortedBase);
         /* 2026.04.22 MediaLibrary append에서도 누적 표출 건수를 프로그레스바에 반영해 사용자 체감 진행률을 맞추기 위해 추가 by June */
         void refreshFilterProgress(currentFilter, sorted.length);
         setEndCursor(nextCursor);
@@ -4270,10 +3950,8 @@ export default function HomeScreen() {
       deriveVisiblePhotos,
       filterLoading,
       hasNextPage,
-      hydratePersistedDisplayUriCache,
       isLatestPhotoLoad,
       markLoadedBaseRange,
-      pruneDisplayUriCacheForPhotos,
       refreshFilterProgress,
       skipStalePhotoLoad,
       sortPhotosForDisplay,
@@ -4804,17 +4482,12 @@ export default function HomeScreen() {
   // 썸네일 그리드에 사진 데이터 렌더링
   const renderItem: ListRenderItem<Photo> = ({ item, index }) => {
     const isThumbnailReady = Boolean(thumbnailReadyByUri[item.uri]);
-    const resolvedDisplayUri = displayUriMap[item.uri];
-    const hasUsableDisplayUri =
-      !item.uri.startsWith("ph://") ||
-      (typeof resolvedDisplayUri === "string" &&
-        resolvedDisplayUri.startsWith("file://"));
-    const shouldShowPhPlaceholder =
-      Platform.OS === "ios" &&
-      item.uri.startsWith("ph://") &&
-      !hasUsableDisplayUri;
-    const shouldShowThumbnailPlaceholder =
-      shouldShowPhPlaceholder || !isThumbnailReady;
+    const isIOSPhotoKitAsset =
+      Platform.OS === "ios" && item.uri.startsWith("ph://");
+    const canRenderThumbnail =
+      !isIOSPhotoKitAsset ||
+      Boolean(item.assetId?.trim() || getAssetIdFromPhUri(item.uri));
+    const shouldShowThumbnailPlaceholder = !isThumbnailReady;
 
     // console.log("PHOTO URI >>>", item.uri);
     return (
@@ -4837,30 +4510,20 @@ export default function HomeScreen() {
           setViewerVisible(true);
           /* 2026.05.27 선택한 사진의 위치 메타 유무를 즉시 확인하기 위한 진단 로그 추가 by June */
           void debugPhotoLocationMeta(item);
-          /* 2026.04.22 상세 보기 진입 시 선택 사진만 고해상도 URI를 비동기 보강해 리스트 전체 메모리 사용 없이 상세 품질을 확보하기 위해 추가 by June */
-          void resolveViewerDetailUri(item.uri);
           /* 2026.05.06 사용자가 선택한 사진의 위치정보는 즉시 우선 보강해 상세 진입 직후 공백 시간을 줄이기 위해 추가 by June */
           void prioritizePhotoLocation(item);
-          /* 2026.04.22 좌우 스와이프 첫 체감을 개선하기 위해 인접 1장의 URI도 선행 보강하되 범위를 최소화해 메모리 피크를 제한 by June */
-          const next = photosRef.current[index + 1];
-          if (next?.uri) {
-            void resolveViewerDetailUri(next.uri);
-          }
         }}
       >
         <View style={styles.imageFrame}>
-          {!shouldShowPhPlaceholder ? (
+          {canRenderThumbnail ? (
             /* 2026.06.03 일반 URI도 실제 onLoad 전까지는 placeholder를 남겨 흰 박스처럼 보이지 않도록 조정 by June */
-            <Image
-              source={{
-                uri: hasUsableDisplayUri
-                  ? (resolvedDisplayUri ?? item.uri)
-                  : item.uri,
-              }}
+            <PhotoThumbnail
+              photo={item}
               style={[styles.image, styles.imageLayer, !isThumbnailReady && styles.imageHidden]}
-              resizeMode="cover"
               onLoad={() => markThumbnailReady(item.uri)}
-              onError={() => markThumbnailReady(item.uri)}
+              onError={() => {
+                if (!isIOSPhotoKitAsset) markThumbnailReady(item.uri);
+              }}
             />
           ) : null}
           {shouldShowThumbnailPlaceholder ? (
@@ -5211,11 +4874,6 @@ export default function HomeScreen() {
     edges.push("top"); // iOS는 top 추가해야 UI 안깨짐
   }
   const safeAreaEdges: Edges = edges as Edges;
-  const hasPendingDisplayThumbnails =
-    Platform.OS === "ios" &&
-    photos
-      .slice(0, thumbnailResolveLimit)
-      .some((p) => p.uri.startsWith("ph://") && !displayUriMap[p.uri]);
   const hasPendingVisibleThumbnailPaint =
     thumbnailBlockingUris.length > 0 &&
     thumbnailBlockingUris.some((uri) => !thumbnailReadyByUri[uri]);
@@ -5224,9 +4882,7 @@ export default function HomeScreen() {
     ? t("loadingPhotos", "Loading thumbnails...")
     : filterLoading
       ? "Updating thumbnails..."
-    : thumbnailResolving ||
-            hasPendingDisplayThumbnails ||
-            hasPendingVisibleThumbnailPaint
+    : hasPendingVisibleThumbnailPaint
           ? t("loadingPhotos", "Loading thumbnails...")
           : isScanning
             ? "Scanning photos..."
@@ -5343,8 +4999,6 @@ export default function HomeScreen() {
       filterLoading,
       appendLoading,
       backgroundLoading,
-      thumbnailResolving,
-      hasPendingDisplayThumbnails,
       hasPendingVisibleThumbnailPaint,
       didInitialLoad,
     });
@@ -5354,13 +5008,11 @@ export default function HomeScreen() {
     didInitialLoad,
     emptyMessage,
     filterLoading,
-    hasPendingDisplayThumbnails,
     hasPendingVisibleThumbnailPaint,
     initialLoading,
     isMainInteractionBlocked,
     mainInteractionBlockReason,
     photos.length,
-    thumbnailResolving,
   ]);
 
   useEffect(() => {
@@ -5372,8 +5024,6 @@ export default function HomeScreen() {
       filterLoading,
       appendLoading,
       backgroundLoading,
-      thumbnailResolving,
-      hasPendingDisplayThumbnails,
       hasPendingVisibleThumbnailPaint,
       isScanning,
       mainInteractionBlockReason,
@@ -5383,13 +5033,11 @@ export default function HomeScreen() {
     backgroundLoading,
     didInitialLoad,
     filterLoading,
-    hasPendingDisplayThumbnails,
     hasPendingVisibleThumbnailPaint,
     initialLoading,
     isMainInteractionBlocked,
     isScanning,
     mainInteractionBlockReason,
-    thumbnailResolving,
   ]);
 
   useEffect(() => {
@@ -5524,10 +5172,6 @@ export default function HomeScreen() {
                 maxToRenderPerBatch={20}
                 windowSize={7}
                 removeClippedSubviews
-                onViewableItemsChanged={
-                  thumbnailViewableItemsChangedRef.current
-                }
-                viewabilityConfig={thumbnailViewabilityConfigRef.current}
                 refreshing={refreshing} // 2026.03.03 June 추가
                 onRefresh={onRefresh} // 2026.03.03 June 추가
                 contentContainerStyle={{
@@ -5612,8 +5256,6 @@ export default function HomeScreen() {
               {!didInitialLoad ||
               initialLoading ||
               filterLoading ||
-              thumbnailResolving ||
-              hasPendingDisplayThumbnails ||
               isScanning ? ( // 2026.03.27 By June
                 <View style={styles.gridOverlay} pointerEvents="auto">
                   <View style={styles.loadingBox}>
@@ -5871,7 +5513,6 @@ export default function HomeScreen() {
                 photosAllRef.current.find((photo) => photo.uri === nextViewerUri) ??
                 photosRef.current.find((photo) => photo.uri === nextViewerUri);
               void prioritizePhotoLocation(nextViewerPhoto);
-              void resolveViewerDetailUri(nextViewerUri);
             }
           }}
           primaryButtonMode={slideshowOn ? "pause" : "play"}
@@ -5905,9 +5546,6 @@ export default function HomeScreen() {
           currentFilterPhotoCount={progress.total}
           photosLength={photos.length}
           photosAllLength={photosAll.length}
-          displayUriMapSize={Object.keys(displayUriMap).length}
-          thumbnailResolving={thumbnailResolving}
-          thumbnailResolveRunId={thumbnailResolveRunId}
           photoLoadRequestId={photoLoadRequestId}
           currentDataSource={currentDataSource}
           hasNextPage={hasNextPage}

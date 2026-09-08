@@ -7,9 +7,6 @@ type AsyncWorkDebugOverlayProps = {
   currentFilterPhotoCount: number | null;
   photosLength: number;
   photosAllLength: number;
-  displayUriMapSize: number;
-  thumbnailResolving: boolean;
-  thumbnailResolveRunId: number;
   photoLoadRequestId: number;
   currentDataSource: string;
   hasNextPage: boolean;
@@ -27,9 +24,6 @@ export default function AsyncWorkDebugOverlay({
   currentFilterPhotoCount,
   photosLength,
   photosAllLength,
-  displayUriMapSize,
-  thumbnailResolving,
-  thumbnailResolveRunId,
   photoLoadRequestId,
   currentDataSource,
   hasNextPage,
@@ -77,9 +71,6 @@ export default function AsyncWorkDebugOverlay({
     `Indexed photos: ${indexedPhotoCount}`,
     `Filter count: ${currentFilterPhotoCount ?? "unknown"}`,
     `photos/photosAll: ${photosLength}/${photosAllLength}`,
-    `displayUriMap: ${displayUriMapSize}`,
-    `thumbnailResolving: ${thumbnailResolving}`,
-    `thumbnailRunId: ${thumbnailResolveRunId}`,
     `photoLoadRequestId: ${photoLoadRequestId}`,
     `source: ${currentDataSource}`,
     `hasNextPage: ${hasNextPage}`,

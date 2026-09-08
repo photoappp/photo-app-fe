@@ -129,7 +129,6 @@ export default function MapView({
   const [detailVisible, setDetailVisible] = useState(false);
   const [detailUris, setDetailUris] = useState<string[]>([]);
   const [detailIndex, setDetailIndex] = useState(0);
-  const [detailLoading, setDetailLoading] = useState(false);
   const [slideshowOn, setSlideshowOn] = useState(false);
   const [detailItems, setDetailItems] = useState<
     Array<{
@@ -259,21 +258,6 @@ export default function MapView({
       current.thumbnailUri && current.thumbnailUri !== FALLBACK_MARKER_URI;
     if (candidateHasThumb !== currentHasThumb) return !!candidateHasThumb;
     return String(candidate.sourceUri ?? "") > String(current.sourceUri ?? "");
-  };
-
-  const resolveDetailUri = async (sourceUri: string) => {
-    if (!sourceUri) return sourceUri;
-    try {
-      if (sourceUri.startsWith("ph://")) {
-        const assetId = getAssetIdFromPhUri(sourceUri);
-        if (!assetId) return sourceUri;
-        const info = await MediaLibrary.getAssetInfoAsync(assetId);
-        return info?.localUri ?? info?.uri ?? sourceUri;
-      }
-      return sourceUri;
-    } catch {
-      return sourceUri;
-    }
   };
 
   const displayMarkers = useMemo(() => {
@@ -1074,21 +1058,7 @@ export default function MapView({
         setDetailItems(detailMeta);
         setDetailIndex(0);
         setDetailVisible(true);
-        setDetailLoading(true);
-        setDetailUris([]);
-
-        void (async () => {
-          try {
-            const resolved = await Promise.all(
-              sourceUris.map((uri) => resolveDetailUri(uri)),
-            );
-            setDetailUris(resolved);
-          } catch {
-            setDetailUris(sourceUris);
-          } finally {
-            setDetailLoading(false);
-          }
-        })();
+        setDetailUris(sourceUris);
       }
     } catch (e) {
       console.error("WebView message parse error", e);
@@ -1153,7 +1123,6 @@ export default function MapView({
     setCoordinatesReady(false);
     setWebViewLoaded(false);
     setDetailVisible(false);
-    setDetailLoading(false);
     setDetailUris([]);
     setDetailIndex(0);
     setDetailItems([]);
@@ -1260,17 +1229,12 @@ export default function MapView({
             </TouchableOpacity>
           </View>
 
-          {detailVisible && detailLoading ? (
-            <View style={styles.detailLoadingOverlay} pointerEvents="auto">
-              <View style={styles.detailLoadingCard}>
-                <ActivityIndicator size="large" color="#6366F1" />
-                <Text style={styles.detailLoadingText}>Preparing photo...</Text>
-              </View>
-            </View>
-          ) : null}
           <PhotoDetailViewer
-            visible={detailVisible && !detailLoading && detailUris.length > 0}
-            images={detailUris.map((uri) => ({ uri }))}
+            visible={detailVisible && detailUris.length > 0}
+            images={detailUris.map((uri) => ({
+              uri,
+              assetId: getAssetIdFromPhUri(uri) ?? undefined,
+            }))}
             imageIndex={Math.min(detailIndex, Math.max(detailUris.length - 1, 0))}
             onImageIndexChange={(index) => {
               const safeIndex = Math.max(0, Math.min(index, detailUris.length - 1));
@@ -1332,33 +1296,6 @@ const styles = StyleSheet.create({
     shadowOpacity: 0.10,
     shadowRadius: 16,
     shadowOffset: { width: 0, height: 8 },
-  },
-  detailLoadingOverlay: {
-    ...StyleSheet.absoluteFillObject,
-    zIndex: 20,
-    alignItems: "center",
-    justifyContent: "center",
-    backgroundColor: "transparent",
-  },
-  detailLoadingCard: {
-    minWidth: 220,
-    paddingHorizontal: 22,
-    paddingVertical: 18,
-    borderRadius: 20,
-    backgroundColor: "rgba(255,255,255,0.96)",
-    alignItems: "center",
-    justifyContent: "center",
-    gap: 12,
-    shadowColor: "#000",
-    shadowOpacity: 0.16,
-    shadowRadius: 18,
-    shadowOffset: { width: 0, height: 8 },
-    elevation: 10,
-  },
-  detailLoadingText: {
-    color: "#1F2937",
-    fontSize: 15,
-    fontWeight: "700",
   },
   mapStatusOverlay: {
     flex: 1,
