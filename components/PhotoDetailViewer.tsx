@@ -1,7 +1,12 @@
 import { Ionicons } from "@expo/vector-icons";
 import { LinearGradient } from "expo-linear-gradient";
 import { useMemo } from "react";
-import { StyleSheet, Text, TouchableOpacity, View } from "react-native";
+import {
+  StyleSheet,
+  Text,
+  TouchableOpacity,
+  View,
+} from "react-native";
 import ImageViewing from "react-native-image-viewing";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import IconPlay from "@/assets/icons/ic_play.svg";
@@ -12,8 +17,12 @@ type Props = {
   imageIndex: number;
   onImageIndexChange?: (index: number) => void;
   onRequestClose: () => void;
-  onPressPlay?: () => void;
-  showPlayButton?: boolean;
+  onPressPrimary?: () => void;
+  primaryButtonMode?: "play" | "pause";
+  showCloseButton?: boolean;
+  backgroundColor?: string;
+  animationType?: "none" | "slide" | "fade";
+  presentationStyle?: "fullScreen" | "pageSheet" | "formSheet" | "overFullScreen";
   dateText?: string;
   locationText?: string;
   onPressShare?: () => void;
@@ -26,8 +35,12 @@ export default function PhotoDetailViewer({
   imageIndex,
   onImageIndexChange,
   onRequestClose,
-  onPressPlay,
-  showPlayButton = false,
+  onPressPrimary,
+  primaryButtonMode = "play",
+  showCloseButton = true,
+  backgroundColor = "rgba(0,0,0,0.98)",
+  animationType = "fade",
+  presentationStyle,
   dateText,
   locationText,
   onPressShare,
@@ -36,43 +49,52 @@ export default function PhotoDetailViewer({
   const insets = useSafeAreaInsets();
 
   const Header = useMemo(
-    () => () =>
-      (
-        <View
-          style={[
-            styles.header,
-            { paddingTop: Math.max(insets.top, 12) },
-          ]}
-        >
-          {showPlayButton ? (
+    () => {
+      const PhotoDetailViewerHeader = () => (
+        <View style={styles.header}>
+          <View
+            style={[
+              styles.headerBar,
+              { paddingTop: Math.max(insets.top, 12) },
+            ]}
+          >
             <TouchableOpacity
-              onPress={onPressPlay}
-              style={styles.playSlot}
+              onPress={onPressPrimary}
+              style={styles.primarySlot}
               activeOpacity={0.9}
             >
               <LinearGradient
-                colors={["#2B7FFF", "#AD46FF"]}
+                colors={primaryButtonMode === "pause" ? ["#AD46FF", "#2B7FFF"] : ["#2B7FFF", "#AD46FF"]}
                 start={{ x: 0, y: 0 }}
                 end={{ x: 1, y: 0 }}
-                style={styles.playBg}
+                style={styles.primaryBg}
               >
-                <IconPlay width={18} height={18} />
+                {primaryButtonMode === "pause" ? (
+                  <Text style={styles.pauseTxt}>Ⅱ</Text>
+                ) : (
+                  <IconPlay width={18} height={18} />
+                )}
               </LinearGradient>
             </TouchableOpacity>
-          ) : (
-            <View style={styles.playSlot} />
-          )}
-          <TouchableOpacity onPress={onRequestClose} style={styles.closeBtn}>
-            <Text style={styles.closeTxt}>✕</Text>
-          </TouchableOpacity>
+            {showCloseButton ? (
+              <TouchableOpacity onPress={onRequestClose} style={styles.closeBtn}>
+                <Text style={styles.closeTxt}>✕</Text>
+              </TouchableOpacity>
+            ) : (
+              <View style={styles.closeBtnPlaceholder} />
+            )}
+          </View>
         </View>
-      ),
-    [insets.top, onPressPlay, onRequestClose, showPlayButton]
+      );
+      PhotoDetailViewerHeader.displayName = "PhotoDetailViewerHeader";
+      return PhotoDetailViewerHeader;
+    },
+    [insets.top, onPressPrimary, onRequestClose, primaryButtonMode, showCloseButton]
   );
 
   const Footer = useMemo(
-    () => () =>
-      (
+    () => {
+      const PhotoDetailViewerFooter = () => (
         <View style={[styles.footer, { paddingBottom: Math.max(insets.bottom, 16) }]}>
           <TouchableOpacity onPress={onPressShare}>
             <Ionicons name="share-outline" size={24} color="#fff" />
@@ -85,7 +107,10 @@ export default function PhotoDetailViewer({
             <Ionicons name="trash-outline" size={24} color="#fff" />
           </TouchableOpacity>
         </View>
-      ),
+      );
+      PhotoDetailViewerFooter.displayName = "PhotoDetailViewerFooter";
+      return PhotoDetailViewerFooter;
+    },
     [dateText, insets.bottom, locationText, onPressDelete, onPressShare]
   );
 
@@ -98,7 +123,9 @@ export default function PhotoDetailViewer({
       onImageIndexChange={onImageIndexChange}
       HeaderComponent={Header}
       FooterComponent={Footer}
-      backgroundColor="rgba(0,0,0,0.98)"
+      backgroundColor={backgroundColor}
+      animationType={animationType}
+      presentationStyle={presentationStyle}
       swipeToCloseEnabled={false}
       doubleTapToZoomEnabled
     />
@@ -109,24 +136,38 @@ const styles = StyleSheet.create({
   header: {
     position: "absolute",
     top: 0,
-    left: 16,
-    right: 16,
+    left: 0,
+    right: 0,
+    bottom: 0,
     zIndex: 10,
+  },
+  headerBar: {
+    position: "absolute",
+    top: 0,
+    left: 0,
+    right: 0,
+    paddingHorizontal: 16,
     flexDirection: "row",
     justifyContent: "space-between",
     alignItems: "center",
   },
-  playSlot: {
+  primarySlot: {
     width: 108,
     height: 52,
     borderRadius: 16,
   },
-  playBg: {
+  primaryBg: {
     width: "100%",
     height: "100%",
     borderRadius: 16,
     alignItems: "center",
     justifyContent: "center",
+  },
+  pauseTxt: {
+    color: "#FFFFFF",
+    fontSize: 22,
+    fontWeight: "800",
+    lineHeight: 22,
   },
   closeBtn: {
     width: 52,
@@ -142,6 +183,10 @@ const styles = StyleSheet.create({
     color: "#D9D9FF",
     fontSize: 24,
     fontWeight: "300",
+  },
+  closeBtnPlaceholder: {
+    width: 52,
+    height: 52,
   },
   footer: {
     width: "100%",

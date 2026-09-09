@@ -1,4 +1,5 @@
 import { useLanguage } from "@/components/context/LanguageContext";
+import { useSlideshowTime } from "@/components/context/SlideshowTimeContext";
 import { TRANSLATIONS } from "@/constants/Translations";
 import PhotoDetailViewer from "@/components/PhotoDetailViewer";
 import * as amplitude from "@amplitude/analytics-react-native";
@@ -44,11 +45,6 @@ type Props = {
   openToken?: number;
   preparingLocations?: boolean;
   preparingMessage?: string;
-  onOpenPhotoFromMap?: (payload: {
-    sourceUri: string;
-    city?: string;
-    country?: string;
-  }) => void;
 };
 
 /* 2026.05.12 이미지 로드 실패 시에도 좌표 마커는 유지하기 위해 공통 placeholder 이미지를 정의 by June
@@ -88,6 +84,12 @@ type DisplayMarkerMode = "representative" | "photo";
 
 type DisplayMarker = {
   sourceUri: string;
+  sourcePhotos: Array<{
+    sourceUri: string;
+    city?: string;
+    country?: string;
+    takenAt?: number | null;
+  }>;
   latitude: number;
   longitude: number;
   markerUri: string;
@@ -120,16 +122,23 @@ export default function MapView({
   openToken = 0,
   preparingLocations = false,
   preparingMessage,
-  onOpenPhotoFromMap,
 }: Props) {
   const { language } = useLanguage();
+  const { slideshowTime } = useSlideshowTime();
   const [visible, setVisible] = useState(false);
   const [detailVisible, setDetailVisible] = useState(false);
-  const [detailUri, setDetailUri] = useState<string | null>(null);
+  const [detailUris, setDetailUris] = useState<string[]>([]);
+  const [detailIndex, setDetailIndex] = useState(0);
   const [detailLoading, setDetailLoading] = useState(false);
-  const [detailPlace, setDetailPlace] = useState<string>("");
-  const [detailTakenAt, setDetailTakenAt] = useState<number | null>(null);
-  const [detailSourceUri, setDetailSourceUri] = useState<string | null>(null);
+  const [slideshowOn, setSlideshowOn] = useState(false);
+  const [detailItems, setDetailItems] = useState<
+    Array<{
+      sourceUri: string;
+      city?: string;
+      country?: string;
+      takenAt?: number | null;
+    }>
+  >([]);
   // 2026-03-18 get proper coordinates by yen
   const [coordinates, setCoordinates] = useState<any[]>([]); // store base64 coords
   const [loading, setLoading] = useState(false);
@@ -148,6 +157,68 @@ export default function MapView({
   const hasAutoFitMapRef = useRef(false);
   const lastViewportBoundsRef = useRef<ViewportBounds>(null);
   const lastViewportZoomRef = useRef<number>(0);
+  const slideshowTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const slideshowRunTokenRef = useRef(0);
+  const slideshowDelayMs = useMemo(() => {
+    const delayMs = Number(slideshowTime);
+    if (!Number.isFinite(delayMs) || delayMs <= 0) return 3000;
+    return Math.max(1000, Math.round(delayMs));
+  }, [slideshowTime]);
+
+  const clearSlideshowTimer = useCallback(() => {
+    if (slideshowTimerRef.current !== null) {
+      clearTimeout(slideshowTimerRef.current);
+      slideshowTimerRef.current = null;
+    }
+  }, []);
+
+  const closeDetailSlideshow = useCallback(() => {
+    slideshowRunTokenRef.current += 1;
+    clearSlideshowTimer();
+    setSlideshowOn(false);
+    setDetailVisible(false);
+  }, [clearSlideshowTimer]);
+
+  const pauseDetailSlideshow = useCallback(() => {
+    slideshowRunTokenRef.current += 1;
+    clearSlideshowTimer();
+    setSlideshowOn(false);
+  }, [clearSlideshowTimer]);
+
+  const scheduleNextDetailSlide = useCallback(
+    (token: number) => {
+      clearSlideshowTimer();
+      slideshowTimerRef.current = setTimeout(() => {
+        if (token !== slideshowRunTokenRef.current) return;
+        const total = detailUris.length;
+        if (total <= 0) {
+          closeDetailSlideshow();
+          return;
+        }
+
+        setDetailIndex((prev) => {
+          const next = prev + 1;
+          if (next >= total) {
+            closeDetailSlideshow();
+            return prev;
+          }
+
+          scheduleNextDetailSlide(token);
+          return next;
+        });
+      }, slideshowDelayMs);
+    },
+    [clearSlideshowTimer, closeDetailSlideshow, detailUris.length, slideshowDelayMs],
+  );
+
+  const startDetailSlideshow = useCallback(() => {
+    if (detailUris.length <= 0) return;
+    slideshowRunTokenRef.current += 1;
+    const token = slideshowRunTokenRef.current;
+    clearSlideshowTimer();
+    setSlideshowOn(true);
+    scheduleNextDetailSlide(token);
+  }, [clearSlideshowTimer, detailUris.length, scheduleNextDetailSlide]);
 
   const isFallbackMarker = (markerUri: string | undefined) =>
     !markerUri || markerUri === FALLBACK_MARKER_URI;
@@ -188,6 +259,21 @@ export default function MapView({
       current.thumbnailUri && current.thumbnailUri !== FALLBACK_MARKER_URI;
     if (candidateHasThumb !== currentHasThumb) return !!candidateHasThumb;
     return String(candidate.sourceUri ?? "") > String(current.sourceUri ?? "");
+  };
+
+  const resolveDetailUri = async (sourceUri: string) => {
+    if (!sourceUri) return sourceUri;
+    try {
+      if (sourceUri.startsWith("ph://")) {
+        const assetId = getAssetIdFromPhUri(sourceUri);
+        if (!assetId) return sourceUri;
+        const info = await MediaLibrary.getAssetInfoAsync(assetId);
+        return info?.localUri ?? info?.uri ?? sourceUri;
+      }
+      return sourceUri;
+    } catch {
+      return sourceUri;
+    }
   };
 
   const displayMarkers = useMemo(() => {
@@ -269,6 +355,19 @@ export default function MapView({
 
         return {
           sourceUri: representative.sourceUri,
+          sourcePhotos: [...items]
+            .sort((left, right) => {
+              const leftTaken = getTakenAtValue(left);
+              const rightTaken = getTakenAtValue(right);
+              if (leftTaken !== rightTaken) return rightTaken - leftTaken;
+              return String(left.sourceUri ?? "").localeCompare(String(right.sourceUri ?? ""));
+            })
+            .map((item) => ({
+              sourceUri: item.sourceUri,
+              city: item.city,
+              country: item.country,
+              takenAt: item.takenAt ?? null,
+            })),
           latitude: representative.latitude,
           longitude: representative.longitude,
           markerUri:
@@ -288,6 +387,14 @@ export default function MapView({
 
     const renderItems = coordinates.map((coord) => ({
       sourceUri: coord.sourceUri,
+      sourcePhotos: [
+        {
+          sourceUri: coord.sourceUri,
+          city: coord.city,
+          country: coord.country,
+          takenAt: coord.takenAt,
+        },
+      ],
       latitude: coord.latitude,
       longitude: coord.longitude,
       markerUri:
@@ -859,20 +966,13 @@ export default function MapView({
               L.marker([c.latitude, c.longitude], { icon: customIcon })
                 .addTo(markerLayer)
                 .on('click', () => {
-                  if (c.isCluster && Number(c.count ?? 0) > 1) {
-                    const nextZoom = Math.min(map.getZoom() + 1, 19);
-                    map.setView([c.latitude, c.longitude], nextZoom, {
-                      animate: true,
-                    });
-                    postViewportBounds();
-                    return;
-                  }
                   window.ReactNativeWebView.postMessage(JSON.stringify({
                     type: 'marker_click',
                     sourceUri: c.sourceUri,
                     city: c.city,
                     country: c.country,
-                    takenAt: c.takenAt ?? null
+                    takenAt: c.takenAt ?? null,
+                    sourcePhotos: c.sourcePhotos ?? [],
                   }));
                 });
             });
@@ -944,43 +1044,51 @@ export default function MapView({
           city: data.city,
           country: data.country,
         });
-        const sourceUri = String(data.sourceUri ?? "");
-        setDetailPlace([data.city, data.country].filter(Boolean).join(", "));
-        setDetailTakenAt(
-          typeof data.takenAt === "number" && Number.isFinite(data.takenAt)
-            ? data.takenAt
-            : null
-        );
-        setDetailSourceUri(sourceUri);
+        const sourcePhotos = Array.isArray(data.sourcePhotos)
+          ? data.sourcePhotos
+          : [{
+              sourceUri: String(data.sourceUri ?? ""),
+              city: data.city,
+              country: data.country,
+              takenAt:
+                typeof data.takenAt === "number" && Number.isFinite(data.takenAt)
+                  ? data.takenAt
+                  : null,
+            }];
+        const sourceUris = sourcePhotos
+          .map((item: any) => String(item?.sourceUri ?? ""))
+          .filter(Boolean);
+        const detailMeta = sourcePhotos
+          .map((item: any) => ({
+            sourceUri: String(item?.sourceUri ?? ""),
+            city: item?.city,
+            country: item?.country,
+            takenAt:
+              typeof item?.takenAt === "number" && Number.isFinite(item?.takenAt)
+                ? item.takenAt
+                : null,
+          }))
+          .filter((item) => item.sourceUri);
+        if (sourceUris.length === 0) return;
+
+        setDetailItems(detailMeta);
+        setDetailIndex(0);
         setDetailVisible(true);
         setDetailLoading(true);
-        setDetailUri(null);
+        setDetailUris([]);
 
         void (async () => {
           try {
-            if (sourceUri.startsWith("ph://")) {
-              const assetId = getAssetIdFromPhUri(sourceUri);
-              if (!assetId) throw new Error("invalid ph uri");
-              const info = await MediaLibrary.getAssetInfoAsync(assetId);
-              setDetailUri(info?.localUri ?? info?.uri ?? sourceUri);
-            } else {
-              setDetailUri(sourceUri);
-            }
+            const resolved = await Promise.all(
+              sourceUris.map((uri) => resolveDetailUri(uri)),
+            );
+            setDetailUris(resolved);
           } catch {
-            setDetailUri(sourceUri);
+            setDetailUris(sourceUris);
           } finally {
             setDetailLoading(false);
           }
         })();
-
-        /* 2026.05.12 지도 위 오버레이가 기본이므로 부모 위임 콜백은 보조 경로로만 유지 by June */
-        if (!sourceUri) {
-          onOpenPhotoFromMap?.({
-            sourceUri,
-            city: data.city,
-            country: data.country,
-          });
-        }
       }
     } catch (e) {
       console.error("WebView message parse error", e);
@@ -1000,11 +1108,12 @@ export default function MapView({
   };
 
   const onPressShare = async () => {
-    if (!detailUri) return;
+    const uri = detailUris[detailIndex] ?? "";
+    if (!uri) return;
     try {
       await Share.open({
-        message: detailPlace ? `Check out this photo! ${detailPlace}` : "Check out this photo!",
-        url: Platform.OS === "android" ? `file://${detailUri}` : detailUri,
+        message: "Check out this photo!",
+        url: Platform.OS === "android" ? `file://${uri}` : uri,
         type: "image/jpeg",
       });
     } catch (err: unknown) {
@@ -1016,18 +1125,26 @@ export default function MapView({
   };
 
   const onPressDelete = () => {
-    if (!detailSourceUri) return;
+    const currentSourceUri = detailItems[detailIndex]?.sourceUri ?? "";
+    if (!currentSourceUri) return;
     Alert.alert("Delete Photo", "Are you sure you want to delete this photo?", [
       { text: "Cancel", style: "cancel" },
       {
         text: "Delete",
         style: "destructive",
         onPress: () => {
-          setCoordinates((prev) => prev.filter((c) => c.sourceUri !== detailSourceUri));
+          setCoordinates((prev) => prev.filter((c) => c.sourceUri !== currentSourceUri));
           setDetailVisible(false);
         },
       },
     ]);
+  };
+
+  const resetMapViewportState = () => {
+    setViewportBounds(null);
+    setMapZoom(0);
+    lastViewportBoundsRef.current = null;
+    lastViewportZoomRef.current = 0;
   };
 
   const performOpenMap = () => {
@@ -1035,6 +1152,12 @@ export default function MapView({
     setThumbnailLoading(false);
     setCoordinatesReady(false);
     setWebViewLoaded(false);
+    setDetailVisible(false);
+    setDetailLoading(false);
+    setDetailUris([]);
+    setDetailIndex(0);
+    setDetailItems([]);
+    resetMapViewportState();
     hasAutoFitMapRef.current = false;
     setVisible(true);
     /* 2026.06.23 지도가 열린 직후 부모가 리워드 팝업을 지도 위에 띄울 수 있도록 통지 by yen */
@@ -1051,6 +1174,13 @@ export default function MapView({
     if (!openToken) return;
     performOpenMap();
   }, [openToken]);
+
+  useEffect(() => {
+    return () => {
+      slideshowRunTokenRef.current += 1;
+      clearSlideshowTimer();
+    };
+  }, [clearSlideshowTimer]);
 
   return (
     <View>
@@ -1098,7 +1228,12 @@ export default function MapView({
           ) : null}
           <View style={styles.closeButton}>
             <TouchableOpacity
-              onPress={() => setVisible(false)}
+              onPress={() => {
+                slideshowRunTokenRef.current += 1;
+                clearSlideshowTimer();
+                setSlideshowOn(false);
+                setVisible(false);
+              }}
               style={{
                 width: 44,
                 height: 44,
@@ -1126,18 +1261,39 @@ export default function MapView({
           </View>
 
           {detailVisible && detailLoading ? (
-            <View style={styles.detailLoadingOverlay}>
-              <ActivityIndicator size="large" color="#fff" />
+            <View style={styles.detailLoadingOverlay} pointerEvents="auto">
+              <View style={styles.detailLoadingCard}>
+                <ActivityIndicator size="large" color="#6366F1" />
+                <Text style={styles.detailLoadingText}>Preparing photo...</Text>
+              </View>
             </View>
           ) : null}
           <PhotoDetailViewer
-            visible={detailVisible && !detailLoading && !!detailUri}
-            images={detailUri ? [{ uri: detailUri }] : []}
-            imageIndex={0}
-            onRequestClose={() => setDetailVisible(false)}
-            showPlayButton={false}
-            dateText={fmtDateTime(detailTakenAt)}
-            locationText={detailPlace}
+            visible={detailVisible && !detailLoading && detailUris.length > 0}
+            images={detailUris.map((uri) => ({ uri }))}
+            imageIndex={Math.min(detailIndex, Math.max(detailUris.length - 1, 0))}
+            onImageIndexChange={(index) => {
+              const safeIndex = Math.max(0, Math.min(index, detailUris.length - 1));
+              setDetailIndex(safeIndex);
+            }}
+            onRequestClose={() => {
+              slideshowRunTokenRef.current += 1;
+              clearSlideshowTimer();
+              setSlideshowOn(false);
+              setDetailVisible(false);
+            }}
+            primaryButtonMode={slideshowOn ? "pause" : "play"}
+            onPressPrimary={slideshowOn ? pauseDetailSlideshow : startDetailSlideshow}
+            showCloseButton={!slideshowOn}
+            backgroundColor="transparent"
+            animationType="fade"
+            presentationStyle="overFullScreen"
+            dateText={fmtDateTime(detailItems[detailIndex]?.takenAt ?? null)}
+            locationText={
+              [detailItems[detailIndex]?.city, detailItems[detailIndex]?.country]
+                .filter(Boolean)
+                .join(", ")
+            }
             onPressShare={onPressShare}
             onPressDelete={onPressDelete}
           />
@@ -1182,7 +1338,27 @@ const styles = StyleSheet.create({
     zIndex: 20,
     alignItems: "center",
     justifyContent: "center",
-    backgroundColor: "rgba(0,0,0,0.85)",
+    backgroundColor: "transparent",
+  },
+  detailLoadingCard: {
+    minWidth: 220,
+    paddingHorizontal: 22,
+    paddingVertical: 18,
+    borderRadius: 20,
+    backgroundColor: "rgba(255,255,255,0.96)",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 12,
+    shadowColor: "#000",
+    shadowOpacity: 0.16,
+    shadowRadius: 18,
+    shadowOffset: { width: 0, height: 8 },
+    elevation: 10,
+  },
+  detailLoadingText: {
+    color: "#1F2937",
+    fontSize: 15,
+    fontWeight: "700",
   },
   mapStatusOverlay: {
     flex: 1,

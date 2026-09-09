@@ -45,6 +45,7 @@
     ],
     "ios": {
       "supportsTablet": true,
+      "buildNumber": "1",
       "infoPlist": {
         "NSPhotoLibraryUsageDescription": "Allow photo-app-fe to access your photos.",
         "NSPhotoLibraryAddUsageDescription": "Allow photo-app-fe to save photos to your device.",

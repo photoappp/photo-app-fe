@@ -1,3 +1,13 @@
+import Constants from "expo-constants";
+
+const appVersion = Constants.expoConfig?.version ?? "1.0.0";
+const buildVersion =
+  Constants.nativeBuildVersion ??
+  Constants.expoConfig?.ios?.buildNumber;
+const appVersionLabel = buildVersion
+  ? `${appVersion} (${buildVersion})`
+  : appVersion;
+
 export const SETTINGS_CONFIG = [
   { id: "userData", translKey: "userData", type: "nav", screen: "userData" },
   { id: "language", translKey: "language", type: "lang" },
@@ -23,8 +33,8 @@ export const SETTINGS_CONFIG = [
     type: "nav",
     screen: "openSource",
   },
-  // POINT TO CHANGE: app version
-  { id: "appVersion", translKey: "appVersion", type: "text", value: "1.0.0" },
+  // TestFlight 빌드마다 자동 표시되도록 앱/빌드 버전 조합을 노출 2026.06.24 June
+  { id: "appVersion", translKey: "appVersion", type: "text", value: appVersionLabel },
 ];
 
 export const LANGUAGES = [
