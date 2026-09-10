@@ -3421,7 +3421,8 @@ export default function HomeScreen() {
         pruneDisplayUriCacheForPhotos(nextBase);
         setEndCursor(null);
         setHasNextPage(false);
-        dbDateTimePagingRef.current = { enabled: false, offset: 0 };
+        /* 2026.09.09 main 병합: 신규 fast-path가 구 오프셋 형태를 쓰던 것을 keyset 커서 형태로 정합 by Claude */
+        dbDateTimePagingRef.current = { enabled: false, after: null };
         setLocationSearchTargetTotalCount(nextBase.length);
         void refreshFilterProgress(currentFilter, nextVisible.length);
         markLoadedBaseRange(currentFilter, true);
