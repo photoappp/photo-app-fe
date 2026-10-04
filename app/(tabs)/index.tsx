@@ -739,10 +739,13 @@ export default function HomeScreen() {
     (photoCount: number, dayCount: number) => {
       const normalizedPhotoCount = Math.max(1, photoCount);
       const normalizedDayCount = Math.max(1, dayCount);
+      /* 2026.10.04 계수 재보정: 기존 0.18s/장·0.45s/일은 사진 단위 직렬 지오코딩 시절 값이라
+         전체 기간 검색에서 추정치가 수십 분까지 치솟아 진행률이 1%에 고정되던 문제의 원인.
+         키 단위 배치 + 오프라인 국가 판별 이후 실측 수준(수 초~수십 초)으로 낮추고 상한 90초 적용 by Claude */
       const estimated = Math.round(
-        6 + normalizedPhotoCount * 0.18 + normalizedDayCount * 0.45,
+        4 + normalizedPhotoCount * 0.006 + normalizedDayCount * 0.004,
       );
-      return Math.max(8, estimated);
+      return Math.max(6, Math.min(90, estimated));
     },
     [],
   );
@@ -911,9 +914,13 @@ export default function HomeScreen() {
 
   const getPsychologicalLocationSearchPercent = useCallback(
     (elapsedSeconds: number, estimatedSeconds: number) => {
+      /* 2026.10.04 선형 elapsed/estimate는 추정치가 빗나가면 진행률이 바닥(1%)에 고정되어 멈춘 것처럼 보임.
+         지수 점근 곡선(초반 빠르게, 추정 시점 부근 ~95%, 이후에도 99%까지 계속 미세 전진)으로 교체 —
+         추정치가 틀려도 항상 움직이는 진행률을 보장 by Claude */
       const safeEstimatedSeconds = Math.max(estimatedSeconds, 1);
-      const ratio = Math.min(1, elapsedSeconds / safeEstimatedSeconds);
-      return Math.min(99, Math.max(1, Math.round(ratio * 99)));
+      const tau = Math.max(2, safeEstimatedSeconds / 3);
+      const eased = 1 - Math.exp(-Math.max(0, elapsedSeconds) / tau);
+      return Math.min(99, Math.max(1, Math.round(eased * 99)));
     },
     [],
   );
