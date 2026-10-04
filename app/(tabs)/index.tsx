@@ -750,12 +750,48 @@ export default function HomeScreen() {
     [],
   );
 
+  /* 2026.10.04 Tier A: 추정 시간의 최대 오차 요인은 사진 수가 아니라 '작업이 이미 끝나 있는가'(인덱스/지오코드 캐시 상태).
+     ms 단위 DB 조회 3건으로 웜 상태를 판별해 추정에 반영 by Claude */
+  const [locationDataWarmth, setLocationDataWarmth] = useState<
+    "warm" | "indexed" | "cold" | "unknown"
+  >("unknown");
+
+  const refreshLocationDataWarmth = useCallback(async () => {
+    try {
+      const [syncState, pendingJobs, cacheCount] = await Promise.all([
+        getPhotoSyncState(),
+        getGeocodePendingJobCount(),
+        getGeocodeCacheCount(),
+      ]);
+      const indexComplete = !syncState.hasNextPage;
+      if (indexComplete && pendingJobs === 0 && cacheCount > 0) {
+        setLocationDataWarmth("warm");
+      } else if (indexComplete) {
+        setLocationDataWarmth("indexed");
+      } else {
+        setLocationDataWarmth("cold");
+      }
+    } catch {
+      /* 판별 실패 시 기존 공식 그대로 사용 */
+      setLocationDataWarmth("unknown");
+    }
+  }, []);
+
   const estimateIncrementalLocationSearchSeconds = useCallback(
     (currentFilter: FilterState) => {
       const fallbackEstimate = estimateLocationSearchSeconds(
         currentSearchTargetCount,
         currentDateRangeDayCount,
       );
+
+      /* 2026.10.04 웜 상태면 실측(단일 SQL + 렌더) 수준으로, 인덱스만 완성이면 30초 상한 by Claude */
+      if (locationDataWarmth === "warm") {
+        return 8;
+      }
+      if (locationDataWarmth === "indexed") {
+        return Math.min(30, fallbackEstimate);
+      }
+
       const previousBaseFilter = lastLoadedBaseFilterRef.current;
       const loadedBaseCount = photosAllRef.current.length;
 
@@ -801,6 +837,7 @@ export default function HomeScreen() {
       dayEndNextMs,
       dayStartMs,
       estimateLocationSearchSeconds,
+      locationDataWarmth,
     ],
   );
 
@@ -938,6 +975,8 @@ export default function HomeScreen() {
 
   const armLocationSearchWorkflowForFilter = useCallback(
     (nextFilter: FilterState) => {
+      /* 2026.10.04 팝업이 뜨는 시점의 실제 웜 상태로 예상 시간이 표시되도록 갱신 by Claude */
+      void refreshLocationDataWarmth();
       lastDeclinedLocationSearchSignatureRef.current = null;
       lastPreparedLocationSearchSignatureRef.current = null;
       locationSearchResumeSignatureRef.current = null;
@@ -951,7 +990,11 @@ export default function HomeScreen() {
           : "search-prompt",
       );
     },
-    [locationFeatureUnlockedUntil, shouldRequireExtendedLocationFeature],
+    [
+      locationFeatureUnlockedUntil,
+      refreshLocationDataWarmth,
+      shouldRequireExtendedLocationFeature,
+    ],
   );
 
   /* 2026.06.23 해금 상태 로드/만료 정리는 RewardGateProvider로 이동(통합) by yen */
@@ -4967,8 +5010,13 @@ export default function HomeScreen() {
         } catch {}
         await sleep(GEOCODE_DRAIN_IDLE_DELAY_MS);
       }
+
+      /* 2026.10.04 큐 소진 직후 웜 상태를 갱신해 다음 검색의 예상 시간에 즉시 반영 by Claude */
+      if (!backgroundMetadataSyncCancelledRef.current) {
+        void refreshLocationDataWarmth();
+      }
     })();
-  }, [followUpVisibleLocations]);
+  }, [followUpVisibleLocations, refreshLocationDataWarmth]);
 
   /* 2026.09.02 첫 페인트 이후 사진 메타데이터 인덱스를 백그라운드에서 완성하는 폴라이트 드레인 루프.
      a42ee9a에서 제거된 상시 동기화의 스케줄링 재설계: 초기 로드 완료 후 시작, 사용자 요청 진행 중에는 양보,
@@ -5050,7 +5098,8 @@ export default function HomeScreen() {
   useEffect(() => {
     if (!didInitialLoad) return;
     startBackgroundMetadataSync();
-  }, [didInitialLoad, startBackgroundMetadataSync]);
+    void refreshLocationDataWarmth();
+  }, [didInitialLoad, startBackgroundMetadataSync, refreshLocationDataWarmth]);
 
   useEffect(() => {
     /* 2026.09.02 초기 로드가 지연/중단돼도 인덱싱이 시작되도록 10초 후 fallback 시작을 보장 by Claude */
