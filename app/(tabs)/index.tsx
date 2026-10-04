@@ -5029,6 +5029,33 @@ export default function HomeScreen() {
     };
   }, []);
 
+  useEffect(() => {
+    /* 2026.10.04 앱 복귀 시 기기 시간대 변경(여행/DST)을 감지해 재검증 패스를 nudge —
+       동기화 시작 시 ensureTakenMinutesMatchTimeZone이 taken_minute를 일괄 재계산함 by Claude */
+    let lastTimeZone: string | null = null;
+    try {
+      lastTimeZone = Intl.DateTimeFormat().resolvedOptions().timeZone ?? null;
+    } catch {}
+    const subscription = AppState.addEventListener("change", (state) => {
+      if (state !== "active") return;
+      try {
+        const timeZone =
+          Intl.DateTimeFormat().resolvedOptions().timeZone ?? null;
+        if (
+          timeZone &&
+          lastTimeZone &&
+          timeZone !== lastTimeZone &&
+          !backgroundMetadataSyncCancelledRef.current &&
+          backgroundMetadataSyncStartedRef.current
+        ) {
+          runMetadataSyncLoopRef.current();
+        }
+        if (timeZone) lastTimeZone = timeZone;
+      } catch {}
+    });
+    return () => subscription.remove();
+  }, []);
+
   const onRefresh = useCallback(async () => {
     setRefreshing(true);
     try {

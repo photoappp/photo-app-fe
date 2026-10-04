@@ -3,6 +3,7 @@ import * as MediaLibrary from "expo-media-library";
 
 import {
   PhotoMetadataRow,
+  ensureTakenMinutesMatchTimeZone,
   getPhotoMetadataCount,
   getPhotoSyncState,
   initPhotoMetadataDb,
@@ -106,6 +107,32 @@ export const syncPhotoMetadataInBackground = async (params?: {
 
   inFlightSync = (async () => {
     await initPhotoMetadataDb();
+
+    /* 2026.10.04 기기 시간대 변경(여행/DST) 시 taken_minute가 과거 시간대 기준으로 남아 시간 필터가
+       어긋나는 문제를 막기 위해, 패스 시작 전에 저장된 시간대와 비교해 일괄 재계산 by Claude */
+    try {
+      const deviceTimeZone =
+        Intl.DateTimeFormat().resolvedOptions().timeZone ?? null;
+      if (deviceTimeZone) {
+        const tzStartedAt = Date.now();
+        const tzResult = await ensureTakenMinutesMatchTimeZone(deviceTimeZone);
+        if (tzResult.updated) {
+          recordPerfMetric(
+            "metadata.tz_recompute.ms",
+            Date.now() - tzStartedAt,
+            {
+              context: {
+                timeZone: deviceTimeZone,
+                changedRows: tzResult.changedRows,
+              },
+              logEvery: 1,
+            }
+          );
+        }
+      }
+    } catch (err) {
+      console.log("timezone recompute check error:", err);
+    }
 
     const maxPages = params?.maxPages ?? 3;
     const enrichLocation = params?.enrichLocation ?? true;

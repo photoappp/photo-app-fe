@@ -4,7 +4,7 @@ import * as SQLite from "expo-sqlite";
 /* 2026.04.15 메타데이터 전용 DB 파일명/버전을 고정해 추후 마이그레이션 기준점을 만들기 위해 추가 by June */
 const DB_NAME = "picqly_metadata.db";
 /* 2026.04.15 스키마 변경 시 버전 증가를 통해 구조 변경을 안전하게 적용하기 위해 추가 by June */
-const DB_SCHEMA_VERSION = 5;
+const DB_SCHEMA_VERSION = 6;
 
 /* 2026.04.15 DB 핸들을 싱글톤으로 재사용해 중복 open 비용과 상태 불일치를 줄이기 위해 추가 by June */
 let dbPromise: Promise<SQLite.SQLiteDatabase> | null = null;
@@ -126,6 +126,8 @@ export const initPhotoMetadataDb = async () => {
         last_synced_at INTEGER,
         /* 2026.09.02 재검증 패스 시작 시각을 보존해 완주 시 삭제된 사진 row를 판별하기 위해 추가 by Claude */
         pass_started_at INTEGER,
+        /* 2026.10.04 taken_minute 계산 기준 시간대를 보존해 기기 시간대 변경 시 일괄 재계산 트리거로 사용 by Claude */
+        time_zone TEXT,
         updated_at INTEGER NOT NULL
       );
 
@@ -236,6 +238,16 @@ export const initPhotoMetadataDb = async () => {
     if (!hasPassStartedAt) {
       await db.execAsync(`
         ALTER TABLE photo_sync_state ADD COLUMN pass_started_at INTEGER;
+      `);
+    }
+
+    /* 2026.10.04 기존 설치본에 time_zone 컬럼 추가 — 시간대 변경 감지용 by Claude */
+    const hasTimeZone = syncStateInfo.some(
+      (c: { name: string }) => c.name === "time_zone"
+    );
+    if (!hasTimeZone) {
+      await db.execAsync(`
+        ALTER TABLE photo_sync_state ADD COLUMN time_zone TEXT;
       `);
     }
 
@@ -415,6 +427,44 @@ export const updatePhotoSyncState = async (params: {
       Date.now()
     );
   });
+};
+
+/* 2026.10.04 기기 시간대 변경(여행/DST) 시 taken_minute를 캐시된 타임스탬프에서 일괄 재계산 — 라이브러리/네트워크 재조회 없음.
+   photo_metadata.updated_at은 갱신하지 않음(삭제 정리의 '패스 방문' 마커이므로) by Claude */
+export const ensureTakenMinutesMatchTimeZone = async (
+  currentTimeZone: string
+) => {
+  await initPhotoMetadataDb();
+  const db = await getDb();
+
+  const row = await db.getFirstAsync<{ time_zone: string | null }>(
+    `SELECT time_zone FROM photo_sync_state WHERE id = 1`
+  );
+  const storedTimeZone = row?.time_zone ?? null;
+  if (storedTimeZone === currentTimeZone) {
+    return { updated: false, changedRows: 0 };
+  }
+
+  let changedRows = 0;
+  await enqueueWrite(async () => {
+    /* SQLite 'localtime'은 현재 기기 시간대로 계산되므로 전체 재계산을 단일 구문으로 수행 (기존 taken_minute 마이그레이션과 동일 방식) */
+    const result = await db.runAsync(
+      `
+      UPDATE photo_metadata
+      SET taken_minute = CAST(strftime('%H', taken_at / 1000, 'unixepoch', 'localtime') AS INTEGER) * 60
+                       + CAST(strftime('%M', taken_at / 1000, 'unixepoch', 'localtime') AS INTEGER)
+      WHERE taken_at IS NOT NULL
+      `
+    );
+    changedRows = result.changes ?? 0;
+    await db.runAsync(
+      `UPDATE photo_sync_state SET time_zone = ?, updated_at = ? WHERE id = 1`,
+      currentTimeZone,
+      Date.now()
+    );
+  });
+
+  return { updated: true, changedRows };
 };
 
 /* 2026.09.02 재검증 패스 완주 시 방문되지 않은(=라이브러리에서 삭제된) row를 일괄 soft-delete 처리하기 위해 추가 by Claude */
