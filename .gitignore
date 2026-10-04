@@ -59,3 +59,4 @@ ios/DerivedData/
 ios/*.xcworkspace
 ios/build/
 .env
+credentials.json
