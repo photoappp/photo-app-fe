@@ -182,7 +182,10 @@ export const syncPhotoMetadataInBackground = async (params?: {
             location.longitude === null
           ) {
             try {
-              const info = await MediaLibrary.getAssetInfoAsync(asset.id);
+              /* 2026.10.04 위치 메타만 필요하므로 iCloud 원본 다운로드를 차단해 인덱싱 지연/데이터 사용을 방지 by Claude */
+              const info = await MediaLibrary.getAssetInfoAsync(asset.id, {
+                shouldDownloadFromNetwork: false,
+              });
               location = readLocation(info.location);
             } catch {
               // 상세조회 실패 시 해당 자산은 기본 row로 유지

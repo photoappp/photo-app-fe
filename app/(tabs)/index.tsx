@@ -1494,9 +1494,14 @@ export default function HomeScreen() {
             try {
               // 2026-05-12: location이 비어 있으면 ph:// URI로 좌표를 보강해 위치 필터 적용 시 모든 사진이 사라지는 버그 수정 by yen
               const targetAssetId = img.assetId ?? getAssetIdFromPhUri(img.uri);
+              /* 2026.10.04 위치 메타만 필요하므로 iCloud 원본 다운로드 방지 by Claude */
               const info = targetAssetId
-                ? await MediaLibrary.getAssetInfoAsync(targetAssetId)
-                : await MediaLibrary.getAssetInfoAsync(img.uri as any);
+                ? await MediaLibrary.getAssetInfoAsync(targetAssetId, {
+                    shouldDownloadFromNetwork: false,
+                  })
+                : await MediaLibrary.getAssetInfoAsync(img.uri as any, {
+                    shouldDownloadFromNetwork: false,
+                  });
               if (info?.location) {
                 const latitude = Number(info.location.latitude);
                 const longitude = Number(info.location.longitude);
@@ -1743,7 +1748,10 @@ export default function HomeScreen() {
         /* Android에서 위치 필터가 적용된 경로에서만 추가 비용 감수하고 per-asset 보강 */
         if (!location && shouldEnrichOnAndroid) {
           try {
-            const info = await MediaLibrary.getAssetInfoAsync(asset.id);
+            /* 2026.10.04 위치 메타만 필요하므로 iCloud 원본 다운로드 방지 by Claude */
+            const info = await MediaLibrary.getAssetInfoAsync(asset.id, {
+              shouldDownloadFromNetwork: false,
+            });
             if (info?.location) {
               const lat = Number(info.location.latitude);
               const lon = Number(info.location.longitude);
@@ -2379,9 +2387,14 @@ export default function HomeScreen() {
           try {
             const targetAssetId =
               photo.assetId ?? getAssetIdFromPhUri(photo.uri);
+            /* 2026.10.04 위치 메타만 필요하므로 iCloud 원본 다운로드 방지 by Claude */
             const info = targetAssetId
-              ? await MediaLibrary.getAssetInfoAsync(targetAssetId)
-              : await MediaLibrary.getAssetInfoAsync(photo.uri as any);
+              ? await MediaLibrary.getAssetInfoAsync(targetAssetId, {
+                  shouldDownloadFromNetwork: false,
+                })
+              : await MediaLibrary.getAssetInfoAsync(photo.uri as any, {
+                  shouldDownloadFromNetwork: false,
+                });
             if (info?.location) {
               const lat = Number(info.location.latitude);
               const lon = Number(info.location.longitude);
@@ -2556,9 +2569,14 @@ export default function HomeScreen() {
           try {
             const targetAssetId =
               photo.assetId ?? getAssetIdFromPhUri(photo.uri);
+            /* 2026.10.04 위치 메타만 필요하므로 iCloud 원본 다운로드 방지 by Claude */
             const info = targetAssetId
-              ? await MediaLibrary.getAssetInfoAsync(targetAssetId)
-              : await MediaLibrary.getAssetInfoAsync(photo.uri as any);
+              ? await MediaLibrary.getAssetInfoAsync(targetAssetId, {
+                  shouldDownloadFromNetwork: false,
+                })
+              : await MediaLibrary.getAssetInfoAsync(photo.uri as any, {
+                  shouldDownloadFromNetwork: false,
+                });
             if (!info?.location) return photo;
 
             const latitude = Number(info.location.latitude);
