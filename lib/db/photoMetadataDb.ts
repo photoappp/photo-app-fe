@@ -972,6 +972,84 @@ export const queryPhotoMetadataByDateTime = async (params: {
   return rows;
 };
 
+/* 2026.10.04 검색 예상 시간을 '남은 실제 작업량'으로 계산하기 위해 범위 내 좌표 미보유 사진 수를 조회 by Claude */
+export const countPhotosMissingCoordsByDateTime = async (params: {
+  dateStartMs: number;
+  dateEndNextMs: number;
+  timeStart: number;
+  timeEnd: number;
+}) => {
+  await initPhotoMetadataDb();
+  const db = await getDb();
+
+  const row = await db.getFirstAsync<{ count: number }>(
+    `
+    SELECT COUNT(*) as count
+    FROM photo_metadata
+    WHERE is_deleted = 0
+      AND latitude IS NULL
+      AND taken_at IS NOT NULL
+      AND taken_at >= ?
+      AND taken_at < ?
+      AND (
+        (? = 1439 AND taken_minute >= ? AND taken_minute <= 1439)
+        OR (? >= ? AND taken_minute >= ? AND taken_minute <= ?)
+        OR (? < ? AND taken_minute >= ? AND taken_minute <= ?)
+      )
+    `,
+    params.dateStartMs,
+    params.dateEndNextMs,
+    params.timeEnd,
+    params.timeStart,
+    params.timeEnd,
+    params.timeStart,
+    params.timeStart,
+    params.timeEnd,
+    params.timeEnd,
+    params.timeStart,
+    params.timeStart,
+    params.timeEnd
+  );
+
+  return row?.count ?? 0;
+};
+
+/* 2026.10.04 검색 중 네이티브 조회로 복구한 좌표를 DB에 영속화 — 같은 사진의 좌표 복구 비용을 평생 1회로 제한 by Claude.
+   updated_at은 갱신하지 않음(삭제 정리의 '패스 방문' 마커이므로) */
+export const updatePhotoCoordinatesByAssetIds = async (
+  rows: { assetId: string; latitude: number; longitude: number }[]
+) => {
+  const valid = rows.filter(
+    (r) =>
+      r.assetId &&
+      Number.isFinite(r.latitude) &&
+      Number.isFinite(r.longitude)
+  );
+  if (valid.length === 0) return;
+
+  await initPhotoMetadataDb();
+  const db = await getDb();
+
+  await enqueueWrite(async () => {
+    await db.runAsync(
+      `
+      UPDATE photo_metadata SET
+        latitude = json_extract(r.value, '$.latitude'),
+        longitude = json_extract(r.value, '$.longitude')
+      FROM json_each(?) AS r
+      WHERE photo_metadata.asset_id = json_extract(r.value, '$.id')
+      `,
+      JSON.stringify(
+        valid.map((r) => ({
+          id: r.assetId,
+          latitude: r.latitude,
+          longitude: r.longitude,
+        }))
+      )
+    );
+  });
+};
+
 /* 2026.04.22 날짜/시간 필터 범위의 전체 대상 건수를 즉시 계산해 로딩 프로그레스(표출/전체)를 정확히 표시하기 위해 COUNT 쿼리 함수를 추가 by June */
 export const countPhotoMetadataByDateTime = async (params: {
   dateStartMs: number;

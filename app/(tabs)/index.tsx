@@ -50,6 +50,7 @@ import * as amplitude from "@amplitude/analytics-react-native";
 /* 2026.04.15 SQLite 메타데이터 DB/동기화 모듈을 홈 화면 로딩 파이프라인에 연결하기 위해 import 추가 by June */
 import {
   countPhotoMetadataByDateTime,
+  countPhotosMissingCoordsByDateTime,
   enqueueGeocodeJobs,
   getDisplayUriCacheBySourceUris,
   getGeocodeCacheByKey,
@@ -62,6 +63,7 @@ import {
   initPhotoMetadataDb,
   type PhotoPageCursor,
   queryPhotoMetadataByDateTime,
+  updatePhotoCoordinatesByAssetIds,
   upsertDisplayUriCacheRows,
   upsertGeocodeCacheRows
 } from "@/lib/db/photoMetadataDb";
@@ -109,6 +111,13 @@ const BACKGROUND_SYNC_MAX_ERROR_STREAK = 3;
 const BACKGROUND_SYNC_FALLBACK_START_MS = 10000;
 /* 2026.10.04 라이브러리 변경 이벤트 버스트(iCloud 가져오기 등)를 묶어 한 번만 재검증을 nudge하기 위한 디바운스 by Claude */
 const MEDIA_LIBRARY_CHANGE_DEBOUNCE_MS = 1500;
+
+/* 2026.10.04 검색 예상 시간 공식 계수: 예상 = BASE + 좌표미보유수×RECOVERY + 전체행수×ROW.
+   RECOVERY는 6-병렬 getAssetInfoAsync 1건의 실측 수준, ROW는 DB행 읽기/정렬/렌더 비용 by Claude */
+const SEARCH_ESTIMATE_BASE_S = 4;
+const SEARCH_ESTIMATE_RECOVERY_S_PER_PHOTO = 0.08;
+const SEARCH_ESTIMATE_ROW_S_PER_ROW = 0.0004;
+const SEARCH_ESTIMATE_MAX_S = 300;
 
 /* 2026.09.02 geocode 큐 드레인 루프 운영값 — 메타데이터 인덱싱 완료 후에만 시작 by Claude */
 const GEOCODE_DRAIN_INITIAL_DELAY_MS = 2000;
@@ -750,32 +759,60 @@ export default function HomeScreen() {
     [],
   );
 
-  /* 2026.10.04 Tier A: 추정 시간의 최대 오차 요인은 사진 수가 아니라 '작업이 이미 끝나 있는가'(인덱스/지오코드 캐시 상태).
-     ms 단위 DB 조회 3건으로 웜 상태를 판별해 추정에 반영 by Claude */
-  const [locationDataWarmth, setLocationDataWarmth] = useState<
-    "warm" | "indexed" | "cold" | "unknown"
-  >("unknown");
+  /* 2026.10.04 예상 시간을 '남은 실제 작업량' 기반 공식으로 계산:
+     예상 = BASE + 좌표미보유수×RECOVERY + 전체행수×ROW (범위별 ms 단위 COUNT 2건).
+     좌표가 영속화될수록(updatePhotoCoordinatesByAssetIds) 같은 범위의 예상/실제가 함께 줄어듦 by Claude */
+  const [searchWorkEstimate, setSearchWorkEstimate] = useState<{
+    signature: string;
+    seconds: number;
+  } | null>(null);
 
-  const refreshLocationDataWarmth = useCallback(async () => {
-    try {
-      const [syncState, pendingJobs, cacheCount] = await Promise.all([
-        getPhotoSyncState(),
-        getGeocodePendingJobCount(),
-        getGeocodeCacheCount(),
-      ]);
-      const indexComplete = !syncState.hasNextPage;
-      if (indexComplete && pendingJobs === 0 && cacheCount > 0) {
-        setLocationDataWarmth("warm");
-      } else if (indexComplete) {
-        setLocationDataWarmth("indexed");
-      } else {
-        setLocationDataWarmth("cold");
+  const searchEstimateSignature = useCallback(
+    (f: FilterState) =>
+      `${dayStartMs(f.dateStart)}|${dayEndNextMs(f.dateEnd)}|${f.timeStart}|${f.timeEnd}`,
+    [dayEndNextMs, dayStartMs],
+  );
+
+  const refreshSearchWorkEstimate = useCallback(
+    async (f: FilterState) => {
+      try {
+        const params = {
+          dateStartMs: dayStartMs(f.dateStart),
+          dateEndNextMs: dayEndNextMs(f.dateEnd),
+          timeStart: f.timeStart,
+          timeEnd: f.timeEnd,
+        };
+        const [totalRows, missingCoords] = await Promise.all([
+          countPhotoMetadataByDateTime(params),
+          countPhotosMissingCoordsByDateTime(params),
+        ]);
+        const seconds = Math.round(
+          Math.min(
+            SEARCH_ESTIMATE_MAX_S,
+            Math.max(
+              SEARCH_ESTIMATE_BASE_S,
+              SEARCH_ESTIMATE_BASE_S +
+                missingCoords * SEARCH_ESTIMATE_RECOVERY_S_PER_PHOTO +
+                totalRows * SEARCH_ESTIMATE_ROW_S_PER_ROW,
+            ),
+          ),
+        );
+        setSearchWorkEstimate({
+          signature: searchEstimateSignature(f),
+          seconds,
+        });
+      } catch {
+        /* 조회 실패 시 기존 카운트 공식으로 폴백 */
+        setSearchWorkEstimate(null);
       }
-    } catch {
-      /* 판별 실패 시 기존 공식 그대로 사용 */
-      setLocationDataWarmth("unknown");
-    }
-  }, []);
+    },
+    [dayEndNextMs, dayStartMs, searchEstimateSignature],
+  );
+
+  /* 필터가 바뀔 때마다 해당 범위의 작업량을 재조회 (COUNT 2건, ms 단위) */
+  useEffect(() => {
+    void refreshSearchWorkEstimate(filter);
+  }, [filter, refreshSearchWorkEstimate]);
 
   const estimateIncrementalLocationSearchSeconds = useCallback(
     (currentFilter: FilterState) => {
@@ -784,12 +821,12 @@ export default function HomeScreen() {
         currentDateRangeDayCount,
       );
 
-      /* 2026.10.04 웜 상태면 실측(단일 SQL + 렌더) 수준으로, 인덱스만 완성이면 30초 상한 by Claude */
-      if (locationDataWarmth === "warm") {
-        return 8;
-      }
-      if (locationDataWarmth === "indexed") {
-        return Math.min(30, fallbackEstimate);
+      /* 2026.10.04 범위별 실제 남은 작업량 기반 예상값이 있으면 우선 사용 by Claude */
+      if (
+        searchWorkEstimate &&
+        searchWorkEstimate.signature === searchEstimateSignature(currentFilter)
+      ) {
+        return searchWorkEstimate.seconds;
       }
 
       const previousBaseFilter = lastLoadedBaseFilterRef.current;
@@ -837,7 +874,8 @@ export default function HomeScreen() {
       dayEndNextMs,
       dayStartMs,
       estimateLocationSearchSeconds,
-      locationDataWarmth,
+      searchEstimateSignature,
+      searchWorkEstimate,
     ],
   );
 
@@ -975,8 +1013,8 @@ export default function HomeScreen() {
 
   const armLocationSearchWorkflowForFilter = useCallback(
     (nextFilter: FilterState) => {
-      /* 2026.10.04 팝업이 뜨는 시점의 실제 웜 상태로 예상 시간이 표시되도록 갱신 by Claude */
-      void refreshLocationDataWarmth();
+      /* 2026.10.04 팝업이 뜨는 시점의 실제 잔여 작업량으로 예상 시간이 표시되도록 갱신 by Claude */
+      void refreshSearchWorkEstimate(nextFilter);
       lastDeclinedLocationSearchSignatureRef.current = null;
       lastPreparedLocationSearchSignatureRef.current = null;
       locationSearchResumeSignatureRef.current = null;
@@ -992,7 +1030,7 @@ export default function HomeScreen() {
     },
     [
       locationFeatureUnlockedUntil,
-      refreshLocationDataWarmth,
+      refreshSearchWorkEstimate,
       shouldRequireExtendedLocationFeature,
     ],
   );
@@ -1536,6 +1574,13 @@ export default function HomeScreen() {
       if (typeof img.uri === "string") recoveryIndices.push(index);
     });
 
+    /* 2026.10.04 복구한 좌표를 DB에 영속화해 같은 사진의 복구 비용을 평생 1회로 제한 by Claude */
+    const recoveredCoordRows: {
+      assetId: string;
+      latitude: number;
+      longitude: number;
+    }[] = [];
+
     if (recoveryIndices.length > 0) {
       const RECOVERY_CONCURRENCY = 6;
       let cursor = 0;
@@ -1562,6 +1607,13 @@ export default function HomeScreen() {
                 const longitude = Number(info.location.longitude);
                 if (Number.isFinite(latitude) && Number.isFinite(longitude)) {
                   resolvedCoords[index] = { latitude, longitude };
+                  if (typeof targetAssetId === "string" && targetAssetId) {
+                    recoveredCoordRows.push({
+                      assetId: targetAssetId,
+                      latitude,
+                      longitude,
+                    });
+                  }
                 }
               }
             } catch {}
@@ -1569,6 +1621,13 @@ export default function HomeScreen() {
         },
       );
       await Promise.all(workers);
+
+      if (recoveredCoordRows.length > 0) {
+        /* 검색을 막지 않도록 fire-and-forget — 실패해도 다음 검색에서 재복구됨 */
+        void updatePhotoCoordinatesByAssetIds(recoveredCoordRows).catch(
+          () => {},
+        );
+      }
     }
 
     /* 2단계: geo-key로 그룹핑 — 여행 사진 수백 장이 보통 5~8개 키로 수렴 */
@@ -1833,6 +1892,10 @@ export default function HomeScreen() {
               const lon = Number(info.location.longitude);
               if (Number.isFinite(lat) && Number.isFinite(lon)) {
                 location = { latitude: lat, longitude: lon };
+                /* 2026.10.04 복구 좌표 영속화 by Claude */
+                void updatePhotoCoordinatesByAssetIds([
+                  { assetId: asset.id, latitude: lat, longitude: lon },
+                ]).catch(() => {});
               }
             }
           } catch {
@@ -2507,6 +2570,12 @@ export default function HomeScreen() {
               if (Number.isFinite(lat) && Number.isFinite(lon)) {
                 latitude = lat;
                 longitude = lon;
+                /* 2026.10.04 복구 좌표 영속화 by Claude */
+                if (typeof targetAssetId === "string" && targetAssetId) {
+                  void updatePhotoCoordinatesByAssetIds([
+                    { assetId: targetAssetId, latitude: lat, longitude: lon },
+                  ]).catch(() => {});
+                }
               }
             }
           } catch (e) {
@@ -2695,6 +2764,13 @@ export default function HomeScreen() {
 
             if (!Number.isFinite(latitude) || !Number.isFinite(longitude)) {
               return photo;
+            }
+
+            /* 2026.10.04 복구 좌표 영속화 — 다음 검색부터 이 사진의 복구 비용 제거 by Claude */
+            if (typeof targetAssetId === "string" && targetAssetId) {
+              void updatePhotoCoordinatesByAssetIds([
+                { assetId: targetAssetId, latitude, longitude },
+              ]).catch(() => {});
             }
 
             return {
@@ -5011,12 +5087,12 @@ export default function HomeScreen() {
         await sleep(GEOCODE_DRAIN_IDLE_DELAY_MS);
       }
 
-      /* 2026.10.04 큐 소진 직후 웜 상태를 갱신해 다음 검색의 예상 시간에 즉시 반영 by Claude */
+      /* 2026.10.04 큐 소진 직후 잔여 작업량을 갱신해 다음 검색의 예상 시간에 즉시 반영 by Claude */
       if (!backgroundMetadataSyncCancelledRef.current) {
-        void refreshLocationDataWarmth();
+        void refreshSearchWorkEstimate(filterRef.current);
       }
     })();
-  }, [followUpVisibleLocations, refreshLocationDataWarmth]);
+  }, [followUpVisibleLocations, refreshSearchWorkEstimate]);
 
   /* 2026.09.02 첫 페인트 이후 사진 메타데이터 인덱스를 백그라운드에서 완성하는 폴라이트 드레인 루프.
      a42ee9a에서 제거된 상시 동기화의 스케줄링 재설계: 초기 로드 완료 후 시작, 사용자 요청 진행 중에는 양보,
@@ -5098,8 +5174,8 @@ export default function HomeScreen() {
   useEffect(() => {
     if (!didInitialLoad) return;
     startBackgroundMetadataSync();
-    void refreshLocationDataWarmth();
-  }, [didInitialLoad, startBackgroundMetadataSync, refreshLocationDataWarmth]);
+    void refreshSearchWorkEstimate(filterRef.current);
+  }, [didInitialLoad, startBackgroundMetadataSync, refreshSearchWorkEstimate]);
 
   useEffect(() => {
     /* 2026.09.02 초기 로드가 지연/중단돼도 인덱싱이 시작되도록 10초 후 fallback 시작을 보장 by Claude */
