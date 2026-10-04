@@ -75,6 +75,9 @@ import {
   processGeocodeJobsInBackground,
   seedGeocodeJobsFromPhotoMetadata,
 } from "@/lib/services/geocodeJobWorker";
+/* 2026.10.04 좌표→국가 오프라인 판별(폴리곤) — 국가 표기는 지오코더 대신 이걸 우선 사용 by Claude */
+import { resolveCountryForCoords } from "@/lib/geo/countryLookup";
+import { setCountryDisplayLanguage } from "@/lib/geo/countryNames";
 
 /* 2026.09.02 keyset 페이지네이션 이어가기용: 이미 로드된 사진 중 가장 오래된 (takenAt, assetId) 커서 계산 헬퍼 by Claude */
 const oldestCursorOfPhotos = (
@@ -190,7 +193,7 @@ export default function HomeScreen() {
   const navigation = useNavigation();
   const { isDarkTheme, colors } = useTheme();
   /* 2026.04.22 홈 화면의 하드코딩 문구를 다국어로 전환하기 위해 공용 i18n 훅을 사용하도록 변경 by June */
-  const { t } = useI18n();
+  const { t, language } = useI18n();
   //	const { userData, updateUserData } = useUserData();
 
   const {
@@ -1528,6 +1531,16 @@ export default function HomeScreen() {
       if (!coordByKey.has(key)) coordByKey.set(key, coord);
     });
 
+    /* 2026.10.04 국가는 오프라인 폴리곤 판별을 우선 사용(µs, 오프라인 동작) — 과거 캐시/지오코더의
+       상이한 국가 표기가 섞이지 않도록 키 단위로 먼저 계산해 모든 경로에서 덮어씀 by Claude */
+    const polygonCountryByKey = new Map<string, string | null>();
+    for (const [key, coord] of coordByKey) {
+      polygonCountryByKey.set(
+        key,
+        resolveCountryForCoords(coord.latitude, coord.longitude),
+      );
+    }
+
     /* 3단계: 캐시를 1회 배치 조회 — 기존 사진 단위 직렬 조회 N회를 대체 */
     const placeByKey = new Map<string, Place>();
     let dbCacheHits = 0;
@@ -1535,7 +1548,7 @@ export default function HomeScreen() {
       const cachedPlaces = await getGeocodeCacheByKeys([...coordByKey.keys()]);
       for (const [key, place] of cachedPlaces) {
         placeByKey.set(key, {
-          country: place.country ?? null,
+          country: polygonCountryByKey.get(key) ?? place.country ?? null,
           city: place.city ?? null,
         });
       }
@@ -1567,6 +1580,11 @@ export default function HomeScreen() {
           latitude: coord.latitude,
           longitude: coord.longitude,
         });
+        /* 2026.10.04 도시는 큐로 미루더라도 국가는 폴리곤으로 즉시 표시 by Claude */
+        placeByKey.set(key, {
+          country: polygonCountryByKey.get(key) ?? null,
+          city: null,
+        });
         continue;
       }
 
@@ -1576,7 +1594,8 @@ export default function HomeScreen() {
           longitude: coord.longitude,
         });
         const place: Place = {
-          country: res?.country ?? null,
+          /* 2026.10.04 국가는 폴리곤 판별 우선, 지오코더는 폴백 by Claude */
+          country: polygonCountryByKey.get(key) ?? res?.country ?? null,
           city: res?.city ?? res?.subregion ?? null,
         };
         placeByKey.set(key, place);
@@ -1592,7 +1611,10 @@ export default function HomeScreen() {
         if (delayMs > 0) await sleep(delayMs);
       } catch (e: any) {
         // 레이트리밋/기타 에러 → 해당 좌표는 빈 값으로 두고 큐에 남겨 백그라운드 재시도
-        placeByKey.set(key, { country: null, city: null });
+        placeByKey.set(key, {
+          country: polygonCountryByKey.get(key) ?? null,
+          city: null,
+        });
         pendingJobMap.set(key, {
           geoKey: key,
           latitude: coord.latitude,
@@ -1645,6 +1667,8 @@ export default function HomeScreen() {
           reverseLookups: lookups,
           memoryCacheHits: Math.max(0, photosWithCoords - coordByKey.size),
           dbCacheHits,
+          polygonResolved: [...polygonCountryByKey.values()].filter(Boolean)
+            .length,
           queuedJobs: pendingJobMap.size,
         },
         logEvery: 2,
@@ -1810,6 +1834,36 @@ export default function HomeScreen() {
       ),
     [applyLocationFilter, dedupePhotosByUri, sortPhotosForDisplay],
   );
+
+  /* 2026.10.04 오프라인 국가 표시명을 앱 언어 설정과 동기화하고, 이미 로드된 사진의 국가 라벨도
+     즉시 재계산 — 언어 전환 직후 영어/한국어 국가명이 섞여 보이지 않도록 함 (좌표 기반 로컬 연산이라 µs 단위) by Claude */
+  useEffect(() => {
+    setCountryDisplayLanguage(language);
+
+    setPhotosAll((prev) => {
+      if (prev.length === 0) return prev;
+      let changed = false;
+      const next = prev.map((photo) => {
+        const loc = photo.location;
+        if (!loc) return photo;
+        const latitude = Number(loc.latitude);
+        const longitude = Number(loc.longitude);
+        if (!Number.isFinite(latitude) || !Number.isFinite(longitude)) {
+          return photo;
+        }
+        const country = resolveCountryForCoords(latitude, longitude);
+        if (!country || country === photo.country) return photo;
+        changed = true;
+        return { ...photo, country };
+      });
+      if (!changed) return prev;
+      photosAllRef.current = next;
+      const nextVisible = deriveVisiblePhotos(next, filterRef.current);
+      photosRef.current = nextVisible;
+      setPhotos(nextVisible);
+      return next;
+    });
+  }, [language, deriveVisiblePhotos]);
 
   async function loadPreparedPhotosFromDbForLocationSearch(
     currentFilter: FilterState,
@@ -2422,6 +2476,8 @@ export default function HomeScreen() {
         let city: string | null = null;
         let country: string | null = null;
         const geoKey = toGeoKey(latitude, longitude, 2);
+        /* 2026.10.04 국가는 오프라인 폴리곤 판별 우선 by Claude */
+        const polygonCountry = resolveCountryForCoords(latitude, longitude);
 
         try {
           const cached = await getGeocodeCacheByKey(geoKey);
@@ -2456,6 +2512,8 @@ export default function HomeScreen() {
             console.log("priority reverse geocode error:", e);
           }
         }
+
+        country = polygonCountry ?? country;
 
         setPhotosAll((prev) => {
           const nextBase = prev.map((p) =>
@@ -2553,7 +2611,8 @@ export default function HomeScreen() {
 
     const candidates = photosRef.current
       .slice(0, 40)
-      .filter((p) => !p.city && !p.country);
+      /* 2026.10.04 폴리곤으로 국가만 채워진 사진도 도시 후속 보강 대상이 되도록 OR 조건으로 변경 by Claude */
+      .filter((p) => !p.city || !p.country);
 
     if (candidates.length === 0) return;
 

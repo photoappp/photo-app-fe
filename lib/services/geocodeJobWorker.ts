@@ -12,6 +12,8 @@ import {
   resetStuckGeocodeJobs,
   upsertGeocodeCacheRows,
 } from "@/lib/db/photoMetadataDb";
+/* 2026.10.04 국가는 오프라인 폴리곤 판별을 우선 사용해 표기 일관성 유지 by Claude */
+import { resolveCountryForCoords } from "@/lib/geo/countryLookup";
 import { recordPerfMetric } from "@/lib/services/perfMetrics";
 
 /* 2026.04.22 작업 실패 시 무한 재시도를 막고 상태를 failed로 전환하기 위한 최대 재시도 횟수 상수 추가 by June */
@@ -72,7 +74,10 @@ export const processGeocodeJobsInBackground = async (params?: {
           longitude: job.longitude,
         });
 
-        const country = res?.country ?? null;
+        const country =
+          resolveCountryForCoords(job.latitude, job.longitude) ??
+          res?.country ??
+          null;
         const city = res?.city ?? res?.subregion ?? null;
 
         await upsertGeocodeCacheRows([
