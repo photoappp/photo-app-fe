@@ -104,6 +104,8 @@ const BACKGROUND_SYNC_BUSY_RETRY_MS = 1000;
 const BACKGROUND_SYNC_ERROR_RETRY_MS = 15000;
 const BACKGROUND_SYNC_MAX_ERROR_STREAK = 3;
 const BACKGROUND_SYNC_FALLBACK_START_MS = 10000;
+/* 2026.10.04 라이브러리 변경 이벤트 버스트(iCloud 가져오기 등)를 묶어 한 번만 재검증을 nudge하기 위한 디바운스 by Claude */
+const MEDIA_LIBRARY_CHANGE_DEBOUNCE_MS = 1500;
 
 /* 2026.09.02 geocode 큐 드레인 루프 운영값 — 메타데이터 인덱싱 완료 후에만 시작 by Claude */
 const GEOCODE_DRAIN_INITIAL_DELAY_MS = 2000;
@@ -4907,47 +4909,77 @@ export default function HomeScreen() {
      첫 패스는 위치 보강 없이 타임스탬프만 인덱싱 by Claude */
   const backgroundMetadataSyncStartedRef = useRef(false);
   const backgroundMetadataSyncCancelledRef = useRef(false);
+  /* 2026.10.04 라이브러리 변경 nudge로 완료된 루프를 재가동하기 위한 활성/재실행 플래그 by Claude */
+  const backgroundMetadataSyncActiveRef = useRef(false);
+  const backgroundMetadataSyncRerunRef = useRef(false);
+  const runMetadataSyncLoopRef = useRef<() => void>(() => {});
 
-  const startBackgroundMetadataSync = useCallback(() => {
-    if (backgroundMetadataSyncStartedRef.current) return;
-    backgroundMetadataSyncStartedRef.current = true;
+  const runMetadataSyncLoop = useCallback(() => {
+    if (backgroundMetadataSyncCancelledRef.current) return;
+    if (backgroundMetadataSyncActiveRef.current) {
+      /* 2026.10.04 이미 도는 중이면 종료 후 한 번 더 돌도록 예약만 하고 반환 by Claude */
+      backgroundMetadataSyncRerunRef.current = true;
+      return;
+    }
+    backgroundMetadataSyncActiveRef.current = true;
 
     const sleep = (ms: number) =>
       new Promise<void>((resolve) => setTimeout(resolve, ms));
 
     void (async () => {
-      await sleep(BACKGROUND_SYNC_INITIAL_DELAY_MS);
-      let errorStreak = 0;
-      while (!backgroundMetadataSyncCancelledRef.current) {
-        /* 2026.09.02 사용자 요청이 진행 중이면 동기화를 양보해 6월 장애(초기 로드 경합) 재발을 방지 by Claude */
-        if (requestInFlightRef.current) {
-          await sleep(BACKGROUND_SYNC_BUSY_RETRY_MS);
-          continue;
+      try {
+        await sleep(BACKGROUND_SYNC_INITIAL_DELAY_MS);
+        let errorStreak = 0;
+        while (!backgroundMetadataSyncCancelledRef.current) {
+          /* 2026.09.02 사용자 요청이 진행 중이면 동기화를 양보해 6월 장애(초기 로드 경합) 재발을 방지 by Claude */
+          if (requestInFlightRef.current) {
+            await sleep(BACKGROUND_SYNC_BUSY_RETRY_MS);
+            continue;
+          }
+          try {
+            await syncPhotoMetadataInBackground({
+              maxPages: 3,
+              enrichLocation: false,
+            });
+            errorStreak = 0;
+          } catch (err) {
+            errorStreak += 1;
+            console.log("background metadata sync error:", err);
+            if (errorStreak >= BACKGROUND_SYNC_MAX_ERROR_STREAK) break;
+            await sleep(BACKGROUND_SYNC_ERROR_RETRY_MS);
+            continue;
+          }
+          const syncState = await getPhotoSyncState();
+          if (!syncState.hasNextPage) break;
+          await sleep(BACKGROUND_SYNC_IDLE_DELAY_MS);
         }
-        try {
-          await syncPhotoMetadataInBackground({
-            maxPages: 3,
-            enrichLocation: false,
-          });
-          errorStreak = 0;
-        } catch (err) {
-          errorStreak += 1;
-          console.log("background metadata sync error:", err);
-          if (errorStreak >= BACKGROUND_SYNC_MAX_ERROR_STREAK) break;
-          await sleep(BACKGROUND_SYNC_ERROR_RETRY_MS);
-          continue;
-        }
-        const syncState = await getPhotoSyncState();
-        if (!syncState.hasNextPage) break;
-        await sleep(BACKGROUND_SYNC_IDLE_DELAY_MS);
+      } finally {
+        backgroundMetadataSyncActiveRef.current = false;
+      }
+
+      if (backgroundMetadataSyncCancelledRef.current) return;
+
+      /* 2026.10.04 루프 진행 중 라이브러리 변경 nudge가 있었으면 한 번 더 패스 — 건수가 같으면 count-skip으로 저비용 종료 by Claude */
+      if (backgroundMetadataSyncRerunRef.current) {
+        backgroundMetadataSyncRerunRef.current = false;
+        runMetadataSyncLoopRef.current();
+        return;
       }
 
       /* 2026.09.02 메타데이터 패스 종료 후 geocode 큐 드레인으로 전환 — 두 백그라운드 루프가 동시에 돌지 않도록 순차화 by Claude */
-      if (!backgroundMetadataSyncCancelledRef.current) {
-        startGeocodeQueueDrain();
-      }
+      startGeocodeQueueDrain();
     })();
   }, [startGeocodeQueueDrain]);
+
+  useEffect(() => {
+    runMetadataSyncLoopRef.current = runMetadataSyncLoop;
+  }, [runMetadataSyncLoop]);
+
+  const startBackgroundMetadataSync = useCallback(() => {
+    if (backgroundMetadataSyncStartedRef.current) return;
+    backgroundMetadataSyncStartedRef.current = true;
+    runMetadataSyncLoop();
+  }, [runMetadataSyncLoop]);
 
   useEffect(() => {
     if (!didInitialLoad) return;
@@ -4969,6 +5001,31 @@ export default function HomeScreen() {
        백그라운드 루프가 영구 중단되는 문제 방지(빈 deps 필수) by Claude */
     return () => {
       backgroundMetadataSyncCancelledRef.current = true;
+    };
+  }, []);
+
+  useEffect(() => {
+    /* 2026.10.04 촬영/삭제 등 라이브러리 변경을 감지해 재검증 패스를 nudge — 새 사진/삭제가
+       다음 앱 재시작까지 반영되지 않던 공백을 해소 by Claude */
+    let debounceTimer: ReturnType<typeof setTimeout> | null = null;
+    let subscription: { remove: () => void } | null = null;
+    try {
+      subscription = MediaLibrary.addListener(() => {
+        if (debounceTimer) clearTimeout(debounceTimer);
+        debounceTimer = setTimeout(() => {
+          if (backgroundMetadataSyncCancelledRef.current) return;
+          if (AppState.currentState !== "active") return;
+          /* 초기 로드 이전이면 기존 시작 경로(didInitialLoad/10초 fallback)에 맡김 */
+          if (!backgroundMetadataSyncStartedRef.current) return;
+          runMetadataSyncLoopRef.current();
+        }, MEDIA_LIBRARY_CHANGE_DEBOUNCE_MS);
+      });
+    } catch (err) {
+      console.log("media library change listener error:", err);
+    }
+    return () => {
+      if (debounceTimer) clearTimeout(debounceTimer);
+      subscription?.remove();
     };
   }, []);
 
