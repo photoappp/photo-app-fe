@@ -255,43 +255,47 @@ export const upsertPhotoMetadataRows = async (rows: PhotoMetadataRow[]) => {
 
   const db = await getDb();
   /* 2026.04.15 withTransactionAsync 동시 진입 충돌을 피하기 위해 업서트 쓰기를 queue 기반 순차 실행으로 변경 by June */
+  /* 2026.10.04 row당 개별 runAsync(페이지당 300회)를 json_each 기반 단일 구문으로 교체해 write queue 점유 시간을 단축 by Claude.
+     주의: 변경 없는 row도 updated_at은 항상 갱신해야 함 — 삭제 정리(패스 완주 시
+     updated_at < pass_started_at 판정)가 updated_at을 '이번 패스 방문' 마커로 사용하기 때문. */
   await enqueueWrite(async () => {
-    for (const row of rows) {
-      await db.runAsync(
-        `
-        INSERT INTO photo_metadata (
-          asset_id,
-          uri,
-          taken_at,
-          taken_minute,
-          latitude,
-          longitude,
-          created_at,
-          updated_at,
-          is_deleted
-        )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-        ON CONFLICT(asset_id) DO UPDATE SET
-          uri = excluded.uri,
-          taken_at = excluded.taken_at,
-          taken_minute = excluded.taken_minute,
-          /* 2026.05.06 sync 경로에서 위치값이 null일 때 기존 위치 메타를 보존해 회귀 덮어쓰기를 방지하기 위해 COALESCE 적용 by June */
-          latitude = COALESCE(excluded.latitude, photo_metadata.latitude),
-          longitude = COALESCE(excluded.longitude, photo_metadata.longitude),
-          updated_at = excluded.updated_at,
-          is_deleted = excluded.is_deleted
-        `,
-        row.assetId,
-        row.uri,
-        row.takenAt,
-        row.takenMinute,
-        row.latitude,
-        row.longitude,
-        row.createdAt,
-        row.updatedAt,
-        row.isDeleted
-      );
-    }
+    await db.runAsync(
+      `
+      INSERT INTO photo_metadata (
+        asset_id,
+        uri,
+        taken_at,
+        taken_minute,
+        latitude,
+        longitude,
+        created_at,
+        updated_at,
+        is_deleted
+      )
+      SELECT
+        json_extract(value, '$.assetId'),
+        json_extract(value, '$.uri'),
+        json_extract(value, '$.takenAt'),
+        json_extract(value, '$.takenMinute'),
+        json_extract(value, '$.latitude'),
+        json_extract(value, '$.longitude'),
+        json_extract(value, '$.createdAt'),
+        json_extract(value, '$.updatedAt'),
+        json_extract(value, '$.isDeleted')
+      FROM json_each(?)
+      WHERE true
+      ON CONFLICT(asset_id) DO UPDATE SET
+        uri = excluded.uri,
+        taken_at = excluded.taken_at,
+        taken_minute = excluded.taken_minute,
+        /* 2026.05.06 sync 경로에서 위치값이 null일 때 기존 위치 메타를 보존해 회귀 덮어쓰기를 방지하기 위해 COALESCE 적용 by June */
+        latitude = COALESCE(excluded.latitude, photo_metadata.latitude),
+        longitude = COALESCE(excluded.longitude, photo_metadata.longitude),
+        updated_at = excluded.updated_at,
+        is_deleted = excluded.is_deleted
+      `,
+      JSON.stringify(rows)
+    );
   });
 };
 
