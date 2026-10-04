@@ -12,13 +12,16 @@
       "distribution": "internal"
     },
     "production": {
-      "autoIncrement": true
+      "autoIncrement": true,
+      "ios": {
+        "credentialsSource": "local"
+      }
     }
   },
   "submit": {
     "production": {
       "ios": {
-        "appleId": "guatemala3081@gmail.com"
+        "appleId": "yenhan.dev@gmail.com"
       }
     }
   }
