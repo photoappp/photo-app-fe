@@ -1,0 +1,10 @@
+{
+  "revision": "natural-earth-5.1.2-bands-v1",
+  "sourceUrl": "https://raw.githubusercontent.com/nvkelso/natural-earth-vector/v5.1.2/geojson/ne_10m_admin_0_countries.geojson",
+  "sourceSha256": "239eec57ac17f100a11e2536cffc56752c318b50ae765b0918ff7aab4ce8f255",
+  "license": "Public domain",
+  "featureCount": 258,
+  "bandBytes": 22682005,
+  "coordinateTransform": "none",
+  "latitudeBandDegrees": 5
+}
