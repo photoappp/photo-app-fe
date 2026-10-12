@@ -50,23 +50,82 @@ import * as amplitude from "@amplitude/analytics-react-native";
 /* 2026.04.15 SQLite 메타데이터 DB/동기화 모듈을 홈 화면 로딩 파이프라인에 연결하기 위해 import 추가 by June */
 import {
   countPhotoMetadataByDateTime,
+  countPhotosMissingCoordsByDateTime,
   enqueueGeocodeJobs,
   getDisplayUriCacheBySourceUris,
   getGeocodeCacheByKey,
+  getGeocodeCacheByKeys,
   getGeocodeCacheCount,
   getGeocodePendingJobCount,
   getOldestPhotoTakenAt,
   getPhotoMetadataCount,
   getPhotoSyncState,
   initPhotoMetadataDb,
+  type PhotoPageCursor,
   queryPhotoMetadataByDateTime,
+  updatePhotoCoordinatesByAssetIds,
   upsertDisplayUriCacheRows,
   upsertGeocodeCacheRows
 } from "@/lib/db/photoMetadataDb";
 import { recordPerfMetric } from "@/lib/services/perfMetrics";
 import {
+  syncPhotoMetadataInBackground,
   upsertPhotoMetadataFromAssets,
 } from "@/lib/services/photoMetadataSync";
+/* 2026.09.02 geocode 큐 드레인/시딩을 홈 화면 백그라운드 루프에 연결하기 위해 import 추가 by Claude */
+import {
+  processGeocodeJobsInBackground,
+  seedGeocodeJobsFromPhotoMetadata,
+} from "@/lib/services/geocodeJobWorker";
+/* 2026.10.04 좌표→국가 오프라인 판별(폴리곤) — 국가 표기는 지오코더 대신 이걸 우선 사용 by Claude */
+import { resolveCountryForCoords } from "@/lib/geo/countryLookup";
+import { setCountryDisplayLanguage } from "@/lib/geo/countryNames";
+
+/* 2026.09.02 keyset 페이지네이션 이어가기용: 이미 로드된 사진 중 가장 오래된 (takenAt, assetId) 커서 계산 헬퍼 by Claude */
+const oldestCursorOfPhotos = (
+  photos: { takenAt?: number | null; assetId?: string }[],
+): PhotoPageCursor | null => {
+  let oldest: PhotoPageCursor | null = null;
+  for (const photo of photos) {
+    const takenAt = photo.takenAt;
+    const assetId = photo.assetId;
+    if (typeof takenAt !== "number" || !Number.isFinite(takenAt)) continue;
+    if (typeof assetId !== "string" || assetId.length === 0) continue;
+    if (
+      !oldest ||
+      takenAt < oldest.takenAt ||
+      (takenAt === oldest.takenAt && assetId < oldest.assetId)
+    ) {
+      oldest = { takenAt, assetId };
+    }
+  }
+  return oldest;
+};
+
+/* 2026.09.02 백그라운드 인덱싱 폴라이트 드레인 루프 운영값 by Claude */
+const BACKGROUND_SYNC_INITIAL_DELAY_MS = 3000;
+const BACKGROUND_SYNC_IDLE_DELAY_MS = 1500;
+const BACKGROUND_SYNC_BUSY_RETRY_MS = 1000;
+const BACKGROUND_SYNC_ERROR_RETRY_MS = 15000;
+const BACKGROUND_SYNC_MAX_ERROR_STREAK = 3;
+const BACKGROUND_SYNC_FALLBACK_START_MS = 10000;
+/* 2026.10.04 라이브러리 변경 이벤트 버스트(iCloud 가져오기 등)를 묶어 한 번만 재검증을 nudge하기 위한 디바운스 by Claude */
+const MEDIA_LIBRARY_CHANGE_DEBOUNCE_MS = 1500;
+
+/* 2026.10.04 검색 예상 시간 공식 계수: 예상 = BASE + 좌표미보유수×RECOVERY + 전체행수×ROW.
+   RECOVERY는 6-병렬 getAssetInfoAsync 1건의 실측 수준, ROW는 DB행 읽기/정렬/렌더 비용 by Claude */
+const SEARCH_ESTIMATE_BASE_S = 4;
+const SEARCH_ESTIMATE_RECOVERY_S_PER_PHOTO = 0.08;
+const SEARCH_ESTIMATE_ROW_S_PER_ROW = 0.0004;
+const SEARCH_ESTIMATE_MAX_S = 300;
+
+/* 2026.09.02 geocode 큐 드레인 루프 운영값 — 메타데이터 인덱싱 완료 후에만 시작 by Claude */
+const GEOCODE_DRAIN_INITIAL_DELAY_MS = 2000;
+const GEOCODE_DRAIN_IDLE_DELAY_MS = 1200;
+const GEOCODE_DRAIN_BUSY_RETRY_MS = 1000;
+const GEOCODE_DRAIN_ERROR_RETRY_MS = 15000;
+const GEOCODE_DRAIN_THROTTLE_BACKOFF_MS = 120000;
+const GEOCODE_DRAIN_MAX_ERROR_STREAK = 3;
 
 // Responsive image grid calculations
 const screenWidth = Dimensions.get("window").width;
@@ -143,7 +202,7 @@ export default function HomeScreen() {
   const navigation = useNavigation();
   const { isDarkTheme, colors } = useTheme();
   /* 2026.04.22 홈 화면의 하드코딩 문구를 다국어로 전환하기 위해 공용 i18n 훅을 사용하도록 변경 by June */
-  const { t } = useI18n();
+  const { t, language } = useI18n();
   //	const { userData, updateUserData } = useUserData();
 
   const {
@@ -282,9 +341,12 @@ export default function HomeScreen() {
   const photoGridListRef = useRef<FlatList<Photo> | null>(null);
   const photoGridScrollOffsetRef = useRef(0);
   /* 2026.04.22 날짜/시간 DB 경로에서도 스크롤 append를 지원하기 위해 현재 DB 페이지네이션 오프셋/활성 상태를 ref로 관리하도록 추가 by June */
-  const dbDateTimePagingRef = useRef<{ enabled: boolean; offset: number }>({
+  const dbDateTimePagingRef = useRef<{
+    enabled: boolean;
+    after: PhotoPageCursor | null;
+  }>({
     enabled: false,
-    offset: 0,
+    after: null,
   });
   type DateTimeCoverageEntry = {
     dateStartMs: number;
@@ -686,13 +748,71 @@ export default function HomeScreen() {
     (photoCount: number, dayCount: number) => {
       const normalizedPhotoCount = Math.max(1, photoCount);
       const normalizedDayCount = Math.max(1, dayCount);
+      /* 2026.10.04 계수 재보정: 기존 0.18s/장·0.45s/일은 사진 단위 직렬 지오코딩 시절 값이라
+         전체 기간 검색에서 추정치가 수십 분까지 치솟아 진행률이 1%에 고정되던 문제의 원인.
+         키 단위 배치 + 오프라인 국가 판별 이후 실측 수준(수 초~수십 초)으로 낮추고 상한 90초 적용 by Claude */
       const estimated = Math.round(
-        6 + normalizedPhotoCount * 0.18 + normalizedDayCount * 0.45,
+        4 + normalizedPhotoCount * 0.006 + normalizedDayCount * 0.004,
       );
-      return Math.max(8, estimated);
+      return Math.max(6, Math.min(90, estimated));
     },
     [],
   );
+
+  /* 2026.10.04 예상 시간을 '남은 실제 작업량' 기반 공식으로 계산:
+     예상 = BASE + 좌표미보유수×RECOVERY + 전체행수×ROW (범위별 ms 단위 COUNT 2건).
+     좌표가 영속화될수록(updatePhotoCoordinatesByAssetIds) 같은 범위의 예상/실제가 함께 줄어듦 by Claude */
+  const [searchWorkEstimate, setSearchWorkEstimate] = useState<{
+    signature: string;
+    seconds: number;
+  } | null>(null);
+
+  const searchEstimateSignature = useCallback(
+    (f: FilterState) =>
+      `${dayStartMs(f.dateStart)}|${dayEndNextMs(f.dateEnd)}|${f.timeStart}|${f.timeEnd}`,
+    [dayEndNextMs, dayStartMs],
+  );
+
+  const refreshSearchWorkEstimate = useCallback(
+    async (f: FilterState) => {
+      try {
+        const params = {
+          dateStartMs: dayStartMs(f.dateStart),
+          dateEndNextMs: dayEndNextMs(f.dateEnd),
+          timeStart: f.timeStart,
+          timeEnd: f.timeEnd,
+        };
+        const [totalRows, missingCoords] = await Promise.all([
+          countPhotoMetadataByDateTime(params),
+          countPhotosMissingCoordsByDateTime(params),
+        ]);
+        const seconds = Math.round(
+          Math.min(
+            SEARCH_ESTIMATE_MAX_S,
+            Math.max(
+              SEARCH_ESTIMATE_BASE_S,
+              SEARCH_ESTIMATE_BASE_S +
+                missingCoords * SEARCH_ESTIMATE_RECOVERY_S_PER_PHOTO +
+                totalRows * SEARCH_ESTIMATE_ROW_S_PER_ROW,
+            ),
+          ),
+        );
+        setSearchWorkEstimate({
+          signature: searchEstimateSignature(f),
+          seconds,
+        });
+      } catch {
+        /* 조회 실패 시 기존 카운트 공식으로 폴백 */
+        setSearchWorkEstimate(null);
+      }
+    },
+    [dayEndNextMs, dayStartMs, searchEstimateSignature],
+  );
+
+  /* 필터가 바뀔 때마다 해당 범위의 작업량을 재조회 (COUNT 2건, ms 단위) */
+  useEffect(() => {
+    void refreshSearchWorkEstimate(filter);
+  }, [filter, refreshSearchWorkEstimate]);
 
   const estimateIncrementalLocationSearchSeconds = useCallback(
     (currentFilter: FilterState) => {
@@ -700,6 +820,15 @@ export default function HomeScreen() {
         currentSearchTargetCount,
         currentDateRangeDayCount,
       );
+
+      /* 2026.10.04 범위별 실제 남은 작업량 기반 예상값이 있으면 우선 사용 by Claude */
+      if (
+        searchWorkEstimate &&
+        searchWorkEstimate.signature === searchEstimateSignature(currentFilter)
+      ) {
+        return searchWorkEstimate.seconds;
+      }
+
       const previousBaseFilter = lastLoadedBaseFilterRef.current;
       const loadedBaseCount = photosAllRef.current.length;
 
@@ -745,6 +874,8 @@ export default function HomeScreen() {
       dayEndNextMs,
       dayStartMs,
       estimateLocationSearchSeconds,
+      searchEstimateSignature,
+      searchWorkEstimate,
     ],
   );
 
@@ -858,9 +989,13 @@ export default function HomeScreen() {
 
   const getPsychologicalLocationSearchPercent = useCallback(
     (elapsedSeconds: number, estimatedSeconds: number) => {
+      /* 2026.10.04 선형 elapsed/estimate는 추정치가 빗나가면 진행률이 바닥(1%)에 고정되어 멈춘 것처럼 보임.
+         지수 점근 곡선(초반 빠르게, 추정 시점 부근 ~95%, 이후에도 99%까지 계속 미세 전진)으로 교체 —
+         추정치가 틀려도 항상 움직이는 진행률을 보장 by Claude */
       const safeEstimatedSeconds = Math.max(estimatedSeconds, 1);
-      const ratio = Math.min(1, elapsedSeconds / safeEstimatedSeconds);
-      return Math.min(99, Math.max(1, Math.round(ratio * 99)));
+      const tau = Math.max(2, safeEstimatedSeconds / 3);
+      const eased = 1 - Math.exp(-Math.max(0, elapsedSeconds) / tau);
+      return Math.min(99, Math.max(1, Math.round(eased * 99)));
     },
     [],
   );
@@ -878,6 +1013,8 @@ export default function HomeScreen() {
 
   const armLocationSearchWorkflowForFilter = useCallback(
     (nextFilter: FilterState) => {
+      /* 2026.10.04 팝업이 뜨는 시점의 실제 잔여 작업량으로 예상 시간이 표시되도록 갱신 by Claude */
+      void refreshSearchWorkEstimate(nextFilter);
       lastDeclinedLocationSearchSignatureRef.current = null;
       lastPreparedLocationSearchSignatureRef.current = null;
       locationSearchResumeSignatureRef.current = null;
@@ -891,7 +1028,11 @@ export default function HomeScreen() {
           : "search-prompt",
       );
     },
-    [locationFeatureUnlockedUntil, shouldRequireExtendedLocationFeature],
+    [
+      locationFeatureUnlockedUntil,
+      refreshSearchWorkEstimate,
+      shouldRequireExtendedLocationFeature,
+    ],
   );
 
   /* 2026.06.23 해금 상태 로드/만료 정리는 RewardGateProvider로 이동(통합) by yen */
@@ -1402,21 +1543,131 @@ export default function HomeScreen() {
     });
   }, [prepareAndStartSlideshow, viewerPhotoUris]);
 
+  /* 2026.09.02 사진 단위 직렬 처리(좌표조회→캐시조회→지오코딩 각각 N회)를 geo-key 단위로 재구성 —
+     좌표 복구는 제한 병렬, 캐시는 1회 배치 조회, 지오코딩은 고유 키에만 수행. 시그니처/반환 형태는 기존과 동일 by Claude */
   async function imagesWithLocation(
     images: any[],
     opts?: { maxLookups?: number; precision?: number; delayMs?: number },
   ) {
-    /* 2026.04.22 위치 보강 전체 지연을 계측해 캐시 hit율과 reverse geocode 병목을 함께 분석하기 위해 타이머를 추가 by June */
     const geocodeStartedAt = Date.now();
     const maxLookups = opts?.maxLookups ?? 60; // 한 번 로드에서 지오코딩 최대 호출 수
     const precision = opts?.precision ?? 2; // 좌표 라운딩 자릿수(2 ≈ ~1km)
-    const delayMs = opts?.delayMs ?? 150; // 호출 간 지연(ms)
-    /* 2026.04.22 단일 요청 내 중복 좌표 재계산을 막기 위해 메모리 캐시를 유지하되 DB 캐시와 함께 사용하도록 확장 by June */
-    const cache = new Map<
-      string,
-      { country: string | null; city: string | null }
-    >();
-    /* 2026.04.22 reverse geocode 성공 결과를 배치 업서트로 저장해 쓰기 트랜잭션 횟수를 줄이기 위해 수집 배열 추가 by June */
+    const delayMs = opts?.delayMs ?? 150; // 호출 간 지연(ms) — CLGeocoder 레이트리밋 보호
+
+    type Place = { country: string | null; city: string | null };
+    type Coord = { latitude: number; longitude: number };
+
+    /* 1단계: 좌표 확보 — 이미 있는 좌표는 그대로, 없는 사진만 제한 병렬(6)로 상세조회 */
+    const resolvedCoords: (Coord | null)[] = new Array(images.length).fill(null);
+    const recoveryIndices: number[] = [];
+
+    images.forEach((img, index) => {
+      const loc = img.location;
+      if (loc) {
+        const latitude = Number(loc.latitude);
+        const longitude = Number(loc.longitude);
+        if (Number.isFinite(latitude) && Number.isFinite(longitude)) {
+          resolvedCoords[index] = { latitude, longitude };
+          return;
+        }
+      }
+      if (typeof img.uri === "string") recoveryIndices.push(index);
+    });
+
+    /* 2026.10.04 복구한 좌표를 DB에 영속화해 같은 사진의 복구 비용을 평생 1회로 제한 by Claude */
+    const recoveredCoordRows: {
+      assetId: string;
+      latitude: number;
+      longitude: number;
+    }[] = [];
+
+    if (recoveryIndices.length > 0) {
+      const RECOVERY_CONCURRENCY = 6;
+      let cursor = 0;
+      const workers = Array.from(
+        { length: Math.min(RECOVERY_CONCURRENCY, recoveryIndices.length) },
+        async () => {
+          while (cursor < recoveryIndices.length) {
+            const index = recoveryIndices[cursor];
+            cursor += 1;
+            const img = images[index];
+            try {
+              // 2026-05-12: location이 비어 있으면 ph:// URI로 좌표를 보강해 위치 필터 적용 시 모든 사진이 사라지는 버그 수정 by yen
+              const targetAssetId = img.assetId ?? getAssetIdFromPhUri(img.uri);
+              /* 2026.10.04 위치 메타만 필요하므로 iCloud 원본 다운로드 방지 by Claude */
+              const info = targetAssetId
+                ? await MediaLibrary.getAssetInfoAsync(targetAssetId, {
+                    shouldDownloadFromNetwork: false,
+                  })
+                : await MediaLibrary.getAssetInfoAsync(img.uri as any, {
+                    shouldDownloadFromNetwork: false,
+                  });
+              if (info?.location) {
+                const latitude = Number(info.location.latitude);
+                const longitude = Number(info.location.longitude);
+                if (Number.isFinite(latitude) && Number.isFinite(longitude)) {
+                  resolvedCoords[index] = { latitude, longitude };
+                  if (typeof targetAssetId === "string" && targetAssetId) {
+                    recoveredCoordRows.push({
+                      assetId: targetAssetId,
+                      latitude,
+                      longitude,
+                    });
+                  }
+                }
+              }
+            } catch {}
+          }
+        },
+      );
+      await Promise.all(workers);
+
+      if (recoveredCoordRows.length > 0) {
+        /* 검색을 막지 않도록 fire-and-forget — 실패해도 다음 검색에서 재복구됨 */
+        void updatePhotoCoordinatesByAssetIds(recoveredCoordRows).catch(
+          () => {},
+        );
+      }
+    }
+
+    /* 2단계: geo-key로 그룹핑 — 여행 사진 수백 장이 보통 5~8개 키로 수렴 */
+    const keyByIndex: (string | null)[] = new Array(images.length).fill(null);
+    const coordByKey = new Map<string, Coord>();
+    resolvedCoords.forEach((coord, index) => {
+      if (!coord) return;
+      const key = `${coord.latitude.toFixed(precision)},${coord.longitude.toFixed(precision)}`;
+      keyByIndex[index] = key;
+      if (!coordByKey.has(key)) coordByKey.set(key, coord);
+    });
+
+    /* 2026.10.04 국가는 오프라인 폴리곤 판별을 우선 사용(µs, 오프라인 동작) — 과거 캐시/지오코더의
+       상이한 국가 표기가 섞이지 않도록 키 단위로 먼저 계산해 모든 경로에서 덮어씀 by Claude */
+    const polygonCountryByKey = new Map<string, string | null>();
+    for (const [key, coord] of coordByKey) {
+      polygonCountryByKey.set(
+        key,
+        resolveCountryForCoords(coord.latitude, coord.longitude),
+      );
+    }
+
+    /* 3단계: 캐시를 1회 배치 조회 — 기존 사진 단위 직렬 조회 N회를 대체 */
+    const placeByKey = new Map<string, Place>();
+    let dbCacheHits = 0;
+    try {
+      const cachedPlaces = await getGeocodeCacheByKeys([...coordByKey.keys()]);
+      for (const [key, place] of cachedPlaces) {
+        placeByKey.set(key, {
+          country: polygonCountryByKey.get(key) ?? place.country ?? null,
+          city: place.city ?? null,
+        });
+      }
+      dbCacheHits = cachedPlaces.size;
+    } catch (e: any) {
+      /* 2026.04.22 캐시 조회 실패가 전체 로딩을 막지 않도록 오류를 로깅하고 런타임 geocode로 계속 진행하기 위해 추가 by June */
+      console.log("geocode cache read error:", e);
+    }
+
+    /* 4단계: 미캐시 키만 직렬 지오코딩(150ms 지연 유지), 상한 초과/실패 키는 큐로 */
     const cacheUpsertRows: {
       geoKey: string;
       latitude: number;
@@ -1425,111 +1676,76 @@ export default function HomeScreen() {
       city: string | null;
       updatedAt: number;
     }[] = [];
-    /* 2026.04.22 geocode miss 좌표를 작업 큐에 누적해 이후 백그라운드 보강 대상으로 추적하기 위해 map 추가 by June */
-    const pendingJobMap = new Map<
-      string,
-      { geoKey: string; latitude: number; longitude: number }
-    >();
-    const updated: any[] = [];
+    const pendingJobMap = new Map<string, { geoKey: string; latitude: number; longitude: number }>();
     let lookups = 0;
-    /* 2026.04.22 캐시 효율을 수치화하기 위해 런타임/DB 캐시 hit 카운터를 추가 by June */
-    let memoryCacheHits = 0;
-    let dbCacheHits = 0;
 
-    for (const img of images) {
-      // 2026-05-12: location이 비어 있으면 ph:// URI로 좌표를 보강해 위치 필터 적용 시 모든 사진이 사라지는 버그 수정 by yen
-      let imgLocation = img.location;
-      if (!imgLocation && typeof img.uri === "string") {
-        try {
-          const targetAssetId = img.assetId ?? getAssetIdFromPhUri(img.uri);
-          const info = targetAssetId
-            ? await MediaLibrary.getAssetInfoAsync(targetAssetId)
-            : await MediaLibrary.getAssetInfoAsync(img.uri as any);
-          if (info?.location) {
-            const lat0 = Number(info.location.latitude);
-            const lon0 = Number(info.location.longitude);
-            if (Number.isFinite(lat0) && Number.isFinite(lon0)) {
-              imgLocation = { latitude: lat0, longitude: lon0 };
-            }
-          }
-        } catch {}
-      }
-      if (!imgLocation) {
-        updated.push({ ...img, country: null, city: null });
+    for (const [key, coord] of coordByKey) {
+      if (placeByKey.has(key)) continue;
+
+      if (lookups >= maxLookups) {
+        /* 2026.04.22 이번 로드의 geocode 상한으로 미처리된 좌표를 작업 큐에 적재해 단계적 보강 대상에 포함시키기 위해 추가 by June */
+        pendingJobMap.set(key, {
+          geoKey: key,
+          latitude: coord.latitude,
+          longitude: coord.longitude,
+        });
+        /* 2026.10.04 도시는 큐로 미루더라도 국가는 폴리곤으로 즉시 표시 by Claude */
+        placeByKey.set(key, {
+          country: polygonCountryByKey.get(key) ?? null,
+          city: null,
+        });
         continue;
       }
 
-      const lat = Number(imgLocation.latitude);
-      const lon = Number(imgLocation.longitude);
-      const key = `${lat.toFixed(precision)},${lon.toFixed(precision)}`;
-      let place = cache.get(key);
-      if (place) {
-        memoryCacheHits += 1;
+      try {
+        const [res] = await Location.reverseGeocodeAsync({
+          latitude: coord.latitude,
+          longitude: coord.longitude,
+        });
+        const place: Place = {
+          /* 2026.10.04 국가는 폴리곤 판별 우선, 지오코더는 폴백 by Claude */
+          country: polygonCountryByKey.get(key) ?? res?.country ?? null,
+          city: res?.city ?? res?.subregion ?? null,
+        };
+        placeByKey.set(key, place);
+        cacheUpsertRows.push({
+          geoKey: key,
+          latitude: coord.latitude,
+          longitude: coord.longitude,
+          country: place.country,
+          city: place.city,
+          updatedAt: Date.now(),
+        });
+        lookups += 1;
+        if (delayMs > 0) await sleep(delayMs);
+      } catch (e: any) {
+        // 레이트리밋/기타 에러 → 해당 좌표는 빈 값으로 두고 큐에 남겨 백그라운드 재시도
+        placeByKey.set(key, {
+          country: polygonCountryByKey.get(key) ?? null,
+          city: null,
+        });
+        pendingJobMap.set(key, {
+          geoKey: key,
+          latitude: coord.latitude,
+          longitude: coord.longitude,
+        });
+        await sleep(delayMs * 4);
       }
-
-      if (!place) {
-        try {
-          /* 2026.04.22 영속 geocode 캐시를 우선 조회해 동일 좌표 reverse geocode 재호출을 제거하기 위해 추가 by June */
-          const cached = await getGeocodeCacheByKey(key);
-          if (cached) {
-            place = {
-              country: cached.country ?? null,
-              city: cached.city ?? null,
-            };
-            cache.set(key, place);
-            dbCacheHits += 1;
-          }
-        } catch (e: any) {
-          /* 2026.04.22 캐시 조회 실패가 전체 로딩을 막지 않도록 오류를 로깅하고 런타임 geocode로 계속 진행하기 위해 추가 by June */
-          console.log("geocode cache read error:", e);
-        }
-      }
-
-      if (!place && lookups < maxLookups) {
-        try {
-          const [res] = await Location.reverseGeocodeAsync({
-            latitude: lat,
-            longitude: lon,
-          });
-          place = {
-            country: res?.country ?? null,
-            city: res?.city ?? res?.subregion ?? null,
-          };
-          cache.set(key, place);
-          /* 2026.04.22 새 geocode 결과를 캐시에 저장하기 위해 배치 업서트 목록에 추가 by June */
-          cacheUpsertRows.push({
-            geoKey: key,
-            latitude: lat,
-            longitude: lon,
-            country: place.country,
-            city: place.city,
-            updatedAt: Date.now(),
-          });
-          lookups += 1;
-          if (delayMs > 0) await sleep(delayMs);
-        } catch (e: any) {
-          // 레이트리밋/기타 에러 → 해당 좌표는 빈 값 캐시하고 진행
-          place = { country: null, city: null };
-          cache.set(key, place);
-          /* 2026.04.22 현재 배치에서 처리 실패한 좌표를 geocode 작업 큐에 남겨 추후 재시도 가능하게 하기 위해 추가 by June */
-          pendingJobMap.set(key, {
-            geoKey: key,
-            latitude: lat,
-            longitude: lon,
-          });
-          // 간단 백오프
-          await sleep(delayMs * 4);
-        }
-      } else if (!place) {
-        /* 2026.04.22 이번 로드의 geocode 상한으로 미처리된 좌표를 작업 큐에 적재해 단계적 보강 대상에 포함시키기 위해 추가 by June */
-        pendingJobMap.set(key, { geoKey: key, latitude: lat, longitude: lon });
-      }
-
-      // 상한 초과 or 캐시된 값 사용
-      if (!place) place = { country: null, city: null };
-      /* 2026.05.27 ph:// 폴백으로 복구한 좌표(imgLocation)를 결과 photo에 반영 — 그래야 ShowOnMap이 마커를 표시할 수 있음 by yen */
-      updated.push({ ...img, location: imgLocation, ...place });
     }
+
+    const photosWithCoords = resolvedCoords.filter(Boolean).length;
+
+    /* 5단계: 키 결과를 사진에 매핑(순수 JS) */
+    const updated = images.map((img, index) => {
+      const key = keyByIndex[index];
+      const coord = resolvedCoords[index];
+      if (!key || !coord) {
+        return { ...img, country: null, city: null };
+      }
+      const place = placeByKey.get(key) ?? { country: null, city: null };
+      /* 2026.05.27 ph:// 폴백으로 복구한 좌표(imgLocation)를 결과 photo에 반영 — 그래야 ShowOnMap이 마커를 표시할 수 있음 by yen */
+      return { ...img, location: coord, ...place };
+    });
 
     if (cacheUpsertRows.length > 0) {
       try {
@@ -1549,7 +1765,8 @@ export default function HomeScreen() {
       }
     }
 
-    /* 2026.04.22 위치 보강 처리 시간을 캐시 hit/lookup/큐 적재량과 함께 기록해 다음 최적화 근거를 확보하기 위해 계측을 추가 by June */
+    /* 2026.04.22 위치 보강 처리 시간을 캐시 hit/lookup/큐 적재량과 함께 기록해 다음 최적화 근거를 확보하기 위해 계측을 추가 by June
+       (2026.09.02 memoryCacheHits는 키 그룹핑으로 흡수된 중복 사진 수를 의미하도록 재정의 by Claude) */
     recordPerfMetric(
       "home.images_with_location.ms",
       Date.now() - geocodeStartedAt,
@@ -1557,8 +1774,10 @@ export default function HomeScreen() {
         context: {
           inputCount: images.length,
           reverseLookups: lookups,
-          memoryCacheHits,
+          memoryCacheHits: Math.max(0, photosWithCoords - coordByKey.size),
           dbCacheHits,
+          polygonResolved: [...polygonCountryByKey.values()].filter(Boolean)
+            .length,
           queuedJobs: pendingJobMap.size,
         },
         logEvery: 2,
@@ -1664,12 +1883,19 @@ export default function HomeScreen() {
         /* Android에서 위치 필터가 적용된 경로에서만 추가 비용 감수하고 per-asset 보강 */
         if (!location && shouldEnrichOnAndroid) {
           try {
-            const info = await MediaLibrary.getAssetInfoAsync(asset.id);
+            /* 2026.10.04 위치 메타만 필요하므로 iCloud 원본 다운로드 방지 by Claude */
+            const info = await MediaLibrary.getAssetInfoAsync(asset.id, {
+              shouldDownloadFromNetwork: false,
+            });
             if (info?.location) {
               const lat = Number(info.location.latitude);
               const lon = Number(info.location.longitude);
               if (Number.isFinite(lat) && Number.isFinite(lon)) {
                 location = { latitude: lat, longitude: lon };
+                /* 2026.10.04 복구 좌표 영속화 by Claude */
+                void updatePhotoCoordinatesByAssetIds([
+                  { assetId: asset.id, latitude: lat, longitude: lon },
+                ]).catch(() => {});
               }
             }
           } catch {
@@ -1722,6 +1948,36 @@ export default function HomeScreen() {
     [applyLocationFilter, dedupePhotosByUri, sortPhotosForDisplay],
   );
 
+  /* 2026.10.04 오프라인 국가 표시명을 앱 언어 설정과 동기화하고, 이미 로드된 사진의 국가 라벨도
+     즉시 재계산 — 언어 전환 직후 영어/한국어 국가명이 섞여 보이지 않도록 함 (좌표 기반 로컬 연산이라 µs 단위) by Claude */
+  useEffect(() => {
+    setCountryDisplayLanguage(language);
+
+    setPhotosAll((prev) => {
+      if (prev.length === 0) return prev;
+      let changed = false;
+      const next = prev.map((photo) => {
+        const loc = photo.location;
+        if (!loc) return photo;
+        const latitude = Number(loc.latitude);
+        const longitude = Number(loc.longitude);
+        if (!Number.isFinite(latitude) || !Number.isFinite(longitude)) {
+          return photo;
+        }
+        const country = resolveCountryForCoords(latitude, longitude);
+        if (!country || country === photo.country) return photo;
+        changed = true;
+        return { ...photo, country };
+      });
+      if (!changed) return prev;
+      photosAllRef.current = next;
+      const nextVisible = deriveVisiblePhotos(next, filterRef.current);
+      photosRef.current = nextVisible;
+      setPhotos(nextVisible);
+      return next;
+    });
+  }, [language, deriveVisiblePhotos]);
+
   async function loadPreparedPhotosFromDbForLocationSearch(
     currentFilter: FilterState,
   ) {
@@ -1758,7 +2014,6 @@ export default function HomeScreen() {
       timeStart: currentFilter.timeStart,
       timeEnd: currentFilter.timeEnd,
       limit: totalCount,
-      offset: 0,
     });
 
     const photosFromDb = sortPhotosForDisplay(
@@ -1907,7 +2162,7 @@ export default function HomeScreen() {
         setHasNextPage(false);
         dbDateTimePagingRef.current = {
           enabled: true,
-          offset: dbPrepared.photos.length,
+          after: oldestCursorOfPhotos(dbPrepared.photos),
         };
 
         await ensureVisiblePhotosLocationReady();
@@ -1998,7 +2253,7 @@ export default function HomeScreen() {
         nextPage = result.hasNextPage;
         setEndCursor(cursor);
         setHasNextPage(nextPage);
-        dbDateTimePagingRef.current = { enabled: false, offset: 0 };
+        dbDateTimePagingRef.current = { enabled: false, after: null };
 
         processedCount = Math.min(total, mergedBase.length);
         setLocationSearchProgressChecked(processedCount);
@@ -2301,15 +2556,26 @@ export default function HomeScreen() {
           try {
             const targetAssetId =
               photo.assetId ?? getAssetIdFromPhUri(photo.uri);
+            /* 2026.10.04 위치 메타만 필요하므로 iCloud 원본 다운로드 방지 by Claude */
             const info = targetAssetId
-              ? await MediaLibrary.getAssetInfoAsync(targetAssetId)
-              : await MediaLibrary.getAssetInfoAsync(photo.uri as any);
+              ? await MediaLibrary.getAssetInfoAsync(targetAssetId, {
+                  shouldDownloadFromNetwork: false,
+                })
+              : await MediaLibrary.getAssetInfoAsync(photo.uri as any, {
+                  shouldDownloadFromNetwork: false,
+                });
             if (info?.location) {
               const lat = Number(info.location.latitude);
               const lon = Number(info.location.longitude);
               if (Number.isFinite(lat) && Number.isFinite(lon)) {
                 latitude = lat;
                 longitude = lon;
+                /* 2026.10.04 복구 좌표 영속화 by Claude */
+                if (typeof targetAssetId === "string" && targetAssetId) {
+                  void updatePhotoCoordinatesByAssetIds([
+                    { assetId: targetAssetId, latitude: lat, longitude: lon },
+                  ]).catch(() => {});
+                }
               }
             }
           } catch (e) {
@@ -2329,6 +2595,8 @@ export default function HomeScreen() {
         let city: string | null = null;
         let country: string | null = null;
         const geoKey = toGeoKey(latitude, longitude, 2);
+        /* 2026.10.04 국가는 오프라인 폴리곤 판별 우선 by Claude */
+        const polygonCountry = resolveCountryForCoords(latitude, longitude);
 
         try {
           const cached = await getGeocodeCacheByKey(geoKey);
@@ -2363,6 +2631,8 @@ export default function HomeScreen() {
             console.log("priority reverse geocode error:", e);
           }
         }
+
+        country = polygonCountry ?? country;
 
         setPhotosAll((prev) => {
           const nextBase = prev.map((p) =>
@@ -2452,13 +2722,16 @@ export default function HomeScreen() {
 
   /* 2026.05.06 초기 썸네일 선노출 후 위치(좌표→도시/국가)를 백그라운드에서 보강해 위치 누락 체감을 줄이기 위해 팔로업 함수를 추가 by June */
   /* 2026.05.06 초기 썸네일 노출 후 화면 상단 가시 범위 후보를 점진 보강해 썸네일 속도는 유지하면서 위치 누락을 줄이기 위해 추가 by June */
-  const followUpVisibleLocations = useCallback(async () => {
+  const followUpVisibleLocations = useCallback(async (opts?: {
+    maxLookups?: number;
+  }) => {
     if (locationFollowUpInFlightRef.current) return;
     if (photosRef.current.length === 0) return;
 
     const candidates = photosRef.current
       .slice(0, 40)
-      .filter((p) => !p.city && !p.country);
+      /* 2026.10.04 폴리곤으로 국가만 채워진 사진도 도시 후속 보강 대상이 되도록 OR 조건으로 변경 by Claude */
+      .filter((p) => !p.city || !p.country);
 
     if (candidates.length === 0) return;
 
@@ -2476,9 +2749,14 @@ export default function HomeScreen() {
           try {
             const targetAssetId =
               photo.assetId ?? getAssetIdFromPhUri(photo.uri);
+            /* 2026.10.04 위치 메타만 필요하므로 iCloud 원본 다운로드 방지 by Claude */
             const info = targetAssetId
-              ? await MediaLibrary.getAssetInfoAsync(targetAssetId)
-              : await MediaLibrary.getAssetInfoAsync(photo.uri as any);
+              ? await MediaLibrary.getAssetInfoAsync(targetAssetId, {
+                  shouldDownloadFromNetwork: false,
+                })
+              : await MediaLibrary.getAssetInfoAsync(photo.uri as any, {
+                  shouldDownloadFromNetwork: false,
+                });
             if (!info?.location) return photo;
 
             const latitude = Number(info.location.latitude);
@@ -2486,6 +2764,13 @@ export default function HomeScreen() {
 
             if (!Number.isFinite(latitude) || !Number.isFinite(longitude)) {
               return photo;
+            }
+
+            /* 2026.10.04 복구 좌표 영속화 — 다음 검색부터 이 사진의 복구 비용 제거 by Claude */
+            if (typeof targetAssetId === "string" && targetAssetId) {
+              void updatePhotoCoordinatesByAssetIds([
+                { assetId: targetAssetId, latitude, longitude },
+              ]).catch(() => {});
             }
 
             return {
@@ -2499,7 +2784,8 @@ export default function HomeScreen() {
       );
 
       const withPlaces = await imagesWithLocation(withCoordinates, {
-        maxLookups: 20,
+        /* 2026.09.02 드레인 루프의 진행형 라벨 갱신은 maxLookups 0으로 캐시만 읽도록 옵션화 by Claude */
+        maxLookups: opts?.maxLookups ?? 20,
         precision: 2,
         delayMs: 80,
       });
@@ -2861,7 +3147,11 @@ export default function HomeScreen() {
 
   /* 2026.04.15 날짜/시간 전용 DB 조회 경로를 분리해 로케이션 필터 영역 영향 없이 성능 테스트 가능한 모듈 단위를 만들기 위해 추가 by June */
   const tryLoadPhotosFromDbForDateTime = useCallback(
-    async (currentFilter: FilterState, limit: number, offset: number = 0) => {
+    async (
+      currentFilter: FilterState,
+      limit: number,
+      after: PhotoPageCursor | null = null,
+    ) => {
       /* 2026.04.22 DB 날짜/시간 조회 지연을 계측해 MediaLibrary fallback 대비 성능 차이를 수치화하기 위해 타이머를 추가 by June */
       const dbLoadStartedAt = Date.now();
       await showLocationSearchPhaseText(locationSearchPhaseLabels.db);
@@ -2883,7 +3173,7 @@ export default function HomeScreen() {
           usedDb: false as const,
           photos: [] as Photo[],
           dbHasMore: false,
-          nextOffset: offset,
+          nextAfter: after,
           isIndexComplete: false,
           totalCount: 0,
         };
@@ -2904,7 +3194,7 @@ export default function HomeScreen() {
           usedDb: false as const,
           photos: [] as Photo[],
           dbHasMore: false,
-          nextOffset: offset,
+          nextAfter: after,
           isIndexComplete: false,
           totalCount: 0,
         };
@@ -2928,7 +3218,7 @@ export default function HomeScreen() {
         timeStart: currentFilter.timeStart,
         timeEnd: currentFilter.timeEnd,
         limit,
-        offset,
+        after: after ? after.takenAt : null,
         isIndexComplete,
         indexedCount: metadataCount,
       });
@@ -2940,8 +3230,8 @@ export default function HomeScreen() {
         timeEnd: currentFilter.timeEnd,
         /* 2026.04.22 hasMore 판정을 위해 limit+1을 조회하고 1건 초과 시 다음 페이지 존재로 판단하도록 수정 by June */
         limit: limit + 1,
-        /* 2026.04.22 같은 날짜 필터에서 append 시 이어서 조회할 수 있도록 DB 조회 오프셋을 전달 by June */
-        offset,
+        /* 2026.09.02 append 이어읽기를 OFFSET 대신 keyset 커서로 수행해 백그라운드 인덱싱 중 페이지 밀림을 방지 by Claude */
+        after,
       });
 
       /* 2026.04.22 limit+1 조회 결과에서 초과 1건 존재 여부를 hasMore로 변환해 스크롤 추가 로딩 가능 여부를 계산하기 위해 추가 by June */
@@ -2969,7 +3259,7 @@ export default function HomeScreen() {
           usedDb: false as const,
           photos: [] as Photo[],
           dbHasMore: false,
-          nextOffset: offset,
+          nextAfter: after,
           isIndexComplete,
           totalCount,
         };
@@ -2984,7 +3274,7 @@ export default function HomeScreen() {
             usedDb: true,
             resultCount: photosFromDb.length,
             limit,
-            offset,
+            after: after ? after.takenAt : null,
             dbHasMore,
             isIndexComplete,
           },
@@ -2998,8 +3288,15 @@ export default function HomeScreen() {
         dbHasMore,
         isIndexComplete,
         totalCount,
-        /* 2026.04.22 다음 append 시작 오프셋을 한 곳에서 계산해 호출부의 중복 계산/오차를 방지하기 위해 반환값에 포함 by June */
-        nextOffset: offset + photosFromDb.length,
+        /* 2026.09.02 다음 append 시작점을 마지막 raw row의 (takenAt, assetId) keyset 커서로 계산해 OFFSET 드리프트를 제거 by Claude */
+        nextAfter:
+          trimmedRows.length > 0 &&
+          typeof trimmedRows[trimmedRows.length - 1].takenAt === "number"
+            ? {
+                takenAt: trimmedRows[trimmedRows.length - 1].takenAt as number,
+                assetId: trimmedRows[trimmedRows.length - 1].assetId,
+              }
+            : after,
       };
     },
     [
@@ -3038,7 +3335,6 @@ export default function HomeScreen() {
         timeStart: baseFilter.timeStart,
         timeEnd: baseFilter.timeEnd,
         limit: totalCount,
-        offset: 0,
       });
 
       return {
@@ -3070,8 +3366,16 @@ export default function HomeScreen() {
       let cursor: string | null = null;
       let nextPage = true;
       let totalCount = 0;
+      /* 2026.09.02 필터 변경으로 최신 요청이 아니게 된 스캔이 끝까지 도는 문제를 막기 위해 시작 시점 요청 ID를 캡처 by Claude */
+      const requestIdAtStart = photoLoadRequestIdRef.current;
+      let aborted = false;
 
       while (nextPage) {
+        /* 2026.09.02 페이지 단위로 최신 요청 여부를 확인해 stale 스캔을 조기 종료 by Claude */
+        if (photoLoadRequestIdRef.current !== requestIdAtStart) {
+          aborted = true;
+          break;
+        }
         const result = await fetchAssetsPage({
           after: cursor,
           first: FETCH_PAGE_SIZE,
@@ -3106,6 +3410,7 @@ export default function HomeScreen() {
       return {
         photos: sortPhotosForDisplay(dedupePhotosByUri(collected)),
         totalCount,
+        aborted,
       };
     },
     [
@@ -3138,6 +3443,7 @@ export default function HomeScreen() {
             photos: dbLoaded.photos,
             totalCount: dbLoaded.totalCount,
             source: "db" as const,
+            aborted: false,
           };
         }
       }
@@ -3148,6 +3454,7 @@ export default function HomeScreen() {
         photos: mediaLoaded.photos,
         totalCount: mediaLoaded.totalCount,
         source: "medialibrary" as const,
+        aborted: mediaLoaded.aborted,
       };
     },
     [
@@ -3236,6 +3543,10 @@ export default function HomeScreen() {
           "filter-reset",
         );
 
+        /* 2026.09.02 stale 스캔이 중단된 경우 부분 결과를 완전 로드로 오기록하지 않도록 적용을 건너뜀 (대기 중 재검색이 최신 필터로 다시 실행됨) by Claude */
+        if (gapResult.aborted) {
+          return true;
+        }
         if (gapResult.source === "medialibrary") {
           gapSource = "medialibrary";
         }
@@ -3257,7 +3568,7 @@ export default function HomeScreen() {
       pruneDisplayUriCacheForPhotos(nextBase);
       setEndCursor(null);
       setHasNextPage(false);
-      dbDateTimePagingRef.current = { enabled: false, offset: 0 };
+      dbDateTimePagingRef.current = { enabled: false, after: null };
       setLocationSearchTargetTotalCount(nextVisible.length);
       await showLocationSearchPhaseText(locationSearchPhaseLabels.apply);
       void refreshFilterProgress(currentFilter, nextVisible.length);
@@ -3315,7 +3626,8 @@ export default function HomeScreen() {
         pruneDisplayUriCacheForPhotos(nextBase);
         setEndCursor(null);
         setHasNextPage(false);
-        dbDateTimePagingRef.current = { enabled: false, offset: 0 };
+        /* 2026.09.09 main 병합: 신규 fast-path가 구 오프셋 형태를 쓰던 것을 keyset 커서 형태로 정합 by Claude */
+        dbDateTimePagingRef.current = { enabled: false, after: null };
         setLocationSearchTargetTotalCount(nextBase.length);
         void refreshFilterProgress(currentFilter, nextVisible.length);
         markLoadedBaseRange(currentFilter, true);
@@ -3390,6 +3702,11 @@ export default function HomeScreen() {
         ),
       );
 
+      /* 2026.09.02 stale 스캔 중단 시 부분 세그먼트를 적용/캐시하지 않도록 조기 반환 (대기 중 재검색이 최신 필터로 다시 실행됨) by Claude */
+      if (additionalSegments.some((segment) => segment.aborted)) {
+        return true;
+      }
+
       const nextBase = sortPhotosForDisplay(
         dedupePhotosByUri([
           ...keptBase,
@@ -3410,7 +3727,7 @@ export default function HomeScreen() {
       setHasNextPage(false);
       dbDateTimePagingRef.current = {
         enabled: true,
-        offset: nextBase.length,
+        after: oldestCursorOfPhotos(nextBase),
       };
       setLocationSearchTargetTotalCount(nextBase.length);
       void refreshFilterProgress(currentFilter, nextVisible.length);
@@ -3776,7 +4093,7 @@ export default function HomeScreen() {
       const initialDbResult = await tryLoadPhotosFromDbForDateTime(
         buildBaseDateTimeFilter(initialFilterForLoad),
         INITIAL_TARGET_COUNT,
-        0,
+        null,
       );
 
       let initialBase: Photo[] = [];
@@ -3791,7 +4108,7 @@ export default function HomeScreen() {
           initialDbResult.dbHasMore || !initialDbResult.isIndexComplete;
         dbDateTimePagingRef.current = {
           enabled: true,
-          offset: initialDbResult.nextOffset,
+          after: initialDbResult.nextAfter,
         };
         setLocationSearchTargetTotalCount(
           initialDbResult.totalCount > 0 ? initialDbResult.totalCount : null,
@@ -3811,7 +4128,7 @@ export default function HomeScreen() {
         ).slice(0, INITIAL_TARGET_COUNT);
         nextCursor = result.endCursor ?? null;
         nextHasPage = result.hasNextPage;
-        dbDateTimePagingRef.current = { enabled: false, offset: 0 };
+        dbDateTimePagingRef.current = { enabled: false, after: null };
         setLocationSearchTargetTotalCount(
           typeof result.totalCount === "number" && result.totalCount > 0
             ? result.totalCount
@@ -3872,6 +4189,12 @@ export default function HomeScreen() {
       );
       setInitialLoading(false);
       requestInFlightRef.current = false;
+      /* 2026.09.02 진행 중 요청 종료 시 대기 중인 필터 재검색을 즉시 실행해 큐잉된 리로드가 유실되는 문제 수정 by Claude */
+      if (pendingReloadRef.current) {
+        pendingReloadRef.current = false;
+        setPendingReloadVisible(false);
+        void reloadPhotosForFilterRef.current();
+      }
       if (!didInitialLoad) {
         initialLoadStartedRef.current = false;
       }
@@ -3952,7 +4275,7 @@ export default function HomeScreen() {
     setEndCursor(null); // 새 필터는 처음부터 다시 시작
     setHasNextPage(true); // 새 필터는 다시 탐색 가능 상태로 초기화
     /* 2026.04.22 필터 변경 시 이전 DB 오프셋이 남아 다음 조회가 어긋나는 문제를 막기 위해 페이지네이션 상태를 먼저 초기화 by June */
-    dbDateTimePagingRef.current = { enabled: false, offset: 0 };
+    dbDateTimePagingRef.current = { enabled: false, after: null };
     console.log("[Filter] changed", {
       requestId,
       pending: false,
@@ -3990,7 +4313,7 @@ export default function HomeScreen() {
       const dbResult = await tryLoadPhotosFromDbForDateTime(
         buildBaseDateTimeFilter(currentFilter),
         FILTER_RESET_TARGET_COUNT,
-        0,
+        null,
       );
 
       let sortedBase: Photo[] = [];
@@ -4007,7 +4330,7 @@ export default function HomeScreen() {
         nextHasPage = dbResult.dbHasMore || !dbResult.isIndexComplete;
         dbDateTimePagingRef.current = {
           enabled: true,
-          offset: dbResult.nextOffset,
+          after: dbResult.nextAfter,
         };
         setLocationSearchTargetTotalCount(
           dbResult.totalCount > 0 ? dbResult.totalCount : null,
@@ -4032,7 +4355,7 @@ export default function HomeScreen() {
         sorted = deriveVisiblePhotos(sortedBase, currentFilter);
         nextCursor = result.endCursor;
         nextHasPage = result.hasNextPage;
-        dbDateTimePagingRef.current = { enabled: false, offset: 0 };
+        dbDateTimePagingRef.current = { enabled: false, after: null };
       }
       console.log("[PhotoLoad] fetched", {
         requestId,
@@ -4085,6 +4408,12 @@ export default function HomeScreen() {
       });
       setFilterLoading(false);
       requestInFlightRef.current = false;
+      /* 2026.09.02 진행 중 요청 종료 시 대기 중인 필터 재검색을 즉시 실행해 큐잉된 리로드가 유실되는 문제 수정 by Claude */
+      if (pendingReloadRef.current) {
+        pendingReloadRef.current = false;
+        setPendingReloadVisible(false);
+        void reloadPhotosForFilterRef.current();
+      }
     }
   }, [
     filter,
@@ -4163,7 +4492,7 @@ export default function HomeScreen() {
           const dbResult = await tryLoadPhotosFromDbForDateTime(
             buildBaseDateTimeFilter(currentFilter),
             APPEND_TARGET_COUNT,
-            dbDateTimePagingRef.current.offset,
+            dbDateTimePagingRef.current.after,
           );
 
           if (dbResult.usedDb) {
@@ -4172,7 +4501,7 @@ export default function HomeScreen() {
             nextHasPage = dbResult.dbHasMore || !dbResult.isIndexComplete;
             dbDateTimePagingRef.current = {
               enabled: true,
-              offset: dbResult.nextOffset,
+              after: dbResult.nextAfter,
             };
             setLocationSearchTargetTotalCount(
               dbResult.totalCount > 0 ? dbResult.totalCount : null,
@@ -4202,7 +4531,7 @@ export default function HomeScreen() {
           fetchedPhotos = result.photos;
           nextCursor = result.endCursor;
           nextHasPage = result.hasNextPage;
-          dbDateTimePagingRef.current = { enabled: false, offset: 0 };
+          dbDateTimePagingRef.current = { enabled: false, after: null };
         } else {
           setCurrentDataSource("db");
         }
@@ -4258,6 +4587,12 @@ export default function HomeScreen() {
             setBackgroundLoading(false);
           }
           requestInFlightRef.current = false;
+          /* 2026.09.02 진행 중 요청 종료 시 대기 중인 필터 재검색을 즉시 실행해 큐잉된 리로드가 유실되는 문제 수정 by Claude */
+          if (pendingReloadRef.current) {
+            pendingReloadRef.current = false;
+            setPendingReloadVisible(false);
+            void reloadPhotosForFilterRef.current();
+          }
         }
       }
     },
@@ -4693,6 +5028,224 @@ export default function HomeScreen() {
     if (didInitialLoad) return;
     void loadInitialPhotos();
   }, [didInitialLoad, loadInitialPhotos]);
+
+  /* 2026.09.02 메타데이터 인덱싱 완료 후 geocode 큐를 소모하는 드레인 루프 — 같은 pause 규칙, 스로틀 백오프, 큐 소진 시 종료.
+     시딩은 인덱스 완성 시 1회. 취소 플래그는 메타데이터 루프와 공유(언마운트 시 함께 중단) by Claude */
+  const geocodeDrainStartedRef = useRef(false);
+
+  const startGeocodeQueueDrain = useCallback(() => {
+    if (geocodeDrainStartedRef.current) return;
+    geocodeDrainStartedRef.current = true;
+
+    const sleep = (ms: number) =>
+      new Promise<void>((resolve) => setTimeout(resolve, ms));
+
+    void (async () => {
+      await sleep(GEOCODE_DRAIN_INITIAL_DELAY_MS);
+
+      /* 2026.09.02 인덱스가 완성된 경우에만 라이브러리 전체 고유 좌표를 1회 시딩 by Claude */
+      try {
+        const syncState = await getPhotoSyncState();
+        if (!syncState.hasNextPage) {
+          await seedGeocodeJobsFromPhotoMetadata();
+        }
+      } catch (err) {
+        console.log("geocode seed error:", err);
+      }
+
+      let errorStreak = 0;
+      while (!backgroundMetadataSyncCancelledRef.current) {
+        if (requestInFlightRef.current) {
+          await sleep(GEOCODE_DRAIN_BUSY_RETRY_MS);
+          continue;
+        }
+        try {
+          const result = await processGeocodeJobsInBackground({
+            batchSize: 10,
+          });
+          errorStreak = 0;
+          if (result?.throttled) {
+            /* 2026.09.02 스로틀링 감지 시 분 단위 백오프 — 남은 작업 재시도 카운트를 태우지 않음 by Claude */
+            await sleep(GEOCODE_DRAIN_THROTTLE_BACKOFF_MS);
+            continue;
+          }
+          if ((result?.claimedJobs ?? 0) > 0) {
+            /* 2026.09.02 사이클마다 보이는 사진의 라벨을 캐시에서만 갱신(진행형 표시) by Claude */
+            void followUpVisibleLocations({ maxLookups: 0 });
+          }
+        } catch (err) {
+          errorStreak += 1;
+          console.log("geocode drain error:", err);
+          if (errorStreak >= GEOCODE_DRAIN_MAX_ERROR_STREAK) break;
+          await sleep(GEOCODE_DRAIN_ERROR_RETRY_MS);
+          continue;
+        }
+        try {
+          const pending = await getGeocodePendingJobCount();
+          if (pending === 0) break;
+        } catch {}
+        await sleep(GEOCODE_DRAIN_IDLE_DELAY_MS);
+      }
+
+      /* 2026.10.04 큐 소진 직후 잔여 작업량을 갱신해 다음 검색의 예상 시간에 즉시 반영 by Claude */
+      if (!backgroundMetadataSyncCancelledRef.current) {
+        void refreshSearchWorkEstimate(filterRef.current);
+      }
+    })();
+  }, [followUpVisibleLocations, refreshSearchWorkEstimate]);
+
+  /* 2026.09.02 첫 페인트 이후 사진 메타데이터 인덱스를 백그라운드에서 완성하는 폴라이트 드레인 루프.
+     a42ee9a에서 제거된 상시 동기화의 스케줄링 재설계: 초기 로드 완료 후 시작, 사용자 요청 진행 중에는 양보,
+     첫 패스는 위치 보강 없이 타임스탬프만 인덱싱 by Claude */
+  const backgroundMetadataSyncStartedRef = useRef(false);
+  const backgroundMetadataSyncCancelledRef = useRef(false);
+  /* 2026.10.04 라이브러리 변경 nudge로 완료된 루프를 재가동하기 위한 활성/재실행 플래그 by Claude */
+  const backgroundMetadataSyncActiveRef = useRef(false);
+  const backgroundMetadataSyncRerunRef = useRef(false);
+  const runMetadataSyncLoopRef = useRef<() => void>(() => {});
+
+  const runMetadataSyncLoop = useCallback(() => {
+    if (backgroundMetadataSyncCancelledRef.current) return;
+    if (backgroundMetadataSyncActiveRef.current) {
+      /* 2026.10.04 이미 도는 중이면 종료 후 한 번 더 돌도록 예약만 하고 반환 by Claude */
+      backgroundMetadataSyncRerunRef.current = true;
+      return;
+    }
+    backgroundMetadataSyncActiveRef.current = true;
+
+    const sleep = (ms: number) =>
+      new Promise<void>((resolve) => setTimeout(resolve, ms));
+
+    void (async () => {
+      try {
+        await sleep(BACKGROUND_SYNC_INITIAL_DELAY_MS);
+        let errorStreak = 0;
+        while (!backgroundMetadataSyncCancelledRef.current) {
+          /* 2026.09.02 사용자 요청이 진행 중이면 동기화를 양보해 6월 장애(초기 로드 경합) 재발을 방지 by Claude */
+          if (requestInFlightRef.current) {
+            await sleep(BACKGROUND_SYNC_BUSY_RETRY_MS);
+            continue;
+          }
+          try {
+            await syncPhotoMetadataInBackground({
+              maxPages: 3,
+              enrichLocation: false,
+            });
+            errorStreak = 0;
+          } catch (err) {
+            errorStreak += 1;
+            console.log("background metadata sync error:", err);
+            if (errorStreak >= BACKGROUND_SYNC_MAX_ERROR_STREAK) break;
+            await sleep(BACKGROUND_SYNC_ERROR_RETRY_MS);
+            continue;
+          }
+          const syncState = await getPhotoSyncState();
+          if (!syncState.hasNextPage) break;
+          await sleep(BACKGROUND_SYNC_IDLE_DELAY_MS);
+        }
+      } finally {
+        backgroundMetadataSyncActiveRef.current = false;
+      }
+
+      if (backgroundMetadataSyncCancelledRef.current) return;
+
+      /* 2026.10.04 루프 진행 중 라이브러리 변경 nudge가 있었으면 한 번 더 패스 — 건수가 같으면 count-skip으로 저비용 종료 by Claude */
+      if (backgroundMetadataSyncRerunRef.current) {
+        backgroundMetadataSyncRerunRef.current = false;
+        runMetadataSyncLoopRef.current();
+        return;
+      }
+
+      /* 2026.09.02 메타데이터 패스 종료 후 geocode 큐 드레인으로 전환 — 두 백그라운드 루프가 동시에 돌지 않도록 순차화 by Claude */
+      startGeocodeQueueDrain();
+    })();
+  }, [startGeocodeQueueDrain]);
+
+  useEffect(() => {
+    runMetadataSyncLoopRef.current = runMetadataSyncLoop;
+  }, [runMetadataSyncLoop]);
+
+  const startBackgroundMetadataSync = useCallback(() => {
+    if (backgroundMetadataSyncStartedRef.current) return;
+    backgroundMetadataSyncStartedRef.current = true;
+    runMetadataSyncLoop();
+  }, [runMetadataSyncLoop]);
+
+  useEffect(() => {
+    if (!didInitialLoad) return;
+    startBackgroundMetadataSync();
+    void refreshSearchWorkEstimate(filterRef.current);
+  }, [didInitialLoad, startBackgroundMetadataSync, refreshSearchWorkEstimate]);
+
+  useEffect(() => {
+    /* 2026.09.02 초기 로드가 지연/중단돼도 인덱싱이 시작되도록 10초 후 fallback 시작을 보장 by Claude */
+    const timer = setTimeout(() => {
+      startBackgroundMetadataSync();
+    }, BACKGROUND_SYNC_FALLBACK_START_MS);
+    return () => {
+      clearTimeout(timer);
+    };
+  }, [startBackgroundMetadataSync]);
+
+  useEffect(() => {
+    /* 2026.09.02 취소 플래그는 언마운트 시에만 설정 — 의존성 변화로 cleanup이 재실행되며
+       백그라운드 루프가 영구 중단되는 문제 방지(빈 deps 필수) by Claude */
+    return () => {
+      backgroundMetadataSyncCancelledRef.current = true;
+    };
+  }, []);
+
+  useEffect(() => {
+    /* 2026.10.04 촬영/삭제 등 라이브러리 변경을 감지해 재검증 패스를 nudge — 새 사진/삭제가
+       다음 앱 재시작까지 반영되지 않던 공백을 해소 by Claude */
+    let debounceTimer: ReturnType<typeof setTimeout> | null = null;
+    let subscription: { remove: () => void } | null = null;
+    try {
+      subscription = MediaLibrary.addListener(() => {
+        if (debounceTimer) clearTimeout(debounceTimer);
+        debounceTimer = setTimeout(() => {
+          if (backgroundMetadataSyncCancelledRef.current) return;
+          if (AppState.currentState !== "active") return;
+          /* 초기 로드 이전이면 기존 시작 경로(didInitialLoad/10초 fallback)에 맡김 */
+          if (!backgroundMetadataSyncStartedRef.current) return;
+          runMetadataSyncLoopRef.current();
+        }, MEDIA_LIBRARY_CHANGE_DEBOUNCE_MS);
+      });
+    } catch (err) {
+      console.log("media library change listener error:", err);
+    }
+    return () => {
+      if (debounceTimer) clearTimeout(debounceTimer);
+      subscription?.remove();
+    };
+  }, []);
+
+  useEffect(() => {
+    /* 2026.10.04 앱 복귀 시 기기 시간대 변경(여행/DST)을 감지해 재검증 패스를 nudge —
+       동기화 시작 시 ensureTakenMinutesMatchTimeZone이 taken_minute를 일괄 재계산함 by Claude */
+    let lastTimeZone: string | null = null;
+    try {
+      lastTimeZone = Intl.DateTimeFormat().resolvedOptions().timeZone ?? null;
+    } catch {}
+    const subscription = AppState.addEventListener("change", (state) => {
+      if (state !== "active") return;
+      try {
+        const timeZone =
+          Intl.DateTimeFormat().resolvedOptions().timeZone ?? null;
+        if (
+          timeZone &&
+          lastTimeZone &&
+          timeZone !== lastTimeZone &&
+          !backgroundMetadataSyncCancelledRef.current &&
+          backgroundMetadataSyncStartedRef.current
+        ) {
+          runMetadataSyncLoopRef.current();
+        }
+        if (timeZone) lastTimeZone = timeZone;
+      } catch {}
+    });
+    return () => subscription.remove();
+  }, []);
 
   const onRefresh = useCallback(async () => {
     setRefreshing(true);

@@ -35,7 +35,7 @@ export type RewardFeatureKey =
    배포할 때 아래 USE_TEST_UNLOCK_DURATION 값을 false 로만 바꾸면 됩니다. */
 const UNLOCK_DURATION_TEST_MS = 2 * 60 * 1000; // 2분 (테스트용)
 const UNLOCK_DURATION_PROD_MS = 2 * 60 * 60 * 1000; // 2시간 (배포용)
-const USE_TEST_UNLOCK_DURATION = true; // ⚠️ 배포 전 false 로 변경
+const USE_TEST_UNLOCK_DURATION = false; // 2026.10.04 해금 2시간(배포값)으로 전환 by Claude
 const UNLOCK_DURATION_MS = USE_TEST_UNLOCK_DURATION
   ? UNLOCK_DURATION_TEST_MS
   : UNLOCK_DURATION_PROD_MS;

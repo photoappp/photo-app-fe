@@ -4,7 +4,7 @@ import * as SQLite from "expo-sqlite";
 /* 2026.04.15 메타데이터 전용 DB 파일명/버전을 고정해 추후 마이그레이션 기준점을 만들기 위해 추가 by June */
 const DB_NAME = "picqly_metadata.db";
 /* 2026.04.15 스키마 변경 시 버전 증가를 통해 구조 변경을 안전하게 적용하기 위해 추가 by June */
-const DB_SCHEMA_VERSION = 4;
+const DB_SCHEMA_VERSION = 6;
 
 /* 2026.04.15 DB 핸들을 싱글톤으로 재사용해 중복 open 비용과 상태 불일치를 줄이기 위해 추가 by June */
 let dbPromise: Promise<SQLite.SQLiteDatabase> | null = null;
@@ -32,6 +32,12 @@ export type PhotoSummaryRow = {
   takenAt: number | null;
   latitude: number | null;
   longitude: number | null;
+};
+
+/* 2026.09.02 OFFSET 드리프트 없이 DB 페이지네이션을 이어가기 위한 keyset 커서 타입 추가 by Claude */
+export type PhotoPageCursor = {
+  takenAt: number;
+  assetId: string;
 };
 
 /* 2026.04.22 reverse geocode 캐시 입출력 구조를 고정해 위치 성능 개선 로직을 타입 안정적으로 연결하기 위해 추가 by June */
@@ -118,6 +124,10 @@ export const initPhotoMetadataDb = async () => {
         next_cursor TEXT,
         has_next_page INTEGER NOT NULL DEFAULT 1,
         last_synced_at INTEGER,
+        /* 2026.09.02 재검증 패스 시작 시각을 보존해 완주 시 삭제된 사진 row를 판별하기 위해 추가 by Claude */
+        pass_started_at INTEGER,
+        /* 2026.10.04 taken_minute 계산 기준 시간대를 보존해 기기 시간대 변경 시 일괄 재계산 트리거로 사용 by Claude */
+        time_zone TEXT,
         updated_at INTEGER NOT NULL
       );
 
@@ -218,6 +228,29 @@ export const initPhotoMetadataDb = async () => {
       );
     `);
 
+    /* 2026.09.02 기존 설치본에 pass_started_at 컬럼을 추가해 삭제 사진 정리(패스 완주 diff) 기준 시각을 보존하기 위해 마이그레이션 추가 by Claude */
+    const syncStateInfo = await db.getAllAsync<{ name: string }>(
+      `PRAGMA table_info(photo_sync_state)`
+    );
+    const hasPassStartedAt = syncStateInfo.some(
+      (c: { name: string }) => c.name === "pass_started_at"
+    );
+    if (!hasPassStartedAt) {
+      await db.execAsync(`
+        ALTER TABLE photo_sync_state ADD COLUMN pass_started_at INTEGER;
+      `);
+    }
+
+    /* 2026.10.04 기존 설치본에 time_zone 컬럼 추가 — 시간대 변경 감지용 by Claude */
+    const hasTimeZone = syncStateInfo.some(
+      (c: { name: string }) => c.name === "time_zone"
+    );
+    if (!hasTimeZone) {
+      await db.execAsync(`
+        ALTER TABLE photo_sync_state ADD COLUMN time_zone TEXT;
+      `);
+    }
+
     await db.execAsync(`PRAGMA user_version = ${DB_SCHEMA_VERSION};`);
   }).catch((err) => {
     /* 2026.04.15 초기화 실패 시 다음 호출에서 재시도 가능하도록 initPromise를 해제하기 위해 추가 by June */
@@ -234,43 +267,47 @@ export const upsertPhotoMetadataRows = async (rows: PhotoMetadataRow[]) => {
 
   const db = await getDb();
   /* 2026.04.15 withTransactionAsync 동시 진입 충돌을 피하기 위해 업서트 쓰기를 queue 기반 순차 실행으로 변경 by June */
+  /* 2026.10.04 row당 개별 runAsync(페이지당 300회)를 json_each 기반 단일 구문으로 교체해 write queue 점유 시간을 단축 by Claude.
+     주의: 변경 없는 row도 updated_at은 항상 갱신해야 함 — 삭제 정리(패스 완주 시
+     updated_at < pass_started_at 판정)가 updated_at을 '이번 패스 방문' 마커로 사용하기 때문. */
   await enqueueWrite(async () => {
-    for (const row of rows) {
-      await db.runAsync(
-        `
-        INSERT INTO photo_metadata (
-          asset_id,
-          uri,
-          taken_at,
-          taken_minute,
-          latitude,
-          longitude,
-          created_at,
-          updated_at,
-          is_deleted
-        )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-        ON CONFLICT(asset_id) DO UPDATE SET
-          uri = excluded.uri,
-          taken_at = excluded.taken_at,
-          taken_minute = excluded.taken_minute,
-          /* 2026.05.06 sync 경로에서 위치값이 null일 때 기존 위치 메타를 보존해 회귀 덮어쓰기를 방지하기 위해 COALESCE 적용 by June */
-          latitude = COALESCE(excluded.latitude, photo_metadata.latitude),
-          longitude = COALESCE(excluded.longitude, photo_metadata.longitude),
-          updated_at = excluded.updated_at,
-          is_deleted = excluded.is_deleted
-        `,
-        row.assetId,
-        row.uri,
-        row.takenAt,
-        row.takenMinute,
-        row.latitude,
-        row.longitude,
-        row.createdAt,
-        row.updatedAt,
-        row.isDeleted
-      );
-    }
+    await db.runAsync(
+      `
+      INSERT INTO photo_metadata (
+        asset_id,
+        uri,
+        taken_at,
+        taken_minute,
+        latitude,
+        longitude,
+        created_at,
+        updated_at,
+        is_deleted
+      )
+      SELECT
+        json_extract(value, '$.assetId'),
+        json_extract(value, '$.uri'),
+        json_extract(value, '$.takenAt'),
+        json_extract(value, '$.takenMinute'),
+        json_extract(value, '$.latitude'),
+        json_extract(value, '$.longitude'),
+        json_extract(value, '$.createdAt'),
+        json_extract(value, '$.updatedAt'),
+        json_extract(value, '$.isDeleted')
+      FROM json_each(?)
+      WHERE true
+      ON CONFLICT(asset_id) DO UPDATE SET
+        uri = excluded.uri,
+        taken_at = excluded.taken_at,
+        taken_minute = excluded.taken_minute,
+        /* 2026.05.06 sync 경로에서 위치값이 null일 때 기존 위치 메타를 보존해 회귀 덮어쓰기를 방지하기 위해 COALESCE 적용 by June */
+        latitude = COALESCE(excluded.latitude, photo_metadata.latitude),
+        longitude = COALESCE(excluded.longitude, photo_metadata.longitude),
+        updated_at = excluded.updated_at,
+        is_deleted = excluded.is_deleted
+      `,
+      JSON.stringify(rows)
+    );
   });
 };
 
@@ -344,9 +381,10 @@ export const getPhotoSyncState = async () => {
     next_cursor: string | null;
     has_next_page: number;
     last_synced_at: number | null;
+    pass_started_at: number | null;
   }>(
     `
-    SELECT next_cursor, has_next_page, last_synced_at
+    SELECT next_cursor, has_next_page, last_synced_at, pass_started_at
     FROM photo_sync_state
     WHERE id = 1
     `
@@ -356,6 +394,7 @@ export const getPhotoSyncState = async () => {
     nextCursor: row?.next_cursor ?? null,
     hasNextPage: (row?.has_next_page ?? 1) === 1,
     lastSyncedAt: row?.last_synced_at ?? null,
+    passStartedAt: row?.pass_started_at ?? null,
   };
 };
 
@@ -364,6 +403,8 @@ export const updatePhotoSyncState = async (params: {
   nextCursor: string | null;
   hasNextPage: boolean;
   lastSyncedAt: number;
+  /* 2026.09.02 패스 시작 시각을 상태와 함께 원자적으로 갱신해 앱 킬 후에도 삭제 판별 기준을 유지하기 위해 추가 by Claude */
+  passStartedAt: number | null;
 }) => {
   const db = await getDb();
 
@@ -375,15 +416,79 @@ export const updatePhotoSyncState = async (params: {
       SET next_cursor = ?,
           has_next_page = ?,
           last_synced_at = ?,
+          pass_started_at = ?,
           updated_at = ?
       WHERE id = 1
       `,
       params.nextCursor,
       params.hasNextPage ? 1 : 0,
       params.lastSyncedAt,
+      params.passStartedAt,
       Date.now()
     );
   });
+};
+
+/* 2026.10.04 기기 시간대 변경(여행/DST) 시 taken_minute를 캐시된 타임스탬프에서 일괄 재계산 — 라이브러리/네트워크 재조회 없음.
+   photo_metadata.updated_at은 갱신하지 않음(삭제 정리의 '패스 방문' 마커이므로) by Claude */
+export const ensureTakenMinutesMatchTimeZone = async (
+  currentTimeZone: string
+) => {
+  await initPhotoMetadataDb();
+  const db = await getDb();
+
+  const row = await db.getFirstAsync<{ time_zone: string | null }>(
+    `SELECT time_zone FROM photo_sync_state WHERE id = 1`
+  );
+  const storedTimeZone = row?.time_zone ?? null;
+  if (storedTimeZone === currentTimeZone) {
+    return { updated: false, changedRows: 0 };
+  }
+
+  let changedRows = 0;
+  await enqueueWrite(async () => {
+    /* SQLite 'localtime'은 현재 기기 시간대로 계산되므로 전체 재계산을 단일 구문으로 수행 (기존 taken_minute 마이그레이션과 동일 방식) */
+    const result = await db.runAsync(
+      `
+      UPDATE photo_metadata
+      SET taken_minute = CAST(strftime('%H', taken_at / 1000, 'unixepoch', 'localtime') AS INTEGER) * 60
+                       + CAST(strftime('%M', taken_at / 1000, 'unixepoch', 'localtime') AS INTEGER)
+      WHERE taken_at IS NOT NULL
+      `
+    );
+    changedRows = result.changes ?? 0;
+    await db.runAsync(
+      `UPDATE photo_sync_state SET time_zone = ?, updated_at = ? WHERE id = 1`,
+      currentTimeZone,
+      Date.now()
+    );
+  });
+
+  return { updated: true, changedRows };
+};
+
+/* 2026.09.02 재검증 패스 완주 시 방문되지 않은(=라이브러리에서 삭제된) row를 일괄 soft-delete 처리하기 위해 추가 by Claude */
+export const markPhotoMetadataDeletedBefore = async (cutoffMs: number) => {
+  await initPhotoMetadataDb();
+  const db = await getDb();
+
+  let changes = 0;
+  await enqueueWrite(async () => {
+    const result = await db.runAsync(
+      `
+      UPDATE photo_metadata
+      SET is_deleted = 1,
+          updated_at = ?
+      WHERE is_deleted = 0
+        AND updated_at < ?
+      `,
+      Date.now(),
+      cutoffMs
+    );
+    changes = result.changes ?? 0;
+  });
+
+  return changes;
 };
 
 /* 2026.04.15 DB 적재량을 확인해 초기 인덱싱 진행률/완료 여부 판단에 쓰기 위해 카운트 함수를 추가 by June */
@@ -515,6 +620,82 @@ export const enqueueGeocodeJobs = async (
   });
 };
 
+/* 2026.09.02 위치 보강을 사진 단위가 아닌 geo-key 단위로 처리하기 위한 배치 캐시 조회 추가 — 수백 건 직렬 조회를 1회 쿼리로 대체 by Claude */
+export const getGeocodeCacheByKeys = async (geoKeys: string[]) => {
+  const result = new Map<string, { country: string | null; city: string | null }>();
+  const uniqueKeys = [...new Set(geoKeys)].filter(Boolean);
+  if (uniqueKeys.length === 0) return result;
+
+  await initPhotoMetadataDb();
+  const db = await getDb();
+
+  /* 2026.09.02 IN 파라미터 상한을 피하기 위해 500개 단위로 나눠 조회 by Claude */
+  for (let i = 0; i < uniqueKeys.length; i += 500) {
+    const chunk = uniqueKeys.slice(i, i + 500);
+    const placeholders = chunk.map(() => "?").join(",");
+    const rows = await db.getAllAsync<{
+      geo_key: string;
+      country: string | null;
+      city: string | null;
+    }>(
+      `
+      SELECT geo_key, country, city
+      FROM geocode_cache
+      WHERE geo_key IN (${placeholders})
+      `,
+      ...chunk
+    );
+    for (const row of rows) {
+      result.set(row.geo_key, { country: row.country, city: row.city });
+    }
+  }
+
+  return result;
+};
+
+/* 2026.09.02 라이브러리 전체 위치를 한 번에 시딩하기 위해 인덱싱된 사진의 고유 좌표를 조회 — 라운딩/키 생성은 JS(toFixed)와 일치시키기 위해 호출부에서 수행 by Claude */
+export const getDistinctPhotoCoords = async () => {
+  await initPhotoMetadataDb();
+  const db = await getDb();
+  const rows = await db.getAllAsync<{ latitude: number; longitude: number }>(
+    `
+    SELECT DISTINCT latitude, longitude
+    FROM photo_metadata
+    WHERE is_deleted = 0
+      AND latitude IS NOT NULL
+      AND longitude IS NOT NULL
+    `
+  );
+  return rows;
+};
+
+/* 2026.09.02 시딩 시 이미 캐시되었거나 큐에 있는 geo-key를 제외하기 위한 필터 조회 추가 by Claude */
+export const filterUncachedGeoKeys = async (geoKeys: string[]) => {
+  const uniqueKeys = [...new Set(geoKeys)].filter(Boolean);
+  if (uniqueKeys.length === 0) return [] as string[];
+
+  await initPhotoMetadataDb();
+  const db = await getDb();
+
+  const known = new Set<string>();
+  for (let i = 0; i < uniqueKeys.length; i += 500) {
+    const chunk = uniqueKeys.slice(i, i + 500);
+    const placeholders = chunk.map(() => "?").join(",");
+    const cachedRows = await db.getAllAsync<{ geo_key: string }>(
+      `SELECT geo_key FROM geocode_cache WHERE geo_key IN (${placeholders})`,
+      ...chunk
+    );
+    for (const row of cachedRows) known.add(row.geo_key);
+    const jobRows = await db.getAllAsync<{ geo_key: string }>(
+      `SELECT geo_key FROM geocode_jobs WHERE geo_key IN (${placeholders})`,
+      ...chunk
+    );
+    for (const row of jobRows) known.add(row.geo_key);
+  }
+
+  return uniqueKeys.filter((key) => !known.has(key));
+};
+
 /* 2026.04.22 지오코딩 캐시 누적량을 UI 진행표시에 활용하기 위해 캐시 row 카운트 조회 함수를 추가 by June */
 export const getGeocodeCacheCount = async () => {
   await initPhotoMetadataDb();
@@ -537,6 +718,68 @@ export const getGeocodePendingJobCount = async () => {
     `
   );
   return row?.count ?? 0;
+};
+
+/* 2026.09.02 앱 킬로 running에 고착된 작업(5분 초과)과 오래된 failed(7일 초과)를 pending으로 복귀시켜 큐가 영구히 막히지 않도록 추가 by Claude */
+export const resetStuckGeocodeJobs = async () => {
+  await initPhotoMetadataDb();
+  const db = await getDb();
+
+  const now = Date.now();
+  const RUNNING_STALE_MS = 5 * 60 * 1000;
+  const FAILED_RETRY_MS = 7 * 24 * 60 * 60 * 1000;
+
+  let resetRunning = 0;
+  let resetFailed = 0;
+  await enqueueWrite(async () => {
+    const runningResult = await db.runAsync(
+      `
+      UPDATE geocode_jobs
+      SET status = 'pending',
+          updated_at = ?
+      WHERE status = 'running'
+        AND updated_at < ?
+      `,
+      now,
+      now - RUNNING_STALE_MS
+    );
+    resetRunning = runningResult.changes ?? 0;
+
+    const failedResult = await db.runAsync(
+      `
+      UPDATE geocode_jobs
+      SET status = 'pending',
+          retry_count = 0,
+          updated_at = ?
+      WHERE status = 'failed'
+        AND updated_at < ?
+      `,
+      now,
+      now - FAILED_RETRY_MS
+    );
+    resetFailed = failedResult.changes ?? 0;
+  });
+
+  return { resetRunning, resetFailed };
+};
+
+/* 2026.09.02 스로틀링 감지 시 재시도 카운트를 소모하지 않고 작업을 큐로 되돌리기 위해 추가 by Claude */
+export const requeueGeocodeJob = async (geoKey: string) => {
+  await initPhotoMetadataDb();
+  const db = await getDb();
+
+  await enqueueWrite(async () => {
+    await db.runAsync(
+      `
+      UPDATE geocode_jobs
+      SET status = 'pending',
+          updated_at = ?
+      WHERE geo_key = ?
+      `,
+      Date.now(),
+      geoKey
+    );
+  });
 };
 
 /* 2026.04.22 백그라운드 워커가 처리할 geocode 작업을 선점(claim)해 중복 처리 경쟁을 방지하기 위해 추가 by June */
@@ -671,12 +914,21 @@ export const queryPhotoMetadataByDateTime = async (params: {
   timeStart: number;
   timeEnd: number;
   limit: number;
-  /* 2026.04.22 날짜/시간 DB 결과를 스크롤 append로 이어붙이기 위해 OFFSET 기반 페이지네이션 파라미터를 추가 by June */
-  offset?: number;
+  /* 2026.09.02 백그라운드 인덱싱 중 row 삽입으로 OFFSET이 밀리는 문제를 없애기 위해 keyset 커서 기반 페이지네이션으로 교체 by Claude */
+  after?: PhotoPageCursor | null;
 }) => {
   /* 2026.04.15 taken_minute 컬럼 추가 전 쿼리 실행으로 no such column 에러가 나는 문제를 막기 위해 조회 전 초기화를 강제 by June */
   await initPhotoMetadataDb();
   const db = await getDb();
+
+  const after = params.after ?? null;
+  /* 2026.09.02 커서가 있으면 (taken_at, asset_id)보다 과거인 row만 조회해 동시 삽입에도 페이지 경계가 흔들리지 않도록 함 by Claude */
+  const keysetClause = after
+    ? "AND (taken_at < ? OR (taken_at = ? AND asset_id < ?))"
+    : "";
+  const keysetArgs: (number | string)[] = after
+    ? [after.takenAt, after.takenAt, after.assetId]
+    : [];
 
   const rows = await db.getAllAsync<PhotoSummaryRow>(
     `
@@ -692,11 +944,13 @@ export const queryPhotoMetadataByDateTime = async (params: {
         OR (? >= ? AND taken_minute >= ? AND taken_minute <= ?)
         OR (? < ? AND taken_minute >= ? AND taken_minute <= ?)
       )
+      ${keysetClause}
     ORDER BY
       /* 2026.05.28 홈 썸네일 정책과 동일하게 최신 사진이 먼저 나오도록 DB 조회 정렬을 최신순으로 변경 by June */
-      taken_at DESC
+      taken_at DESC,
+      /* 2026.09.02 같은 촬영 시각에서 페이지 경계가 흔들리지 않도록 asset_id를 2차 정렬 키로 고정 by Claude */
+      asset_id DESC
     LIMIT ?
-    OFFSET ?
     `,
     params.dateStartMs,
     params.dateEndNextMs,
@@ -710,13 +964,90 @@ export const queryPhotoMetadataByDateTime = async (params: {
     params.timeStart,
     params.timeStart,
     params.timeEnd,
-    params.limit,
-    /* 2026.04.22 호출부에서 offset 미지정 시 기존 동작과 동일하게 0부터 조회되도록 기본값을 적용 by June */
-    params.offset ?? 0
+    ...keysetArgs,
+    params.limit
   );
 
   /* 2026.04.15 시간 필터를 SQL로 완전 이관해 긴 기간 검색 시 JS 후처리 비용을 제거하기 위해 반환 필터를 제거 by June */
   return rows;
+};
+
+/* 2026.10.04 검색 예상 시간을 '남은 실제 작업량'으로 계산하기 위해 범위 내 좌표 미보유 사진 수를 조회 by Claude */
+export const countPhotosMissingCoordsByDateTime = async (params: {
+  dateStartMs: number;
+  dateEndNextMs: number;
+  timeStart: number;
+  timeEnd: number;
+}) => {
+  await initPhotoMetadataDb();
+  const db = await getDb();
+
+  const row = await db.getFirstAsync<{ count: number }>(
+    `
+    SELECT COUNT(*) as count
+    FROM photo_metadata
+    WHERE is_deleted = 0
+      AND latitude IS NULL
+      AND taken_at IS NOT NULL
+      AND taken_at >= ?
+      AND taken_at < ?
+      AND (
+        (? = 1439 AND taken_minute >= ? AND taken_minute <= 1439)
+        OR (? >= ? AND taken_minute >= ? AND taken_minute <= ?)
+        OR (? < ? AND taken_minute >= ? AND taken_minute <= ?)
+      )
+    `,
+    params.dateStartMs,
+    params.dateEndNextMs,
+    params.timeEnd,
+    params.timeStart,
+    params.timeEnd,
+    params.timeStart,
+    params.timeStart,
+    params.timeEnd,
+    params.timeEnd,
+    params.timeStart,
+    params.timeStart,
+    params.timeEnd
+  );
+
+  return row?.count ?? 0;
+};
+
+/* 2026.10.04 검색 중 네이티브 조회로 복구한 좌표를 DB에 영속화 — 같은 사진의 좌표 복구 비용을 평생 1회로 제한 by Claude.
+   updated_at은 갱신하지 않음(삭제 정리의 '패스 방문' 마커이므로) */
+export const updatePhotoCoordinatesByAssetIds = async (
+  rows: { assetId: string; latitude: number; longitude: number }[]
+) => {
+  const valid = rows.filter(
+    (r) =>
+      r.assetId &&
+      Number.isFinite(r.latitude) &&
+      Number.isFinite(r.longitude)
+  );
+  if (valid.length === 0) return;
+
+  await initPhotoMetadataDb();
+  const db = await getDb();
+
+  await enqueueWrite(async () => {
+    await db.runAsync(
+      `
+      UPDATE photo_metadata SET
+        latitude = json_extract(r.value, '$.latitude'),
+        longitude = json_extract(r.value, '$.longitude')
+      FROM json_each(?) AS r
+      WHERE photo_metadata.asset_id = json_extract(r.value, '$.id')
+      `,
+      JSON.stringify(
+        valid.map((r) => ({
+          id: r.assetId,
+          latitude: r.latitude,
+          longitude: r.longitude,
+        }))
+      )
+    );
+  });
 };
 
 /* 2026.04.22 날짜/시간 필터 범위의 전체 대상 건수를 즉시 계산해 로딩 프로그레스(표출/전체)를 정확히 표시하기 위해 COUNT 쿼리 함수를 추가 by June */
