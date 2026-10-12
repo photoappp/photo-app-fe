@@ -92,6 +92,7 @@ export const TRANSLATIONS = {
 		locationSearchProgressPercentLabel: "Progress {percent}%",
 		locationSearchRemainingTimeShort: "Estimated remaining time: {seconds} sec",
 		locationSearchRemainingTimeLong: "Estimated remaining time: {minutes} min {seconds} sec",
+		locationListFilling: "Organizing location info…",
 		locationSearchEstimatedTimeShort: "{seconds} sec",
 		locationSearchEstimatedTimeLong: "{minutes} min {seconds} sec",
 		locationSearchSearchPromptTitle:
@@ -183,6 +184,7 @@ export const TRANSLATIONS = {
 		locationSearchProgressPercentLabel: "진행률 {percent}%",
 		locationSearchRemainingTimeShort: "예상 남은 시간: {seconds}초",
 		locationSearchRemainingTimeLong: "예상 남은 시간: {minutes}분 {seconds}초",
+		locationListFilling: "위치 정보 정리 중…",
 		locationSearchEstimatedTimeShort: "{seconds}초",
 		locationSearchEstimatedTimeLong: "{minutes}분 {seconds}초",
 		locationSearchSearchPromptTitle:

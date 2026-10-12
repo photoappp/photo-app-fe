@@ -763,6 +763,31 @@ export const resetStuckGeocodeJobs = async () => {
   return { resetRunning, resetFailed };
 };
 
+/* 2026.10.11 보이는 사진의 geo-key를 큐 앞으로 당기기 위해 추가 — claim이 updated_at ASC 순서라 0으로 당기면 우선 처리됨 by Claude */
+export const prioritizeGeocodeJobs = async (geoKeys: string[]) => {
+  const uniqueKeys = [...new Set(geoKeys)].filter(Boolean);
+  if (uniqueKeys.length === 0) return;
+
+  await initPhotoMetadataDb();
+  const db = await getDb();
+
+  await enqueueWrite(async () => {
+    for (let i = 0; i < uniqueKeys.length; i += 500) {
+      const chunk = uniqueKeys.slice(i, i + 500);
+      const placeholders = chunk.map(() => "?").join(",");
+      await db.runAsync(
+        `
+        UPDATE geocode_jobs
+        SET updated_at = 0
+        WHERE status = 'pending'
+          AND geo_key IN (${placeholders})
+        `,
+        ...chunk
+      );
+    }
+  });
+};
+
 /* 2026.09.02 스로틀링 감지 시 재시도 카운트를 소모하지 않고 작업을 큐로 되돌리기 위해 추가 by Claude */
 export const requeueGeocodeJob = async (geoKey: string) => {
   await initPhotoMetadataDb();

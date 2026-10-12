@@ -61,6 +61,7 @@ import {
   getPhotoMetadataCount,
   getPhotoSyncState,
   initPhotoMetadataDb,
+  prioritizeGeocodeJobs,
   type PhotoPageCursor,
   queryPhotoMetadataByDateTime,
   updatePhotoCoordinatesByAssetIds,
@@ -122,6 +123,9 @@ const SEARCH_ESTIMATE_MAX_S = 300;
 /* 2026.10.11 검색 스트리밍: 첫 청크는 즉시 그릴 만큼 작게, 이후는 큰 청크로 이어붙임 by Claude */
 const SEARCH_FIRST_PAINT_COUNT = 120;
 const SEARCH_STREAM_CHUNK_COUNT = 600;
+
+/* 2026.10.11 첫 페인트 직후 가시 영역(첫 페이지)의 도시를 즉시 해소할 사진 수 — 측정용으로 상한 없음 by Claude */
+const FIRST_PAGE_CITY_COUNT = 100;
 
 /* 2026.09.02 geocode 큐 드레인 루프 운영값 — 메타데이터 인덱싱 완료 후에만 시작 by Claude */
 const GEOCODE_DRAIN_INITIAL_DELAY_MS = 2000;
@@ -2790,6 +2794,22 @@ export default function HomeScreen() {
         }),
       );
 
+      /* 2026.10.11 보이는 사진의 미해결 geo-key를 큐 앞으로 당겨 가시 영역 도시가 먼저 해소되도록 우선순위 부여 by Claude */
+      try {
+        const visibleKeys = new Set<string>();
+        for (const photo of withCoordinates) {
+          const loc = photo.location;
+          if (!loc || photo.city) continue;
+          const lat = Number(loc.latitude);
+          const lon = Number(loc.longitude);
+          if (!Number.isFinite(lat) || !Number.isFinite(lon)) continue;
+          visibleKeys.add(toGeoKey(lat, lon, 2));
+        }
+        if (visibleKeys.size > 0) {
+          void prioritizeGeocodeJobs([...visibleKeys]).catch(() => {});
+        }
+      } catch {}
+
       const withPlaces = await imagesWithLocation(withCoordinates, {
         /* 2026.09.02 드레인 루프의 진행형 라벨 갱신은 maxLookups 0으로 캐시만 읽도록 옵션화 by Claude */
         maxLookups: opts?.maxLookups ?? 20,
@@ -2815,6 +2835,102 @@ export default function HomeScreen() {
       });
     } finally {
       locationFollowUpInFlightRef.current = false;
+    }
+  }, [deriveVisiblePhotos]);
+
+  /* 2026.10.11 백그라운드 도시 해소 잔여 수 — 위치 선택기에 '정리 중 (n)' 표시용 by Claude */
+  const [geocodeQueuePending, setGeocodeQueuePending] = useState(0);
+
+  /* 2026.10.11 드레인 사이클마다 로드된 전체 사진에 지오코드 캐시를 재적용 — 네이티브 호출 없이
+     배치 캐시 읽기 1회로 도시 라벨/선택기 목록이 실시간으로 자라게 함 by Claude */
+  const applyGeocodeCacheToLoadedPhotos = useCallback(async () => {
+    const loaded = photosAllRef.current;
+    if (loaded.length === 0) return;
+    const keys = new Set<string>();
+    for (const photo of loaded) {
+      if (photo.city) continue;
+      const loc = photo.location;
+      if (!loc) continue;
+      const lat = Number(loc.latitude);
+      const lon = Number(loc.longitude);
+      if (!Number.isFinite(lat) || !Number.isFinite(lon)) continue;
+      keys.add(toGeoKey(lat, lon, 2));
+    }
+    if (keys.size === 0) return;
+    try {
+      const cached = await getGeocodeCacheByKeys([...keys]);
+      if (cached.size === 0) return;
+      let changed = false;
+      const nextBase = loaded.map((photo) => {
+        if (photo.city || !photo.location) return photo;
+        const lat = Number(photo.location.latitude);
+        const lon = Number(photo.location.longitude);
+        if (!Number.isFinite(lat) || !Number.isFinite(lon)) return photo;
+        const place = cached.get(toGeoKey(lat, lon, 2));
+        if (!place || (!place.city && !place.country)) return photo;
+        changed = true;
+        return {
+          ...photo,
+          city: place.city ?? photo.city,
+          country: photo.country ?? place.country ?? undefined,
+        };
+      });
+      if (!changed) return;
+      photosAllRef.current = nextBase;
+      const nextVisible = deriveVisiblePhotos(nextBase, filterRef.current);
+      photosRef.current = nextVisible;
+      setPhotosAll(nextBase);
+      setPhotos(nextVisible);
+    } catch (err) {
+      console.log("apply geocode cache error:", err);
+    }
+  }, [deriveVisiblePhotos]);
+
+  /* 2026.10.11 첫 페인트 직후 첫 페이지(최대 100장)의 도시를 즉시 해소 — 상한 없이 실측해
+     [FirstPageCity] 로그/metric으로 소요 시간을 확인한 뒤 예산(cutoff) 도입 여부를 결정 by Claude */
+  const firstPageCityRanRef = useRef(false);
+  const resolveFirstPageCities = useCallback(async () => {
+    if (firstPageCityRanRef.current) return;
+    const targets = photosAllRef.current.slice(0, FIRST_PAGE_CITY_COUNT);
+    if (targets.length === 0) return;
+    firstPageCityRanRef.current = true;
+    const startedAt = Date.now();
+    try {
+      const withPlaces = await imagesWithLocation(targets, {
+        maxLookups: targets.length,
+        precision: 2,
+        delayMs: 80,
+      });
+      const byUri = new Map(withPlaces.map((p: Photo) => [p.uri, p]));
+      setPhotosAll((prev) => {
+        const nextBase = prev.map((photo) => {
+          const next = byUri.get(photo.uri);
+          return next
+            ? {
+                ...photo,
+                location: next.location ?? photo.location ?? null,
+                city: next.city ?? photo.city,
+                country: next.country ?? photo.country,
+              }
+            : photo;
+        });
+        photosAllRef.current = nextBase;
+        const nextVisible = deriveVisiblePhotos(nextBase, filterRef.current);
+        photosRef.current = nextVisible;
+        setPhotos(nextVisible);
+        return nextBase;
+      });
+      const elapsedMs = Date.now() - startedAt;
+      console.log("[FirstPageCity] resolved", {
+        ms: elapsedMs,
+        photos: targets.length,
+      });
+      recordPerfMetric("home.first_page_city.ms", elapsedMs, {
+        context: { photos: targets.length },
+        logEvery: 1,
+      });
+    } catch (err) {
+      console.log("[FirstPageCity] error", err);
     }
   }, [deriveVisiblePhotos]);
 
@@ -5081,8 +5197,8 @@ export default function HomeScreen() {
             continue;
           }
           if ((result?.claimedJobs ?? 0) > 0) {
-            /* 2026.09.02 사이클마다 보이는 사진의 라벨을 캐시에서만 갱신(진행형 표시) by Claude */
-            void followUpVisibleLocations({ maxLookups: 0 });
+            /* 2026.10.11 사이클마다 로드된 전체 사진에 캐시 재적용 — 선택기 도시 목록이 실시간으로 자람 by Claude */
+            void applyGeocodeCacheToLoadedPhotos();
           }
         } catch (err) {
           errorStreak += 1;
@@ -5093,17 +5209,20 @@ export default function HomeScreen() {
         }
         try {
           const pending = await getGeocodePendingJobCount();
+          setGeocodeQueuePending(pending);
           if (pending === 0) break;
         } catch {}
         await sleep(GEOCODE_DRAIN_IDLE_DELAY_MS);
       }
 
+      setGeocodeQueuePending(0);
       /* 2026.10.04 큐 소진 직후 잔여 작업량을 갱신해 다음 검색의 예상 시간에 즉시 반영 by Claude */
       if (!backgroundMetadataSyncCancelledRef.current) {
         void refreshSearchWorkEstimate(filterRef.current);
+        void applyGeocodeCacheToLoadedPhotos();
       }
     })();
-  }, [followUpVisibleLocations, refreshSearchWorkEstimate]);
+  }, [applyGeocodeCacheToLoadedPhotos, refreshSearchWorkEstimate]);
 
   /* 2026.09.02 첫 페인트 이후 사진 메타데이터 인덱스를 백그라운드에서 완성하는 폴라이트 드레인 루프.
      a42ee9a에서 제거된 상시 동기화의 스케줄링 재설계: 초기 로드 완료 후 시작, 사용자 요청 진행 중에는 양보,
@@ -5186,7 +5305,13 @@ export default function HomeScreen() {
     if (!didInitialLoad) return;
     startBackgroundMetadataSync();
     void refreshSearchWorkEstimate(filterRef.current);
-  }, [didInitialLoad, startBackgroundMetadataSync, refreshSearchWorkEstimate]);
+    void resolveFirstPageCities();
+  }, [
+    didInitialLoad,
+    startBackgroundMetadataSync,
+    refreshSearchWorkEstimate,
+    resolveFirstPageCities,
+  ]);
 
   useEffect(() => {
     /* 2026.09.02 초기 로드가 지연/중단돼도 인덱싱이 시작되도록 10초 후 fallback 시작을 보장 by Claude */
@@ -6240,6 +6365,7 @@ export default function HomeScreen() {
               onLocationGate={() => requestRewardAccess("placeSearch")}
               locationPreparing={isLocationListPreparing}
               locationPreparingMessage={locationPreparingMessage}
+              geocodePendingCount={geocodeQueuePending}
               onOpenLocationRequest={() =>
                 requestLocationFeatureOpen("location-filter")
               }
