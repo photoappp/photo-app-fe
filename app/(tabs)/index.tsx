@@ -119,6 +119,10 @@ const SEARCH_ESTIMATE_RECOVERY_S_PER_PHOTO = 0.08;
 const SEARCH_ESTIMATE_ROW_S_PER_ROW = 0.0004;
 const SEARCH_ESTIMATE_MAX_S = 300;
 
+/* 2026.10.11 검색 스트리밍: 첫 청크는 즉시 그릴 만큼 작게, 이후는 큰 청크로 이어붙임 by Claude */
+const SEARCH_FIRST_PAINT_COUNT = 120;
+const SEARCH_STREAM_CHUNK_COUNT = 600;
+
 /* 2026.09.02 geocode 큐 드레인 루프 운영값 — 메타데이터 인덱싱 완료 후에만 시작 by Claude */
 const GEOCODE_DRAIN_INITIAL_DELAY_MS = 2000;
 const GEOCODE_DRAIN_IDLE_DELAY_MS = 1200;
@@ -1973,70 +1977,6 @@ export default function HomeScreen() {
     });
   }, [language, deriveVisiblePhotos]);
 
-  async function loadPreparedPhotosFromDbForLocationSearch(
-    currentFilter: FilterState,
-  ) {
-    const syncState = await getPhotoSyncState();
-    const isIndexComplete = !syncState.hasNextPage;
-    if (!isIndexComplete) {
-      return {
-        photos: [] as Photo[],
-        totalCount: 0,
-        isIndexComplete: false,
-        isCacheHit: false,
-      };
-    }
-
-    const totalCount = await countPhotoMetadataByDateTime({
-      dateStartMs: dayStartMs(currentFilter.dateStart),
-      dateEndNextMs: dayEndNextMs(currentFilter.dateEnd),
-      timeStart: currentFilter.timeStart,
-      timeEnd: currentFilter.timeEnd,
-    });
-
-    if (totalCount <= 0) {
-      return {
-        photos: [] as Photo[],
-        totalCount: 0,
-        isIndexComplete: true,
-        isCacheHit: false,
-      };
-    }
-
-    const rows = await queryPhotoMetadataByDateTime({
-      dateStartMs: dayStartMs(currentFilter.dateStart),
-      dateEndNextMs: dayEndNextMs(currentFilter.dateEnd),
-      timeStart: currentFilter.timeStart,
-      timeEnd: currentFilter.timeEnd,
-      limit: totalCount,
-    });
-
-    const photosFromDb = sortPhotosForDisplay(
-      dedupePhotosByUri(
-        rows.map((row) => ({
-          uri: row.uri,
-          assetId: row.assetId,
-          takenAt: row.takenAt,
-          location:
-            typeof row.latitude === "number" &&
-            typeof row.longitude === "number"
-              ? {
-                  latitude: row.latitude,
-                  longitude: row.longitude,
-                }
-              : null,
-        })),
-      ),
-    );
-
-    return {
-      photos: photosFromDb,
-      totalCount,
-      isIndexComplete: true,
-      isCacheHit: photosFromDb.length > 0,
-    };
-  }
-
   const ensureVisiblePhotosLocationReady = useCallback(async () => {
     if (visibleLocationPreparationPromiseRef.current) {
       return visibleLocationPreparationPromiseRef.current;
@@ -2128,52 +2068,119 @@ export default function HomeScreen() {
         setLocationSearchProgressPercent((prev) => Math.max(prev, fakePercent));
       }, 500);
 
-      const dbPrepared = await loadPreparedPhotosFromDbForLocationSearch(
-        currentFilter,
-      );
-      if (runToken !== locationSearchRunTokenRef.current) return;
-
-      if (dbPrepared.isIndexComplete && dbPrepared.isCacheHit) {
-        await showLocationSearchPhaseText(locationSearchPhaseLabels.sort);
-        total = Math.max(total, dbPrepared.totalCount, dbPrepared.photos.length);
-        processedCount = dbPrepared.photos.length;
-        setLocationSearchTargetTotalCount(
-          dbPrepared.totalCount > 0 ? dbPrepared.totalCount : null,
-        );
-        setLocationSearchProgressTotal(total);
-        setLocationSearchProgressChecked(processedCount);
-
-        await showLocationSearchPhaseText(locationSearchPhaseLabels.thumbnail);
-        await hydratePersistedDisplayUriCache(
-          dbPrepared.photos,
-          "location-search-db",
-        );
-        if (runToken !== locationSearchRunTokenRef.current) return;
-
-        await showLocationSearchPhaseText(locationSearchPhaseLabels.enrich);
-        setPhotosAll(dbPrepared.photos);
-        setPhotos(deriveVisiblePhotos(dbPrepared.photos, filterRef.current));
-        photosAllRef.current = dbPrepared.photos;
-        photosRef.current = deriveVisiblePhotos(dbPrepared.photos, filterRef.current);
-        pruneDisplayUriCacheForPhotos(dbPrepared.photos);
-        setEndCursor(null);
-        setHasNextPage(false);
-        dbDateTimePagingRef.current = {
-          enabled: true,
-          after: oldestCursorOfPhotos(dbPrepared.photos),
+      /* 2026.10.11 전체 적재 후 일괄 표시(수 초 대기) 대신 keyset 청크 스트리밍으로 교체 —
+         첫 청크(120장)를 즉시 그려 1초급 첫 화면, 이후 청크를 이어붙이며 실제 진행률 표시.
+         인덱스 완성 시에만 DB 스트리밍, 미완성이면 기존 MediaLibrary 폴백 유지 by Claude */
+      const syncState = await getPhotoSyncState();
+      if (!syncState.hasNextPage) {
+        const baseFilter = buildBaseDateTimeFilter(currentFilter);
+        const queryParams = {
+          dateStartMs: dayStartMs(baseFilter.dateStart),
+          dateEndNextMs: dayEndNextMs(baseFilter.dateEnd),
+          timeStart: baseFilter.timeStart,
+          timeEnd: baseFilter.timeEnd,
         };
-
-        await ensureVisiblePhotosLocationReady();
+        const dbTotalCount = await countPhotoMetadataByDateTime(queryParams);
         if (runToken !== locationSearchRunTokenRef.current) return;
 
-        processedCount = Math.max(processedCount, photosAllRef.current.length);
-        setLocationSearchProgressChecked(processedCount);
-        setLocationSearchProgressTotal(
-          Math.max(total, photosAllRef.current.length),
-        );
-        await showLocationSearchPhaseText(locationSearchPhaseLabels.apply);
-        markLoadedBaseRange(currentFilter, true);
-        return;
+        if (dbTotalCount > 0) {
+          total = Math.max(total, dbTotalCount);
+          setLocationSearchTargetTotalCount(dbTotalCount);
+          setLocationSearchProgressTotal(total);
+          await showLocationSearchPhaseText(locationSearchPhaseLabels.sort);
+
+          let after: PhotoPageCursor | null = null;
+          let streamed: Photo[] = [];
+          let firstChunk = true;
+          let hasMoreRows = true;
+
+          while (hasMoreRows) {
+            if (runToken !== locationSearchRunTokenRef.current) return;
+            const limit = firstChunk
+              ? SEARCH_FIRST_PAINT_COUNT
+              : SEARCH_STREAM_CHUNK_COUNT;
+            const rows = await queryPhotoMetadataByDateTime({
+              ...queryParams,
+              limit: limit + 1,
+              after,
+            });
+            hasMoreRows = rows.length > limit;
+            const trimmed = hasMoreRows ? rows.slice(0, limit) : rows;
+            if (trimmed.length === 0) break;
+            const lastRow = trimmed[trimmed.length - 1];
+            if (typeof lastRow.takenAt === "number") {
+              after = { takenAt: lastRow.takenAt, assetId: lastRow.assetId };
+            }
+            /* mapDbRowsToPhotos는 이 지점보다 뒤에 선언되어(TDZ) 간단한 변환을 인라인으로 수행 */
+            const chunkPhotos: Photo[] = trimmed.map((row) => ({
+              uri: row.uri,
+              assetId: row.assetId,
+              takenAt: row.takenAt,
+              location:
+                typeof row.latitude === "number" &&
+                typeof row.longitude === "number"
+                  ? { latitude: row.latitude, longitude: row.longitude }
+                  : null,
+            }));
+            /* keyset은 taken_at DESC 순서로 반환되므로 전체 재정렬 없이 이어붙임(중복만 제거) */
+            streamed = dedupePhotosByUri([...streamed, ...chunkPhotos]);
+            const nextVisible = deriveVisiblePhotos(streamed, filterRef.current);
+            photosAllRef.current = streamed;
+            photosRef.current = nextVisible;
+            setPhotosAll(streamed);
+            setPhotos(nextVisible);
+
+            if (firstChunk) {
+              setCurrentDataSource("db");
+              setEndCursor(null);
+              /* 첫 화면 썸네일은 캐시 하이드레이션을 기다렸다 그림(120장, ms 단위) */
+              await hydratePersistedDisplayUriCache(
+                chunkPhotos,
+                "location-search-db-first",
+              );
+              await showLocationSearchPhaseText(locationSearchPhaseLabels.apply);
+            } else {
+              void hydratePersistedDisplayUriCache(
+                chunkPhotos,
+                "location-search-db-stream",
+              );
+            }
+
+            processedCount = streamed.length;
+            setLocationSearchProgressChecked(processedCount);
+            /* 2026.10.11 청크 스트리밍으로 실제 진행 신호가 생겨, 심리적 연출값 위에 실측 비율을 우선 반영 by Claude */
+            setLocationSearchProgressPercent((prev) =>
+              Math.max(
+                prev,
+                Math.min(
+                  97,
+                  Math.round((processedCount / Math.max(total, 1)) * 100),
+                ),
+              ),
+            );
+            firstChunk = false;
+            await new Promise((resolve) => setTimeout(resolve, 0));
+          }
+
+          if (runToken !== locationSearchRunTokenRef.current) return;
+          setHasNextPage(false);
+          dbDateTimePagingRef.current = {
+            enabled: true,
+            after: oldestCursorOfPhotos(streamed),
+          };
+          pruneDisplayUriCacheForPhotos(streamed);
+
+          await ensureVisiblePhotosLocationReady();
+          if (runToken !== locationSearchRunTokenRef.current) return;
+
+          processedCount = Math.max(processedCount, photosAllRef.current.length);
+          setLocationSearchProgressChecked(processedCount);
+          setLocationSearchProgressTotal(
+            Math.max(total, photosAllRef.current.length),
+          );
+          markLoadedBaseRange(currentFilter, true);
+          return;
+        }
       }
 
       if (photosAllRef.current.length > 0) {
@@ -2282,7 +2289,7 @@ export default function HomeScreen() {
       hydrateAssetsToPhotos,
       hydratePersistedDisplayUriCache,
       imagesWithLocation,
-      loadPreparedPhotosFromDbForLocationSearch,
+      buildBaseDateTimeFilter,
       markLoadedBaseRange,
       matchesDateTimeFilter,
       getPsychologicalLocationSearchPercent,
