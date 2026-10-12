@@ -79,8 +79,16 @@ import {
   seedGeocodeJobsFromPhotoMetadata,
 } from "@/lib/services/geocodeJobWorker";
 /* 2026.10.04 좌표→국가 오프라인 판별(폴리곤) — 국가 표기는 지오코더 대신 이걸 우선 사용 by Claude */
-import { resolveCountryForCoords } from "@/lib/geo/countryLookup";
-import { setCountryDisplayLanguage } from "@/lib/geo/countryNames";
+import {
+  lookupCountryCode,
+  resolveCountryForCoords,
+} from "@/lib/geo/countryLookup";
+import {
+  countryDisplayName,
+  setCountryDisplayLanguage,
+} from "@/lib/geo/countryNames";
+/* 2026.10.12 좌표→근사 도시(영문) 플레이스홀더 — 정밀 도시 캐시 전까지 즉시 표시/필터용 by Claude */
+import { approxCityForCoords } from "@/lib/geo/cityLookup";
 
 /* 2026.09.02 keyset 페이지네이션 이어가기용: 이미 로드된 사진 중 가장 오래된 (takenAt, assetId) 커서 계산 헬퍼 by Claude */
 const oldestCursorOfPhotos = (
@@ -1712,10 +1720,14 @@ export default function HomeScreen() {
     /* 2026.10.04 국가는 오프라인 폴리곤 판별을 우선 사용(µs, 오프라인 동작) — 과거 캐시/지오코더의
        상이한 국가 표기가 섞이지 않도록 키 단위로 먼저 계산해 모든 경로에서 덮어씀 by Claude */
     const polygonCountryByKey = new Map<string, string | null>();
+    /* 2026.10.12 같은 레이캐스트 1회로 국가명과 근사 도시를 함께 계산 by Claude */
+    const approxCityByKey = new Map<string, string | null>();
     for (const [key, coord] of coordByKey) {
-      polygonCountryByKey.set(
+      const code = lookupCountryCode(coord.latitude, coord.longitude);
+      polygonCountryByKey.set(key, code ? countryDisplayName(code) : null);
+      approxCityByKey.set(
         key,
-        resolveCountryForCoords(coord.latitude, coord.longitude),
+        code ? approxCityForCoords(coord.latitude, coord.longitude, code) : null,
       );
     }
 
@@ -1813,7 +1825,12 @@ export default function HomeScreen() {
       }
       const place = placeByKey.get(key) ?? { country: null, city: null };
       /* 2026.05.27 ph:// 폴백으로 복구한 좌표(imgLocation)를 결과 photo에 반영 — 그래야 ShowOnMap이 마커를 표시할 수 있음 by yen */
-      return { ...img, location: coord, ...place };
+      return {
+        ...img,
+        location: coord,
+        cityApprox: approxCityByKey.get(key) ?? img.cityApprox,
+        ...place,
+      };
     });
 
     if (cacheUpsertRows.length > 0) {
@@ -1995,7 +2012,8 @@ export default function HomeScreen() {
 
       return items.filter((photo) => {
         const country = String(photo.country ?? "").trim();
-        const city = String(photo.city ?? "").trim();
+        /* 2026.10.12 정밀 도시가 아직 없으면 근사 도시로도 매칭 — 업그레이드 후에도 양쪽 다 매칭돼 선택이 고아가 되지 않음 by Claude */
+        const city = String(photo.city ?? photo.cityApprox ?? "").trim();
         const matchesCountry =
           countries.length === 0 ? true : countries.includes(country);
 
@@ -2915,6 +2933,7 @@ export default function HomeScreen() {
                 ...photo,
                 location: next.location ?? photo.location ?? null,
                 city: next.city ?? photo.city,
+                cityApprox: next.cityApprox ?? photo.cityApprox,
                 country: next.country ?? photo.country,
               }
             : photo;
@@ -2950,18 +2969,37 @@ export default function HomeScreen() {
       const cached = await getGeocodeCacheByKeys([...keys]);
       if (cached.size === 0) return;
       let changed = false;
+      /* 2026.10.12 근사 도시 계산은 키 단위로 메모해 사진 수만큼 레이캐스트를 반복하지 않음 by Claude */
+      const approxByKey = new Map<string, string | null>();
       const nextBase = loaded.map((photo) => {
-        if (photo.city || !photo.location) return photo;
+        if ((photo.city && photo.cityApprox) || !photo.location) return photo;
         const lat = Number(photo.location.latitude);
         const lon = Number(photo.location.longitude);
         if (!Number.isFinite(lat) || !Number.isFinite(lon)) return photo;
-        const place = cached.get(toGeoKey(lat, lon, 2));
-        if (!place || (!place.city && !place.country)) return photo;
+        const key = toGeoKey(lat, lon, 2);
+        const place = photo.city ? null : cached.get(key);
+        let nextCityApprox = photo.cityApprox;
+        if (!nextCityApprox) {
+          if (!approxByKey.has(key)) {
+            approxByKey.set(key, approxCityForCoords(lat, lon));
+          }
+          nextCityApprox = approxByKey.get(key) ?? undefined;
+        }
+        const nextCity = place?.city ?? photo.city;
+        const nextCountry = photo.country ?? place?.country ?? undefined;
+        if (
+          nextCity === photo.city &&
+          nextCountry === photo.country &&
+          nextCityApprox === photo.cityApprox
+        ) {
+          return photo;
+        }
         changed = true;
         return {
           ...photo,
-          city: place.city ?? photo.city,
-          country: photo.country ?? place.country ?? undefined,
+          city: nextCity,
+          cityApprox: nextCityApprox,
+          country: nextCountry,
         };
       });
       if (!changed) return;
@@ -2999,6 +3037,7 @@ export default function HomeScreen() {
                 ...photo,
                 location: next.location ?? photo.location ?? null,
                 city: next.city ?? photo.city,
+                cityApprox: next.cityApprox ?? photo.cityApprox,
                 country: next.country ?? photo.country,
               }
             : photo;

@@ -122,8 +122,10 @@ const LocationSelector = forwardRef<LocationSelectorHandle, Props>(
             });
           });
 
-          photos.forEach(({ country, city }) => {
+          photos.forEach(({ country, city, cityApprox }) => {
             if (!country) return;
+            /* 2026.10.12 정밀 도시가 캐시되기 전엔 근사 도시(영문)로 목록을 즉시 구성 by Claude */
+            const cityLabel = city ?? cityApprox;
 
             if (!nextLocationMap[country]) {
               nextLocationMap[country] = {
@@ -133,13 +135,13 @@ const LocationSelector = forwardRef<LocationSelectorHandle, Props>(
             }
 
             allCountriesSet.add(country);
-            if (city) {
+            if (cityLabel) {
               const exists = nextLocationMap[country].cities.some(
-                (c) => c.en === city,
+                (c) => c.en === cityLabel,
               );
-              allCitiesSet.add(city);
+              allCitiesSet.add(cityLabel);
               if (!exists) {
-                nextLocationMap[country].cities.push({ en: city });
+                nextLocationMap[country].cities.push({ en: cityLabel });
               }
             }
           });
