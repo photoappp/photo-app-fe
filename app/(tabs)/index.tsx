@@ -915,13 +915,8 @@ export default function HomeScreen() {
   const locationSearchPhaseShownAtRef = useRef(0);
   const showLocationSearchPhaseText = useCallback(
     async (nextPhase: TranslationKey) => {
-      const minimumVisibleMs = 140;
-      const elapsedMs = Date.now() - locationSearchPhaseShownAtRef.current;
-      if (locationSearchPhaseShownAtRef.current > 0 && elapsedMs < minimumVisibleMs) {
-        await new Promise((resolve) =>
-          setTimeout(resolve, minimumVisibleMs - elapsedMs),
-        );
-      }
+      /* 2026.10.11 단계 문구당 최소 140ms 노출 대기가 검색당 ~1초의 인위적 지연을 만들어 제거 —
+         문구가 빨리 지나가는 것은 검색이 빠르다는 뜻이므로 허용. 렌더 양보용 yield만 유지 by Claude */
       locationSearchPhaseShownAtRef.current = Date.now();
       setLocationSearchPhaseText(nextPhase);
       await new Promise((resolve) => setTimeout(resolve, 0));
