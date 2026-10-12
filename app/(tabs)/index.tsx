@@ -119,6 +119,12 @@ const SEARCH_ESTIMATE_BASE_S = 4;
 const SEARCH_ESTIMATE_RECOVERY_S_PER_PHOTO = 0.08;
 const SEARCH_ESTIMATE_ROW_S_PER_ROW = 0.0004;
 const SEARCH_ESTIMATE_MAX_S = 300;
+/* 2026.10.11 적응형 검색 팝업: 예상 시간이 이 값 미만(＆인덱스 완성)이면 Start/진행 팝업 없이 조용히 실행 by Claude */
+const SEARCH_PROMPT_SKIP_UNDER_S = 7;
+/* 2026.10.11 인덱스 미완성(콜드) 구간: 범위 사진 수가 이 값 이하면 1~2 페이지로 끝나므로 팝업 생략 by Claude */
+const COLD_QUIET_MAX_PHOTOS = 200;
+/* 콜드 스캔의 장당 예상 비용(페이지 fetch+hydrate 기준) — 콜드 예상 시간 표기를 정직하게 만들기 위한 계수 by Claude */
+const SEARCH_ESTIMATE_COLD_S_PER_PHOTO = 0.005;
 
 /* 2026.10.11 검색 스트리밍: 첫 청크는 즉시 그릴 만큼 작게, 이후는 큰 청크로 이어붙임 by Claude */
 const SEARCH_FIRST_PAINT_COUNT = 120;
@@ -773,6 +779,10 @@ export default function HomeScreen() {
   const [searchWorkEstimate, setSearchWorkEstimate] = useState<{
     signature: string;
     seconds: number;
+    /* 2026.10.11 인덱스 미완성 구간은 카운트가 과소 추정되므로 적응형 스킵 판단에 함께 사용 by Claude */
+    indexComplete: boolean;
+    /* 콜드 구간에서 MediaLibrary가 알려준 범위 내 실제 사진 수(인덱스와 무관) by Claude */
+    coldRangeCount: number | null;
   } | null>(null);
 
   const searchEstimateSignature = useCallback(
@@ -790,24 +800,62 @@ export default function HomeScreen() {
           timeStart: f.timeStart,
           timeEnd: f.timeEnd,
         };
-        const [totalRows, missingCoords] = await Promise.all([
+        const [totalRows, missingCoords, syncState] = await Promise.all([
           countPhotoMetadataByDateTime(params),
           countPhotosMissingCoordsByDateTime(params),
+          getPhotoSyncState(),
         ]);
-        const seconds = Math.round(
-          Math.min(
-            SEARCH_ESTIMATE_MAX_S,
-            Math.max(
-              SEARCH_ESTIMATE_BASE_S,
-              SEARCH_ESTIMATE_BASE_S +
-                missingCoords * SEARCH_ESTIMATE_RECOVERY_S_PER_PHOTO +
-                totalRows * SEARCH_ESTIMATE_ROW_S_PER_ROW,
+        const indexComplete = !syncState.hasNextPage;
+
+        /* 2026.10.11 콜드 구간은 DB 카운트가 과소라 MediaLibrary의 범위 실측 건수로 예상 시간을 계산 —
+           '10장인데 5초' 같은 허위 표기와, 콜드 대범위의 과소 추정을 함께 수정 by Claude */
+        let coldRangeCount: number | null = null;
+        let seconds: number;
+        if (indexComplete) {
+          seconds = Math.round(
+            Math.min(
+              SEARCH_ESTIMATE_MAX_S,
+              Math.max(
+                SEARCH_ESTIMATE_BASE_S,
+                SEARCH_ESTIMATE_BASE_S +
+                  missingCoords * SEARCH_ESTIMATE_RECOVERY_S_PER_PHOTO +
+                  totalRows * SEARCH_ESTIMATE_ROW_S_PER_ROW,
+              ),
             ),
-          ),
-        );
+          );
+        } else {
+          try {
+            const librarySnapshot = await MediaLibrary.getAssetsAsync({
+              first: 1,
+              mediaType: MediaLibrary.MediaType.photo,
+              createdAfter: params.dateStartMs,
+              createdBefore: params.dateEndNextMs,
+            });
+            coldRangeCount =
+              typeof librarySnapshot.totalCount === "number"
+                ? librarySnapshot.totalCount
+                : null;
+          } catch {
+            coldRangeCount = null;
+          }
+          seconds = Math.round(
+            Math.min(
+              SEARCH_ESTIMATE_MAX_S,
+              Math.max(
+                SEARCH_ESTIMATE_BASE_S,
+                SEARCH_ESTIMATE_BASE_S +
+                  (coldRangeCount ?? totalRows) *
+                    SEARCH_ESTIMATE_COLD_S_PER_PHOTO,
+              ),
+            ),
+          );
+        }
+
         setSearchWorkEstimate({
           signature: searchEstimateSignature(f),
           seconds,
+          indexComplete,
+          coldRangeCount,
         });
       } catch {
         /* 조회 실패 시 기존 카운트 공식으로 폴백 */
@@ -821,6 +869,24 @@ export default function HomeScreen() {
   useEffect(() => {
     void refreshSearchWorkEstimate(filter);
   }, [filter, refreshSearchWorkEstimate]);
+
+  /* 2026.10.11 적응형 팝업: 예상 <5초 & 인덱스 완성이면 Start/진행 팝업 없이 조용히 실행.
+     콜드 구간/도시 필터 등 느릴 수 있는 케이스는 기존 팝업+취소 유지 by Claude */
+  const [quietLocationSearch, setQuietLocationSearch] = useState(false);
+  const canSkipSearchPrompt = useMemo(() => {
+    if (!searchWorkEstimate) return false;
+    if (searchWorkEstimate.signature !== searchEstimateSignature(filter)) {
+      return false;
+    }
+    if (searchWorkEstimate.indexComplete) {
+      return searchWorkEstimate.seconds < SEARCH_PROMPT_SKIP_UNDER_S;
+    }
+    /* 2026.10.11 콜드: 범위 실측 건수가 작으면(1~2 페이지) 팝업 없이 진행, 크면 정직한 예상 시간과 함께 팝업 by Claude */
+    return (
+      searchWorkEstimate.coldRangeCount !== null &&
+      searchWorkEstimate.coldRangeCount <= COLD_QUIET_MAX_PHOTOS
+    );
+  }, [filter, searchEstimateSignature, searchWorkEstimate]);
 
   const estimateIncrementalLocationSearchSeconds = useCallback(
     (currentFilter: FilterState) => {
@@ -2378,6 +2444,29 @@ export default function HomeScreen() {
     reloadPhotosForFilterRef,
     runLightweightLocationSearchPreparation,
   ]);
+
+  /* 2026.10.11 search-prompt 진입 시 적응형 스킵 — 조용히 즉시 시작.
+     광고 게이트(ad-required)는 이 앞 단계에서 기존대로 처리되므로 영향 없음 by Claude */
+  useEffect(() => {
+    if (locationSearchWorkflowStatus !== "search-prompt") return;
+    if (!canSkipSearchPrompt) return;
+    setQuietLocationSearch(true);
+    void handleLocationSearchConfirm();
+  }, [
+    locationSearchWorkflowStatus,
+    canSkipSearchPrompt,
+    handleLocationSearchConfirm,
+  ]);
+
+  /* 2026.10.11 워크플로가 끝나면(완료/취소/오류/백그라운드 중단) quiet 모드 해제 by Claude */
+  useEffect(() => {
+    if (
+      locationSearchWorkflowStatus !== "preparing" &&
+      locationSearchWorkflowStatus !== "search-prompt"
+    ) {
+      setQuietLocationSearch(false);
+    }
+  }, [locationSearchWorkflowStatus]);
 
   const handleLocationSearchDecline = useCallback(async () => {
     locationSearchResumeSignatureRef.current = null;
@@ -5939,8 +6028,10 @@ export default function HomeScreen() {
   const locationPreparingMessage = "Preparing location list. Please wait...";
   /* 2026.06.23 ad-required(한 달 초과 게이트)는 이제 공용 리워드 팝업이 처리하므로 위치 검색 모달에서는 제외 by yen */
   const shouldShowLocationSearchModal =
-    locationSearchWorkflowStatus === "search-prompt" ||
-    locationSearchWorkflowStatus === "preparing";
+    !quietLocationSearch &&
+    ((locationSearchWorkflowStatus === "search-prompt" &&
+      !canSkipSearchPrompt) ||
+      locationSearchWorkflowStatus === "preparing");
   const effectiveLocationSearchEstimatedSeconds =
     locationSearchEstimatedSeconds > 0
       ? locationSearchEstimatedSeconds
