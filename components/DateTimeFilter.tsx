@@ -124,6 +124,8 @@ type DateTimeFilterProps = {
   /* 2026.05.28 위치 목록이 아직 인덱싱/지오코딩 중일 때 바텀시트 안에서 명확한 안내를 보여주기 위한 상태 by June */
   locationPreparing?: boolean;
   locationPreparingMessage?: string;
+  /* 2026.10.11 백그라운드 도시 해소 잔여 수 — 위치 선택기에 '정리 중 (n)' 표시용 by Claude */
+  geocodePendingCount?: number;
   onOpenLocationRequest?: () => boolean | Promise<boolean>;
   locationOpenToken?: number;
   interactionBlocked?: boolean;
@@ -240,6 +242,7 @@ export default function DateTimeFilter({
   resolveOldestPhotoDate,
   locationPreparing = false,
   locationPreparingMessage,
+  geocodePendingCount,
   onOpenLocationRequest,
   locationOpenToken = 0,
   interactionBlocked = false,
@@ -1019,6 +1022,7 @@ export default function DateTimeFilter({
           photos={photos}
           isPreparing={locationPreparing}
           preparingMessage={locationPreparingMessage}
+          pendingCityCount={geocodePendingCount}
           onGate={onLocationGate}
         />
       }
