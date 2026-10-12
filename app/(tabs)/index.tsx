@@ -60,6 +60,7 @@ import {
   getOldestPhotoTakenAt,
   getPhotoMetadataCount,
   getPhotoSyncState,
+  getPhotosMissingCoords,
   initPhotoMetadataDb,
   prioritizeGeocodeJobs,
   type PhotoPageCursor,
@@ -111,6 +112,17 @@ const oldestCursorOfPhotos = (
   return oldest;
 };
 
+/* 2026.10.12 좌표 back-fill이 'GPS 없음'을 0/0으로 표시하므로, DB row를 Photo로 변환할 때
+   정확히 0/0은 위치 없음으로 취급 — 지도에 Null Island 마커가 찍히는 것을 방지 by Claude */
+const dbLocationOrNull = (
+  latitude: number | null,
+  longitude: number | null,
+): { latitude: number; longitude: number } | null => {
+  if (typeof latitude !== "number" || typeof longitude !== "number") return null;
+  if (latitude === 0 && longitude === 0) return null;
+  return { latitude, longitude };
+};
+
 /* 2026.09.02 백그라운드 인덱싱 폴라이트 드레인 루프 운영값 by Claude */
 const BACKGROUND_SYNC_INITIAL_DELAY_MS = 3000;
 const BACKGROUND_SYNC_IDLE_DELAY_MS = 1500;
@@ -124,7 +136,8 @@ const MEDIA_LIBRARY_CHANGE_DEBOUNCE_MS = 1500;
 /* 2026.10.04 검색 예상 시간 공식 계수: 예상 = BASE + 좌표미보유수×RECOVERY + 전체행수×ROW.
    RECOVERY는 6-병렬 getAssetInfoAsync 1건의 실측 수준, ROW는 DB행 읽기/정렬/렌더 비용 by Claude */
 const SEARCH_ESTIMATE_BASE_S = 4;
-const SEARCH_ESTIMATE_RECOVERY_S_PER_PHOTO = 0.08;
+/* 2026.10.12 좌표 복구는 6-병렬이라 사진당 체감 비용은 호출 지연/동시성 — 직렬 가정(0.08)이 과대추정이라 보정 by Claude */
+const SEARCH_ESTIMATE_RECOVERY_S_PER_PHOTO = 0.03;
 const SEARCH_ESTIMATE_ROW_S_PER_ROW = 0.0004;
 const SEARCH_ESTIMATE_MAX_S = 300;
 /* 2026.10.11 적응형 검색 팝업: 예상 시간이 이 값 미만(＆인덱스 완성)이면 Start/진행 팝업 없이 조용히 실행 by Claude */
@@ -142,6 +155,14 @@ const SEARCH_STREAM_CHUNK_COUNT = 600;
 const FIRST_PAGE_CITY_COUNT = 100;
 
 /* 2026.09.02 geocode 큐 드레인 루프 운영값 — 메타데이터 인덱싱 완료 후에만 시작 by Claude */
+/* 2026.10.12 좌표 back-fill 루프: 인덱서가 타임스탬프만 적재하므로(Android는 bulk에 GPS 없음)
+   좌표 미보유 row가 영구히 남아 검색 예상 시간이 줄지 않던 문제를 해소 by Claude */
+const COORD_BACKFILL_BATCH = 24;
+const COORD_BACKFILL_CONCURRENCY = 6;
+const COORD_BACKFILL_IDLE_DELAY_MS = 800;
+const COORD_BACKFILL_BUSY_RETRY_MS = 1000;
+const COORD_BACKFILL_MAX_ERROR_STREAK = 3;
+
 const GEOCODE_DRAIN_INITIAL_DELAY_MS = 2000;
 const GEOCODE_DRAIN_IDLE_DELAY_MS = 1200;
 const GEOCODE_DRAIN_BUSY_RETRY_MS = 1000;
@@ -1648,7 +1669,10 @@ export default function HomeScreen() {
           return;
         }
       }
-      if (typeof img.uri === "string") recoveryIndices.push(index);
+      /* 2026.10.12 이미 조회가 끝난(GPS 없음으로 확인된) 사진은 매 검색마다 재조회하지 않음 by Claude */
+      if (typeof img.uri === "string" && !img.coordsChecked) {
+        recoveryIndices.push(index);
+      }
     });
 
     /* 2026.10.04 복구한 좌표를 DB에 영속화해 같은 사진의 복구 비용을 평생 1회로 제한 by Claude */
@@ -2204,11 +2228,8 @@ export default function HomeScreen() {
               uri: row.uri,
               assetId: row.assetId,
               takenAt: row.takenAt,
-              location:
-                typeof row.latitude === "number" &&
-                typeof row.longitude === "number"
-                  ? { latitude: row.latitude, longitude: row.longitude }
-                  : null,
+              location: dbLocationOrNull(row.latitude, row.longitude),
+              coordsChecked: row.latitude !== null && row.longitude !== null,
             }));
             /* keyset은 taken_at DESC 순서로 반환되므로 전체 재정렬 없이 이어붙임(중복만 제거) */
             streamed = dedupePhotosByUri([...streamed, ...chunkPhotos]);
@@ -3384,13 +3405,9 @@ export default function HomeScreen() {
         uri: row.uri,
         assetId: row.assetId,
         takenAt: row.takenAt,
-        location:
-          typeof row.latitude === "number" && typeof row.longitude === "number"
-            ? {
-                latitude: row.latitude,
-                longitude: row.longitude,
-              }
-            : null,
+        location: dbLocationOrNull(row.latitude, row.longitude),
+        /* 2026.10.12 DB에 좌표 값이 있으면(0/0 'GPS 없음' 포함) 이미 조회를 마친 사진 by Claude */
+        coordsChecked: row.latitude !== null && row.longitude !== null,
       }));
     },
     [],
@@ -5286,6 +5303,126 @@ export default function HomeScreen() {
 
   /* 2026.09.02 메타데이터 인덱싱 완료 후 geocode 큐를 소모하는 드레인 루프 — 같은 pause 규칙, 스로틀 백오프, 큐 소진 시 종료.
      시딩은 인덱스 완성 시 1회. 취소 플래그는 메타데이터 루프와 공유(언마운트 시 함께 중단) by Claude */
+  /* 2026.10.12 좌표 back-fill 드레인: 인덱스 완성 후 좌표 미보유 사진의 GPS를 백그라운드에서 채워
+     (사진당 평생 1회) 이후 모든 검색의 예상/실제 비용에서 복구 항을 제거 by Claude */
+  /* 2026.10.12 실행 중 여부로 관리 — 완료 후 새 사진이 들어오면 다음 패스에서 다시 돌 수 있어야 함 by Claude */
+  const coordBackfillRunningRef = useRef(false);
+
+  const startCoordBackfill = useCallback(
+    (onDone: () => void) => {
+      if (coordBackfillRunningRef.current) {
+        /* 이미 돌고 있으면 후속(geocode 드레인)은 그 실행의 완료 콜백이 책임 — 중복 실행 방지 by Claude */
+        return;
+      }
+      coordBackfillRunningRef.current = true;
+
+      const sleep = (ms: number) =>
+        new Promise<void>((resolve) => setTimeout(resolve, ms));
+
+      void (async () => {
+        let errorStreak = 0;
+        let batchCount = 0;
+        try {
+          while (!backgroundMetadataSyncCancelledRef.current) {
+            if (requestInFlightRef.current) {
+              await sleep(COORD_BACKFILL_BUSY_RETRY_MS);
+              continue;
+            }
+            let assetIds: string[] = [];
+            try {
+              assetIds = await getPhotosMissingCoords(COORD_BACKFILL_BATCH);
+            } catch (err) {
+              errorStreak += 1;
+              console.log("coord backfill query error:", err);
+              if (errorStreak >= COORD_BACKFILL_MAX_ERROR_STREAK) break;
+              await sleep(COORD_BACKFILL_IDLE_DELAY_MS);
+              continue;
+            }
+            if (assetIds.length === 0) break;
+
+            const resolved: {
+              assetId: string;
+              latitude: number;
+              longitude: number;
+            }[] = [];
+            /* 2026.10.12 '조회 성공했지만 GPS 없음'과 '조회 실패(오류)'를 구분 —
+               전자는 즉시 0/0으로 확정해 같은 사진이 매 배치마다 재조회되는 낭비를 제거하고,
+               후자(일시적 오류)는 다음 기회에 재시도 by Claude */
+            const noLocation: string[] = [];
+            const errored: string[] = [];
+            let cursor = 0;
+            const workers = Array.from(
+              {
+                length: Math.min(COORD_BACKFILL_CONCURRENCY, assetIds.length),
+              },
+              async () => {
+                while (cursor < assetIds.length) {
+                  const assetId = assetIds[cursor];
+                  cursor += 1;
+                  try {
+                    const info = await MediaLibrary.getAssetInfoAsync(assetId, {
+                      shouldDownloadFromNetwork: false,
+                    });
+                    const lat = Number(info?.location?.latitude);
+                    const lon = Number(info?.location?.longitude);
+                    if (Number.isFinite(lat) && Number.isFinite(lon)) {
+                      resolved.push({ assetId, latitude: lat, longitude: lon });
+                    } else {
+                      noLocation.push(assetId);
+                    }
+                  } catch {
+                    errored.push(assetId);
+                  }
+                }
+              },
+            );
+            await Promise.all(workers);
+            if (backgroundMetadataSyncCancelledRef.current) break;
+
+            const writes = [
+              ...resolved,
+              /* GPS 없음이 확인된 사진은 0/0으로 표시(= 조회 완료) — 재조회 대상에서 제외 by Claude */
+              ...noLocation.map((assetId) => ({
+                assetId,
+                latitude: 0,
+                longitude: 0,
+              })),
+            ];
+            if (writes.length > 0) {
+              try {
+                await updatePhotoCoordinatesByAssetIds(writes);
+                errorStreak = 0;
+              } catch (err) {
+                errorStreak += 1;
+                console.log("coord backfill write error:", err);
+                if (errorStreak >= COORD_BACKFILL_MAX_ERROR_STREAK) break;
+              }
+            } else if (errored.length === assetIds.length) {
+              /* 배치 전체가 오류면 일시적 장애로 보고 스트릭 종료 조건 적용 by Claude */
+              errorStreak += 1;
+              if (errorStreak >= COORD_BACKFILL_MAX_ERROR_STREAK) break;
+            }
+
+            batchCount += 1;
+            /* 2026.10.12 COUNT 2건을 매 배치마다 돌리지 않도록 10배치마다 예상치 갱신 by Claude */
+            if (batchCount % 10 === 0) {
+              void refreshSearchWorkEstimate(filterRef.current);
+            }
+            await sleep(COORD_BACKFILL_IDLE_DELAY_MS);
+          }
+        } finally {
+          coordBackfillRunningRef.current = false;
+          if (!backgroundMetadataSyncCancelledRef.current) {
+            /* 완료 시점의 잔여 작업량을 한 번 더 반영 by Claude */
+            void refreshSearchWorkEstimate(filterRef.current);
+            onDone();
+          }
+        }
+      })();
+    },
+    [refreshSearchWorkEstimate],
+  );
+
   const geocodeDrainStartedRef = useRef(false);
 
   const startGeocodeQueueDrain = useCallback(() => {
@@ -5414,10 +5551,15 @@ export default function HomeScreen() {
         return;
       }
 
-      /* 2026.09.02 메타데이터 패스 종료 후 geocode 큐 드레인으로 전환 — 두 백그라운드 루프가 동시에 돌지 않도록 순차화 by Claude */
-      startGeocodeQueueDrain();
+      /* 2026.10.12 메타데이터 패스 → 좌표 back-fill → geocode 드레인 순으로 직렬 실행
+         (백그라운드 루프가 서로 겹치지 않게 유지) by Claude */
+      startCoordBackfill(() => {
+        if (!backgroundMetadataSyncCancelledRef.current) {
+          startGeocodeQueueDrain();
+        }
+      });
     })();
-  }, [startGeocodeQueueDrain]);
+  }, [startCoordBackfill, startGeocodeQueueDrain]);
 
   useEffect(() => {
     runMetadataSyncLoopRef.current = runMetadataSyncLoop;

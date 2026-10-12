@@ -664,6 +664,8 @@ export const getDistinctPhotoCoords = async () => {
     WHERE is_deleted = 0
       AND latitude IS NOT NULL
       AND longitude IS NOT NULL
+      /* 2026.10.12 back-fill이 'GPS 없음'을 0/0으로 표시하므로 지오코딩 시딩 대상에서 제외 by Claude */
+      AND NOT (latitude = 0 AND longitude = 0)
     `
   );
   return rows;
@@ -998,6 +1000,25 @@ export const queryPhotoMetadataByDateTime = async (params: {
 };
 
 /* 2026.10.04 검색 예상 시간을 '남은 실제 작업량'으로 계산하기 위해 범위 내 좌표 미보유 사진 수를 조회 by Claude */
+/* 2026.10.12 좌표 미보유 사진을 백그라운드에서 일괄 back-fill 하기 위해 최신순으로 조회 by Claude */
+export const getPhotosMissingCoords = async (limit: number) => {
+  await initPhotoMetadataDb();
+  const db = await getDb();
+  const rows = await db.getAllAsync<{ assetId: string }>(
+    `
+    SELECT asset_id as assetId
+    FROM photo_metadata
+    WHERE is_deleted = 0
+      AND latitude IS NULL
+      AND taken_at IS NOT NULL
+    ORDER BY taken_at DESC
+    LIMIT ?
+    `,
+    limit
+  );
+  return rows.map((row) => row.assetId);
+};
+
 export const countPhotosMissingCoordsByDateTime = async (params: {
   dateStartMs: number;
   dateEndNextMs: number;
