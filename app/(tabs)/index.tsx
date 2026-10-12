@@ -2060,7 +2060,10 @@ export default function HomeScreen() {
         if (!needsWork) return;
 
         const withPlaces = await imagesWithLocation(currentPhotos, {
-          maxLookups: currentPhotos.length,
+          /* 2026.10.11 lazy city: 도시 필터가 있을 때만 라이브 지오코딩을 기다림 — 국가는 폴리곤으로 즉시,
+             도시 라벨은 백그라운드 큐가 점진 보강 (콜드 런 수 분 대기 제거) by Claude */
+          maxLookups:
+            filterRef.current.cities.length > 0 ? currentPhotos.length : 0,
           precision: 2,
           delayMs: 80,
         });
@@ -2206,7 +2209,9 @@ export default function HomeScreen() {
 
         await showLocationSearchPhaseText(locationSearchPhaseLabels.enrich);
         photosChunk = await imagesWithLocation(photosChunk, {
-          maxLookups: photosChunk.length,
+          /* 2026.10.11 lazy city: 도시 필터가 있을 때만 라이브 지오코딩 대기 by Claude */
+          maxLookups:
+            currentFilter.cities.length > 0 ? photosChunk.length : 0,
           precision: 2,
           delayMs: 80,
         });
@@ -3390,7 +3395,9 @@ export default function HomeScreen() {
 
         if (needsLocation) {
           photosChunk = await imagesWithLocation(photosChunk, {
-            maxLookups: photosChunk.length,
+            /* 2026.10.11 lazy city: 도시 필터가 있을 때만 라이브 지오코딩 대기 by Claude */
+            maxLookups:
+              currentFilter.cities.length > 0 ? photosChunk.length : 0,
             precision: 2,
             delayMs: 80,
           });
@@ -3869,7 +3876,9 @@ export default function HomeScreen() {
 
     if (needsLocation) {
       photosChunk = await imagesWithLocation(photosChunk, {
-        maxLookups: photosChunk.length,
+        /* 2026.10.11 lazy city: 도시 필터가 있을 때만 라이브 지오코딩 대기 by Claude */
+        maxLookups:
+          currentFilter.cities.length > 0 ? photosChunk.length : 0,
         precision: 2,
         delayMs: 80,
       });
