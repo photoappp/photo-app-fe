@@ -6,11 +6,13 @@ import { Photo } from "@/types/Photo";
 import { Ionicons } from "@expo/vector-icons";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 // import { useNavigation } from '@react-navigation/native';
+/* 2026.10.12 그리드 썸네일을 expo-image로 교체 — 메모리/디스크 캐시, 리스트 리사이클링, 재렌더 시 재요청 방지 by Claude */
+import { Image as ExpoImage } from "expo-image";
 import { LinearGradient } from "expo-linear-gradient";
 import * as Location from "expo-location";
 import * as MediaLibrary from "expo-media-library";
 import { useNavigation, useRouter } from "expo-router";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   ActivityIndicator,
   Alert,
@@ -240,6 +242,106 @@ const getAssetIdFromPhUri = (uri: string): string | null => {
 };
 
 /** ---------- HomeScreen ---------- */
+/* 2026.10.12 그리드 셀을 모듈 스코프의 memo 컴포넌트로 분리 —
+   스트리밍 청크/도시 갱신/썸네일 onLoad 등 상태 변화마다 보이는 셀 전체가 재렌더되던 비용 제거.
+   props가 바뀐 셀만 재렌더됨 by Claude */
+type PhotoGridCellProps = {
+  item: Photo;
+  index: number;
+  displayUri?: string;
+  isReady: boolean;
+  skeletonTranslateX: Animated.AnimatedInterpolation<string | number>;
+  onPress: (item: Photo, index: number) => void;
+  onReady: (uri: string) => void;
+};
+
+const PhotoGridCell = React.memo(function PhotoGridCell({
+  item,
+  index,
+  displayUri,
+  isReady,
+  skeletonTranslateX,
+  onPress,
+  onReady,
+}: PhotoGridCellProps) {
+  const hasUsableDisplayUri =
+    !item.uri.startsWith("ph://") ||
+    (typeof displayUri === "string" && displayUri.startsWith("file://"));
+  const shouldShowPhPlaceholder =
+    Platform.OS === "ios" && item.uri.startsWith("ph://") && !hasUsableDisplayUri;
+  const shouldShowThumbnailPlaceholder = shouldShowPhPlaceholder || !isReady;
+
+  return (
+    <TouchableOpacity
+      style={styles.imageContainer}
+      activeOpacity={0.9}
+      onPress={() => onPress(item, index)}
+    >
+      <View style={styles.imageFrame}>
+        {!shouldShowPhPlaceholder ? (
+          /* 2026.06.03 일반 URI도 실제 onLoad 전까지는 placeholder를 남겨 흰 박스처럼 보이지 않도록 조정 by June */
+          <ExpoImage
+            source={{ uri: hasUsableDisplayUri ? (displayUri ?? item.uri) : item.uri }}
+            style={[
+              styles.image,
+              styles.imageLayer,
+              !isReady && styles.imageHidden,
+            ]}
+            contentFit="cover"
+            /* 리스트 재활용 시 이전 이미지가 잠깐 보이는 것을 방지 */
+            recyclingKey={item.uri}
+            cachePolicy="memory-disk"
+            transition={0}
+            onLoad={() => onReady(item.uri)}
+            onError={() => onReady(item.uri)}
+          />
+        ) : null}
+        {shouldShowThumbnailPlaceholder ? (
+          /* 2026.04.28 빈 URI 전달 경고를 없애기 위해 미해결 ph:// 썸네일은 임시 플레이스홀더로 렌더링 by June */
+          <View
+            style={[
+              styles.image,
+              styles.imagePlaceholder,
+              styles.imagePlaceholderLayer,
+            ]}
+          >
+            <LinearGradient
+              colors={["#F4F7FB", "#EAEFF6", "#F7FAFC"]}
+              start={{ x: 0, y: 0 }}
+              end={{ x: 1, y: 1 }}
+              style={StyleSheet.absoluteFillObject}
+            />
+            <View style={styles.imagePlaceholderTint} />
+            <View style={styles.imagePlaceholderBars}>
+              <View
+                style={[styles.imagePlaceholderBar, styles.imagePlaceholderBarWide]}
+              />
+              <View
+                style={[styles.imagePlaceholderBar, styles.imagePlaceholderBarMedium]}
+              />
+            </View>
+            <Animated.View
+              pointerEvents="none"
+              style={[
+                styles.imagePlaceholderSheen,
+                {
+                  transform: [
+                    { translateX: skeletonTranslateX },
+                    { skewX: "-12deg" },
+                  ],
+                },
+              ]}
+            />
+          </View>
+        ) : null}
+      </View>
+    </TouchableOpacity>
+  );
+});
+
+/* 2026.10.12 고정 크기 그리드이므로 getItemLayout으로 측정 비용을 제거 by Claude */
+const GRID_ROW_HEIGHT = imageWidth + imageMargin * 2;
+
 export default function HomeScreen() {
   const router = useRouter();
   const navigation = useNavigation();
@@ -3227,6 +3329,37 @@ export default function HomeScreen() {
     setThumbnailReadyByUri({});
   }, [thumbnailBlockingSignature]);
 
+  /* 2026.10.12 '사진 세트 확정 → 첫 화면 썸네일 20장 페인트 완료'까지의 실제 시간을 계측 —
+     남은 지연이 데이터 경로인지 디코드/렌더인지 분리하기 위한 지표 by Claude */
+  const thumbnailPaintStartRef = useRef<number | null>(null);
+
+  useEffect(() => {
+    thumbnailPaintStartRef.current =
+      thumbnailBlockingUris.length > 0 ? Date.now() : null;
+    /* 의도적으로 signature에만 반응 — 같은 세트의 ready 갱신에는 타이머를 리셋하지 않음 */
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [thumbnailBlockingSignature]);
+
+  useEffect(() => {
+    const startedAt = thumbnailPaintStartRef.current;
+    if (startedAt === null) return;
+    if (thumbnailBlockingUris.length === 0) return;
+    const allReady = thumbnailBlockingUris.every(
+      (uri) => thumbnailReadyByUri[uri],
+    );
+    if (!allReady) return;
+    thumbnailPaintStartRef.current = null;
+    const elapsedMs = Date.now() - startedAt;
+    console.log("[ThumbnailPaint] first screen ready", {
+      ms: elapsedMs,
+      count: thumbnailBlockingUris.length,
+    });
+    recordPerfMetric("home.thumbnail_paint.ms", elapsedMs, {
+      context: { count: thumbnailBlockingUris.length },
+      logEvery: 1,
+    });
+  }, [thumbnailBlockingUris, thumbnailReadyByUri]);
+
   const markThumbnailReady = useCallback((uri: string) => {
     if (!uri) return;
     if (thumbnailReadyByUriRef.current[uri]) return;
@@ -5761,99 +5894,58 @@ export default function HomeScreen() {
   /** 2026.03.26 By June */
 
   // 썸네일 그리드에 사진 데이터 렌더링
-  const renderItem: ListRenderItem<Photo> = ({ item, index }) => {
-    const isThumbnailReady = Boolean(thumbnailReadyByUri[item.uri]);
-    const resolvedDisplayUri = displayUriMap[item.uri];
-    const hasUsableDisplayUri =
-      !item.uri.startsWith("ph://") ||
-      (typeof resolvedDisplayUri === "string" &&
-        resolvedDisplayUri.startsWith("file://"));
-    const shouldShowPhPlaceholder =
-      Platform.OS === "ios" &&
-      item.uri.startsWith("ph://") &&
-      !hasUsableDisplayUri;
-    const shouldShowThumbnailPlaceholder =
-      shouldShowPhPlaceholder || !isThumbnailReady;
+  /* 2026.10.12 셀 렌더를 memo 컴포넌트(PhotoGridCell)로 분리하고, 탭 핸들러를 안정 참조로 유지해
+     상태 변화 시 보이는 셀 전체가 재렌더되지 않도록 변경 by Claude */
+  const handlePhotoCellPress = useCallback(
+    (item: Photo, index: number) => {
+      amplitude.track("tap_photo_thumbnail", {
+        screen_name: "home",
+        photo_index: index,
+        photo_count: photosRef.current.length,
+      });
+      // 뷰어 swipe 카운트 초기화 (열 때마다)
+      swipe_count_ref.current = 0;
+      swipe_threshold_fired_ref.current = false;
 
-    // console.log("PHOTO URI >>>", item.uri);
-    return (
-      <TouchableOpacity
-        style={styles.imageContainer}
-        activeOpacity={0.9}
-        onPress={() => {
-          amplitude.track("tap_photo_thumbnail", {
-            screen_name: "home",
-            photo_index: index,
-            photo_count: photosRef.current.length,
-          });
-          // 뷰어 swipe 카운트 초기화 (열 때마다)
-          swipe_count_ref.current = 0;
-          swipe_threshold_fired_ref.current = false;
+      setViewerEntryPoint("home");
+      setViewerPhotoUris(photosRef.current.map((photo) => photo.uri));
+      setViewerIndex(index);
+      setViewerVisible(true);
+      /* 2026.05.27 선택한 사진의 위치 메타 유무를 즉시 확인하기 위한 진단 로그 추가 by June */
+      void debugPhotoLocationMeta(item);
+      /* 2026.04.22 상세 보기 진입 시 선택 사진만 고해상도 URI를 비동기 보강해 리스트 전체 메모리 사용 없이 상세 품질을 확보하기 위해 추가 by June */
+      void resolveViewerDetailUri(item.uri);
+      /* 2026.05.06 사용자가 선택한 사진의 위치정보는 즉시 우선 보강해 상세 진입 직후 공백 시간을 줄이기 위해 추가 by June */
+      void prioritizePhotoLocation(item);
+      /* 2026.04.22 좌우 스와이프 첫 체감을 개선하기 위해 인접 1장의 URI도 선행 보강하되 범위를 최소화해 메모리 피크를 제한 by June */
+      const next = photosRef.current[index + 1];
+      if (next?.uri) {
+        void resolveViewerDetailUri(next.uri);
+      }
+    },
+    [debugPhotoLocationMeta, prioritizePhotoLocation, resolveViewerDetailUri],
+  );
 
-          setViewerEntryPoint("home");
-          setViewerPhotoUris(photosRef.current.map((photo) => photo.uri));
-          setViewerIndex(index);
-          setViewerVisible(true);
-          /* 2026.05.27 선택한 사진의 위치 메타 유무를 즉시 확인하기 위한 진단 로그 추가 by June */
-          void debugPhotoLocationMeta(item);
-          /* 2026.04.22 상세 보기 진입 시 선택 사진만 고해상도 URI를 비동기 보강해 리스트 전체 메모리 사용 없이 상세 품질을 확보하기 위해 추가 by June */
-          void resolveViewerDetailUri(item.uri);
-          /* 2026.05.06 사용자가 선택한 사진의 위치정보는 즉시 우선 보강해 상세 진입 직후 공백 시간을 줄이기 위해 추가 by June */
-          void prioritizePhotoLocation(item);
-          /* 2026.04.22 좌우 스와이프 첫 체감을 개선하기 위해 인접 1장의 URI도 선행 보강하되 범위를 최소화해 메모리 피크를 제한 by June */
-          const next = photosRef.current[index + 1];
-          if (next?.uri) {
-            void resolveViewerDetailUri(next.uri);
-          }
-        }}
-      >
-        <View style={styles.imageFrame}>
-          {!shouldShowPhPlaceholder ? (
-            /* 2026.06.03 일반 URI도 실제 onLoad 전까지는 placeholder를 남겨 흰 박스처럼 보이지 않도록 조정 by June */
-            <Image
-              source={{
-                uri: hasUsableDisplayUri
-                  ? (resolvedDisplayUri ?? item.uri)
-                  : item.uri,
-              }}
-              style={[styles.image, styles.imageLayer, !isThumbnailReady && styles.imageHidden]}
-              resizeMode="cover"
-              onLoad={() => markThumbnailReady(item.uri)}
-              onError={() => markThumbnailReady(item.uri)}
-            />
-          ) : null}
-          {shouldShowThumbnailPlaceholder ? (
-            /* 2026.04.28 빈 URI 전달 경고를 없애기 위해 미해결 ph:// 썸네일은 임시 플레이스홀더로 렌더링 by June */
-            <View style={[styles.image, styles.imagePlaceholder, styles.imagePlaceholderLayer]}>
-              <LinearGradient
-                colors={["#F4F7FB", "#EAEFF6", "#F7FAFC"]}
-                start={{ x: 0, y: 0 }}
-                end={{ x: 1, y: 1 }}
-                style={StyleSheet.absoluteFillObject}
-              />
-              <View style={styles.imagePlaceholderTint} />
-              <View style={styles.imagePlaceholderBars}>
-                <View style={[styles.imagePlaceholderBar, styles.imagePlaceholderBarWide]} />
-                <View style={[styles.imagePlaceholderBar, styles.imagePlaceholderBarMedium]} />
-              </View>
-              <Animated.View
-                pointerEvents="none"
-                style={[
-                  styles.imagePlaceholderSheen,
-                  {
-                    transform: [
-                      { translateX: thumbnailSkeletonTranslateX },
-                      { skewX: "-12deg" },
-                    ],
-                  },
-                ]}
-              />
-            </View>
-          ) : null}
-        </View>
-      </TouchableOpacity>
-    );
-  };
+  const renderItem: ListRenderItem<Photo> = useCallback(
+    ({ item, index }) => (
+      <PhotoGridCell
+        item={item}
+        index={index}
+        displayUri={displayUriMap[item.uri]}
+        isReady={Boolean(thumbnailReadyByUri[item.uri])}
+        skeletonTranslateX={thumbnailSkeletonTranslateX}
+        onPress={handlePhotoCellPress}
+        onReady={markThumbnailReady}
+      />
+    ),
+    [
+      displayUriMap,
+      handlePhotoCellPress,
+      markThumbnailReady,
+      thumbnailReadyByUri,
+      thumbnailSkeletonTranslateX,
+    ],
+  );
 
   // 시각(분) 윈도우 판정: timeStart~timeEnd(분), 1439=23:59 처리 포함
   const inTimeWindow = (
@@ -6478,9 +6570,16 @@ export default function HomeScreen() {
                 data={photos}
                 numColumns={numColumns}
                 /* 2026.04.22 index key 사용 시 append/재정렬 구간에서 셀 재생성이 과도해져 스크롤 안정성이 저하될 수 있어 URI 우선 key로 변경 by June */
-                keyExtractor={(item, i) => `${item.uri || "missing-uri"}::${i}`}
+                /* 2026.10.12 index를 키에서 제외 — 정렬/삽입 시 전체 셀이 remount되던 문제 방지 by Claude */
+                keyExtractor={(item, i) => item.uri || `missing-uri-${i}`}
                 renderItem={renderItem}
                 /* 2026.04.22 대량 사진 스크롤 시 메모리 사용량을 낮춰 OS 강제 종료 가능성을 줄이기 위해 FlatList 배치 렌더 파라미터를 최적화 by June */
+                /* 2026.10.12 고정 크기 그리드이므로 측정 없이 레이아웃 계산 by Claude */
+                getItemLayout={(_data, index) => ({
+                  length: GRID_ROW_HEIGHT,
+                  offset: GRID_ROW_HEIGHT * Math.floor(index / numColumns),
+                  index,
+                })}
                 initialNumToRender={25}
                 maxToRenderPerBatch={20}
                 windowSize={7}
