@@ -160,8 +160,10 @@ const FIRST_PAGE_CITY_COUNT = 100;
 /* 2026.10.12 좌표 back-fill 루프: 인덱서가 타임스탬프만 적재하므로(Android는 bulk에 GPS 없음)
    좌표 미보유 row가 영구히 남아 검색 예상 시간이 줄지 않던 문제를 해소 by Claude */
 const COORD_BACKFILL_BATCH = 24;
-const COORD_BACKFILL_CONCURRENCY = 6;
-const COORD_BACKFILL_IDLE_DELAY_MS = 800;
+/* 2026.10.18 동시 getAssetInfoAsync가 썸네일(PHImageManager/Glide)과 같은 사진 서브시스템을 두고
+   경쟁하므로 동시성을 낮추고 배치 간 간격을 넓힘 — 백그라운드 총 시간보다 전경 반응성 우선 by Claude */
+const COORD_BACKFILL_CONCURRENCY = 2;
+const COORD_BACKFILL_IDLE_DELAY_MS = 1500;
 const COORD_BACKFILL_BUSY_RETRY_MS = 1000;
 const COORD_BACKFILL_MAX_ERROR_STREAK = 3;
 
@@ -3334,10 +3336,14 @@ export default function HomeScreen() {
   /* 2026.10.12 '사진 세트 확정 → 첫 화면 썸네일 20장 페인트 완료'까지의 실제 시간을 계측 —
      남은 지연이 데이터 경로인지 디코드/렌더인지 분리하기 위한 지표 by Claude */
   const thumbnailPaintStartRef = useRef<number | null>(null);
+  /* 2026.10.18 첫 화면 썸네일이 아직 그려지는 중이면 백그라운드 루프가 사진 API를 건드리지 않도록 하는 신호 by Claude */
+  const foregroundBusyRef = useRef(true);
 
   useEffect(() => {
     thumbnailPaintStartRef.current =
       thumbnailBlockingUris.length > 0 ? Date.now() : null;
+    /* 새 사진 세트가 그려지는 동안에는 다시 전경 우선 모드로 전환 by Claude */
+    foregroundBusyRef.current = thumbnailBlockingUris.length > 0;
     /* 의도적으로 signature에만 반응 — 같은 세트의 ready 갱신에는 타이머를 리셋하지 않음 */
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [thumbnailBlockingSignature]);
@@ -3351,6 +3357,7 @@ export default function HomeScreen() {
     );
     if (!allReady) return;
     thumbnailPaintStartRef.current = null;
+    foregroundBusyRef.current = false;
     const elapsedMs = Date.now() - startedAt;
     console.log("[ThumbnailPaint] first screen ready", {
       ms: elapsedMs,
@@ -5460,7 +5467,7 @@ export default function HomeScreen() {
         let batchCount = 0;
         try {
           while (!backgroundMetadataSyncCancelledRef.current) {
-            if (requestInFlightRef.current) {
+            if (requestInFlightRef.current || foregroundBusyRef.current) {
               await sleep(COORD_BACKFILL_BUSY_RETRY_MS);
               continue;
             }
@@ -5583,7 +5590,7 @@ export default function HomeScreen() {
 
       let errorStreak = 0;
       while (!backgroundMetadataSyncCancelledRef.current) {
-        if (requestInFlightRef.current) {
+        if (requestInFlightRef.current || foregroundBusyRef.current) {
           await sleep(GEOCODE_DRAIN_BUSY_RETRY_MS);
           continue;
         }
@@ -5653,13 +5660,16 @@ export default function HomeScreen() {
         let errorStreak = 0;
         while (!backgroundMetadataSyncCancelledRef.current) {
           /* 2026.09.02 사용자 요청이 진행 중이면 동기화를 양보해 6월 장애(초기 로드 경합) 재발을 방지 by Claude */
-          if (requestInFlightRef.current) {
+          /* 2026.10.18 썸네일이 그려지는 중에도 양보 — 사진 API 경합으로 첫 화면이 밀리는 것을 방지 by Claude */
+          if (requestInFlightRef.current || foregroundBusyRef.current) {
             await sleep(BACKGROUND_SYNC_BUSY_RETRY_MS);
             continue;
           }
           try {
             await syncPhotoMetadataInBackground({
-              maxPages: 3,
+              /* 2026.10.18 호출당 3페이지(900장)는 양보 지점이 너무 드물어 사용자 입력이 뒤에 밀림 —
+                 1페이지로 줄여 pause 체크 빈도를 3배로 by Claude */
+              maxPages: 1,
               enrichLocation: false,
             });
             errorStreak = 0;
