@@ -248,7 +248,6 @@ const getAssetIdFromPhUri = (uri: string): string | null => {
 type PhotoGridCellProps = {
   item: Photo;
   index: number;
-  displayUri?: string;
   isReady: boolean;
   skeletonTranslateX: Animated.AnimatedInterpolation<string | number>;
   onPress: (item: Photo, index: number) => void;
@@ -258,18 +257,16 @@ type PhotoGridCellProps = {
 const PhotoGridCell = React.memo(function PhotoGridCell({
   item,
   index,
-  displayUri,
   isReady,
   skeletonTranslateX,
   onPress,
   onReady,
 }: PhotoGridCellProps) {
-  const hasUsableDisplayUri =
-    !item.uri.startsWith("ph://") ||
-    (typeof displayUri === "string" && displayUri.startsWith("file://"));
-  const shouldShowPhPlaceholder =
-    Platform.OS === "ios" && item.uri.startsWith("ph://") && !hasUsableDisplayUri;
-  const shouldShowThumbnailPlaceholder = shouldShowPhPlaceholder || !isReady;
+  /* 2026.10.18 iOS ph:// URI를 expo-image가 PhotoLibraryAssetLoader(PHImageManager)로 직접 로드 —
+     getAssetInfoAsync로 localUri를 미리 해상하던 단계를 제거. 그 경로는 사진당 네이티브 왕복이고
+     iCloud 최적화 보관 시 원본 다운로드까지 유발해 첫 화면이 수십 초 걸리던 원인.
+     OS가 뷰 크기에 맞춘 썸네일을 돌려주므로 원본 풀해상도 디코딩도 사라짐 by Claude */
+  const shouldShowThumbnailPlaceholder = !isReady;
 
   return (
     <TouchableOpacity
@@ -278,10 +275,14 @@ const PhotoGridCell = React.memo(function PhotoGridCell({
       onPress={() => onPress(item, index)}
     >
       <View style={styles.imageFrame}>
-        {!shouldShowPhPlaceholder ? (
+        {
           /* 2026.06.03 일반 URI도 실제 onLoad 전까지는 placeholder를 남겨 흰 박스처럼 보이지 않도록 조정 by June */
           <ExpoImage
-            source={{ uri: hasUsableDisplayUri ? (displayUri ?? item.uri) : item.uri }}
+            source={{
+              uri: item.uri,
+              /* 사진이 편집되면 캐시가 무효화되도록 식별자+시각을 캐시 키로 사용 by Claude */
+              cacheKey: `${item.assetId ?? item.uri}:${item.takenAt ?? 0}`,
+            }}
             style={[
               styles.image,
               styles.imageLayer,
@@ -295,7 +296,7 @@ const PhotoGridCell = React.memo(function PhotoGridCell({
             onLoad={() => onReady(item.uri)}
             onError={() => onReady(item.uri)}
           />
-        ) : null}
+        }
         {shouldShowThumbnailPlaceholder ? (
           /* 2026.04.28 빈 URI 전달 경고를 없애기 위해 미해결 ph:// 썸네일은 임시 플레이스홀더로 렌더링 by June */
           <View
@@ -2345,7 +2346,8 @@ export default function HomeScreen() {
               setCurrentDataSource("db");
               setEndCursor(null);
               /* 첫 화면 썸네일은 캐시 하이드레이션을 기다렸다 그림(120장, ms 단위) */
-              await hydratePersistedDisplayUriCache(
+              /* 2026.10.18 그리드가 ph://를 직접 쓰므로 첫 페인트를 캐시 읽기로 막지 않음(뷰어 폴백용으로만 비동기 적재) by Claude */
+              void hydratePersistedDisplayUriCache(
                 chunkPhotos,
                 "location-search-db-first",
               );
@@ -2458,7 +2460,7 @@ export default function HomeScreen() {
         const nextVisible = deriveVisiblePhotos(mergedBase, filterRef.current);
 
         await showLocationSearchPhaseText(locationSearchPhaseLabels.thumbnail);
-        await hydratePersistedDisplayUriCache(photosChunk, "location-search");
+        void hydratePersistedDisplayUriCache(photosChunk, "location-search");
         await showLocationSearchPhaseText(locationSearchPhaseLabels.apply);
         setPhotosAll(mergedBase);
         setPhotos(nextVisible);
@@ -3405,12 +3407,13 @@ export default function HomeScreen() {
   );
 
   useEffect(() => {
-    if (Platform.OS !== "ios") {
-      setThumbnailResolving(false);
-      return;
-    }
+    /* 2026.10.18 그리드가 ph://를 직접 렌더하므로 사전 해상(getAssetInfoAsync) 파이프라인을 중단.
+       이 루프가 사진당 네이티브 호출 + iCloud 원본 다운로드를 유발해 iOS 첫 화면 지연의 주원인이었음.
+       뷰어 전용 고해상도 해상(resolveViewerDetailUri)은 그대로 유지 by Claude */
+    setThumbnailResolving(false);
+    if (true) return;
 
-    /* 2026.05.28 기존 200장 동시 변환은 iOS 메모리 피크를 만들 수 있어 현재 화면 근처 항목만 순차 배치로 해상하도록 변경 by June */
+    // eslint-disable-next-line no-unreachable
     const targets = photos
       .slice(0, thumbnailResolveLimit)
       .map((p) => p.uri)
@@ -4119,7 +4122,7 @@ export default function HomeScreen() {
       const nextVisible = deriveVisiblePhotos(nextBase, currentFilter);
 
       await showLocationSearchPhaseText(locationSearchPhaseLabels.thumbnail);
-      await hydratePersistedDisplayUriCache(nextBase, "incremental-date-reload");
+      void hydratePersistedDisplayUriCache(nextBase, "incremental-date-reload");
       await showLocationSearchPhaseText(locationSearchPhaseLabels.apply);
       setPhotosAll(nextBase);
       setPhotos(nextVisible);
@@ -4557,7 +4560,7 @@ export default function HomeScreen() {
         return;
       }
 
-      await hydratePersistedDisplayUriCache(initialBase, "initial-medialibrary");
+      void hydratePersistedDisplayUriCache(initialBase, "initial-medialibrary");
       setPhotos(initial);
       setPhotosAll(initialBase);
       /* 2026.04.22 초기 MediaLibrary 경로에서도 현재 표출 건수를 progress에 반영해 사용자에게 로드 상태를 보여주기 위해 추가 by June */
@@ -4777,7 +4780,7 @@ export default function HomeScreen() {
       }
 
       await showLocationSearchPhaseText(locationSearchPhaseLabels.thumbnail);
-      await hydratePersistedDisplayUriCache(sortedBase, "filter-medialibrary");
+      void hydratePersistedDisplayUriCache(sortedBase, "filter-medialibrary");
       await showLocationSearchPhaseText(locationSearchPhaseLabels.apply);
       setPhotos(sorted);
       setPhotosAll(sortedBase);
@@ -4962,7 +4965,7 @@ export default function HomeScreen() {
           return;
         }
 
-        await hydratePersistedDisplayUriCache(sortedBase, `${mode}-medialibrary`);
+        void hydratePersistedDisplayUriCache(sortedBase, `${mode}-medialibrary`);
         setPhotos(sorted);
         setPhotosAll(sortedBase);
         pruneDisplayUriCacheForPhotos(sortedBase);
@@ -5931,7 +5934,6 @@ export default function HomeScreen() {
       <PhotoGridCell
         item={item}
         index={index}
-        displayUri={displayUriMap[item.uri]}
         isReady={Boolean(thumbnailReadyByUri[item.uri])}
         skeletonTranslateX={thumbnailSkeletonTranslateX}
         onPress={handlePhotoCellPress}
@@ -5939,7 +5941,6 @@ export default function HomeScreen() {
       />
     ),
     [
-      displayUriMap,
       handlePhotoCellPress,
       markThumbnailReady,
       thumbnailReadyByUri,
@@ -6262,11 +6263,8 @@ export default function HomeScreen() {
     edges.push("top"); // iOS는 top 추가해야 UI 안깨짐
   }
   const safeAreaEdges: Edges = edges as Edges;
-  const hasPendingDisplayThumbnails =
-    Platform.OS === "ios" &&
-    photos
-      .slice(0, thumbnailResolveLimit)
-      .some((p) => p.uri.startsWith("ph://") && !displayUriMap[p.uri]);
+  /* 2026.10.18 ph:// 직접 렌더로 전환되어 사전 해상 대기 상태가 사라짐 by Claude */
+  const hasPendingDisplayThumbnails = false;
   const hasPendingVisibleThumbnailPaint =
     thumbnailBlockingUris.length > 0 &&
     thumbnailBlockingUris.some((uri) => !thumbnailReadyByUri[uri]);
