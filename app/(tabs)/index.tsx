@@ -164,6 +164,10 @@ const FIRST_PAGE_CITY_COUNT = 100;
 /* 2026.09.02 geocode 큐 드레인 루프 운영값 — 메타데이터 인덱싱 완료 후에만 시작 by Claude */
 /* 2026.10.12 좌표 back-fill 루프: 인덱서가 타임스탬프만 적재하므로(Android는 bulk에 GPS 없음)
    좌표 미보유 row가 영구히 남아 검색 예상 시간이 줄지 않던 문제를 해소 by Claude */
+/* 2026.10.18 전경 우선 신호의 안전 상한 — 썸네일 onLoad/onError가 한 장이라도 오지 않으면
+   (셀 재활용/빠른 스크롤/무음 실패) 백그라운드 루프 5개가 영구히 멈추므로 워치독으로 해제 by Claude */
+const FOREGROUND_BUSY_MAX_MS = 8000;
+
 const COORD_BACKFILL_BATCH = 24;
 /* 2026.10.18 동시 getAssetInfoAsync가 썸네일(PHImageManager/Glide)과 같은 사진 서브시스템을 두고
    경쟁하므로 동시성을 낮추고 배치 간 간격을 넓힘 — 백그라운드 총 시간보다 전경 반응성 우선 by Claude */
@@ -3354,12 +3358,34 @@ export default function HomeScreen() {
   const thumbnailPaintStartRef = useRef<number | null>(null);
   /* 2026.10.18 첫 화면 썸네일이 아직 그려지는 중이면 백그라운드 루프가 사진 API를 건드리지 않도록 하는 신호 by Claude */
   const foregroundBusyRef = useRef(true);
+  const foregroundBusyTimerRef = useRef<ReturnType<typeof setTimeout> | null>(
+    null,
+  );
+
+  const clearForegroundBusy = useCallback(() => {
+    foregroundBusyRef.current = false;
+    if (foregroundBusyTimerRef.current) {
+      clearTimeout(foregroundBusyTimerRef.current);
+      foregroundBusyTimerRef.current = null;
+    }
+  }, []);
 
   useEffect(() => {
     thumbnailPaintStartRef.current =
       thumbnailBlockingUris.length > 0 ? Date.now() : null;
     /* 새 사진 세트가 그려지는 동안에는 다시 전경 우선 모드로 전환 by Claude */
     foregroundBusyRef.current = thumbnailBlockingUris.length > 0;
+    if (foregroundBusyTimerRef.current) {
+      clearTimeout(foregroundBusyTimerRef.current);
+      foregroundBusyTimerRef.current = null;
+    }
+    if (thumbnailBlockingUris.length > 0) {
+      /* 2026.10.18 onLoad 누락으로 백그라운드가 영구 정지하지 않도록 상한 해제 by Claude */
+      foregroundBusyTimerRef.current = setTimeout(() => {
+        foregroundBusyRef.current = false;
+        foregroundBusyTimerRef.current = null;
+      }, FOREGROUND_BUSY_MAX_MS);
+    }
     /* 의도적으로 signature에만 반응 — 같은 세트의 ready 갱신에는 타이머를 리셋하지 않음 */
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [thumbnailBlockingSignature]);
@@ -3373,7 +3399,7 @@ export default function HomeScreen() {
     );
     if (!allReady) return;
     thumbnailPaintStartRef.current = null;
-    foregroundBusyRef.current = false;
+    clearForegroundBusy();
     const elapsedMs = Date.now() - startedAt;
     console.log("[ThumbnailPaint] first screen ready", {
       ms: elapsedMs,
@@ -3383,7 +3409,17 @@ export default function HomeScreen() {
       context: { count: thumbnailBlockingUris.length },
       logEvery: 1,
     });
-  }, [thumbnailBlockingUris, thumbnailReadyByUri]);
+  }, [thumbnailBlockingUris, thumbnailReadyByUri, clearForegroundBusy]);
+
+  useEffect(() => {
+    /* 언마운트 시 워치독 타이머 정리 by Claude */
+    return () => {
+      if (foregroundBusyTimerRef.current) {
+        clearTimeout(foregroundBusyTimerRef.current);
+        foregroundBusyTimerRef.current = null;
+      }
+    };
+  }, []);
 
   const markThumbnailReady = useCallback((uri: string) => {
     if (!uri) return;
