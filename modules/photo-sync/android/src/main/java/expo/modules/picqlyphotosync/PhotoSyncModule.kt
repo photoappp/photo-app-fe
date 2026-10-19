@@ -106,7 +106,8 @@ class PhotoSyncModule : Module() {
         val checkpoint = encode(access, stamps)
         sessions[handle] = Session(assets, ids, checkpoint, stamps, access, idsDone = ids == null)
         mapOf("handle" to handle, "mode" to mode,
-          "total" to if (mode == "audit") null else assets.count,
+          /* 2026.10.18 if-else 결과 뒤에 인자가 이어지므로 괄호로 범위를 명확히 by Claude */
+          "total" to (if (mode == "audit") null else assets.count),
           /* 2026.10.18 JS가 자체 전체 패스를 끝낸 뒤에도 다음 세션부터 증분이 되도록 체크포인트를 함께 반환 by Claude */
           "checkpoint" to checkpoint)
       } catch (error: Throwable) { assets.close(); throw error }
