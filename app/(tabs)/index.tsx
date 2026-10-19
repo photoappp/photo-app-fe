@@ -168,7 +168,9 @@ const FIRST_PAGE_CITY_COUNT = 100;
    (셀 재활용/빠른 스크롤/무음 실패) 백그라운드 루프 5개가 영구히 멈추므로 워치독으로 해제 by Claude */
 const FOREGROUND_BUSY_MAX_MS = 8000;
 
-const COORD_BACKFILL_BATCH = 24;
+/* 2026.10.18 배치 간 idle(1.5s)이 전체 시간을 지배하므로 배치를 키워 대기 횟수를 줄임 —
+   동시 네이티브 호출 수(=경합 수준)는 CONCURRENCY가 결정하므로 그대로 유지 by Claude */
+const COORD_BACKFILL_BATCH = 60;
 /* 2026.10.18 동시 getAssetInfoAsync가 썸네일(PHImageManager/Glide)과 같은 사진 서브시스템을 두고
    경쟁하므로 동시성을 낮추고 배치 간 간격을 넓힘 — 백그라운드 총 시간보다 전경 반응성 우선 by Claude */
 const COORD_BACKFILL_CONCURRENCY = 2;
@@ -5767,7 +5769,7 @@ export default function HomeScreen() {
     const sleep = (ms: number) =>
       new Promise<void>((resolve) => setTimeout(resolve, ms));
     try {
-      let afterTakenAt: number | null = null;
+      let cursor: PhotoPageCursor | null = null;
       let written = 0;
       while (!backgroundMetadataSyncCancelledRef.current) {
         if (requestInFlightRef.current || foregroundBusyRef.current) {
@@ -5775,11 +5777,12 @@ export default function HomeScreen() {
           continue;
         }
         const page = await getPhotosMissingCityPage({
-          afterTakenAt,
+          after: cursor,
           limit: PLACE_BACKFILL_BATCH,
         });
         if (page.length === 0) break;
-        afterTakenAt = page[page.length - 1].takenAt;
+        const lastRow = page[page.length - 1];
+        cursor = { takenAt: lastRow.takenAt, assetId: lastRow.assetId };
 
         const keys = new Set<string>();
         for (const row of page) keys.add(toGeoKey(row.latitude, row.longitude, 2));

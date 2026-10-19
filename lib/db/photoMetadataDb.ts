@@ -1013,10 +1013,16 @@ const buildPlaceClause = (place?: PlaceFilter) => {
   }
   if (cities.length > 0) {
     const placeholders = cities.map(() => "?").join(",");
+    /* 2026.10.18 기존 JS 필터(applyLocationFilter)는 도시를 모르는 사진을 통과시킨다.
+       SQL이 더 엄격하면 보강 전 사진이 결과에서 사라져 동작이 바뀌므로 의미를 그대로 맞춤:
+       표시값(city ?? city_approx)이 일치하거나, 도시 정보가 아예 없는 경우 포함 by Claude */
     clauses.push(
-      `AND (city IN (${placeholders}) OR (city IS NULL AND city_approx IN (${placeholders})))`
+      `AND (
+        COALESCE(city, city_approx) IN (${placeholders})
+        OR (city IS NULL AND city_approx IS NULL)
+      )`
     );
-    args.push(...cities, ...cities);
+    args.push(...cities);
   }
 
   return { sql: clauses.join("\n      "), args };
@@ -1049,16 +1055,19 @@ export const getPhotosMissingPlace = async (limit: number) => {
 /* 2026.10.18 정밀 도시가 아직 비어 있는 사진을 taken_at 커서로 한 바퀴 순회 — 지오코드 캐시가
    채워진 뒤 그 결과를 사진 행에 영속화하기 위한 조회(세션 간 정밀 도시 유지) by Claude */
 export const getPhotosMissingCityPage = async (params: {
-  afterTakenAt: number | null;
+  /* 2026.10.18 동일 taken_at이 페이지 경계에 걸리면 단순 '<' 커서로는 영구히 건너뛰므로
+     (taken_at, asset_id) 복합 커서를 사용 by Claude */
+  after: PhotoPageCursor | null;
   limit: number;
 }) => {
   await initPhotoMetadataDb();
   const db = await getDb();
-  const cursorClause = params.afterTakenAt !== null ? "AND taken_at < ?" : "";
-  const args: number[] =
-    params.afterTakenAt !== null
-      ? [params.afterTakenAt, params.limit]
-      : [params.limit];
+  const cursorClause = params.after
+    ? "AND (taken_at < ? OR (taken_at = ? AND asset_id < ?))"
+    : "";
+  const args: (number | string)[] = params.after
+    ? [params.after.takenAt, params.after.takenAt, params.after.assetId, params.limit]
+    : [params.limit];
   return db.getAllAsync<{
     assetId: string;
     latitude: number;
@@ -1075,7 +1084,7 @@ export const getPhotosMissingCityPage = async (params: {
       AND longitude IS NOT NULL
       AND NOT (latitude = 0 AND longitude = 0)
       ${cursorClause}
-    ORDER BY taken_at DESC
+    ORDER BY taken_at DESC, asset_id DESC
     LIMIT ?
     `,
     ...args
@@ -1114,15 +1123,20 @@ export const updatePhotoPlacesByAssetIds = async (
 export const countPhotosMissingPlace = async () => {
   await initPhotoMetadataDb();
   const db = await getDb();
+  /* 2026.10.18 '아직 장소가 확정되지 않은 사진' 수 — 좌표 자체가 아직 없는 사진도 포함해야 한다.
+     (Android 최초 설치는 모든 latitude가 NULL이라, 좌표 보유 행만 세면 0이 나와
+      장소가 하나도 없는 상태에서 SQL 위치 필터가 돌아 결과가 비어 보였음) by Claude */
   const row = await db.getFirstAsync<{ count: number }>(
     `
     SELECT COUNT(*) as count
     FROM photo_metadata
     WHERE is_deleted = 0
       AND country_code IS NULL
-      AND latitude IS NOT NULL
-      AND longitude IS NOT NULL
-      AND NOT (latitude = 0 AND longitude = 0)
+      AND (
+        latitude IS NULL
+        OR longitude IS NULL
+        OR NOT (latitude = 0 AND longitude = 0)
+      )
     `
   );
   return row?.count ?? 0;

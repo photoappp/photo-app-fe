@@ -118,9 +118,11 @@ public class PhotoSyncModule: Module {
       let handle = UUID().uuidString
       self.sessions[handle] = Session(assets: assets, deleted: Array(removed), checkpoint: encoded ?? "",
         access: access.rawValue, includeIds: mode != "delta")
+      // 2026.10.18 nil Optional을 그대로 Any로 넘기면 브리지 변환이 불안정하므로 NSNull로 명시 by Claude
+      let checkpointValue: Any = encoded ?? NSNull()
       return ["handle": handle, "mode": mode,
               "total": mode == "delta" ? NSNull() as Any : assets.count as Any,
-              "checkpoint": encoded as Any]
+              "checkpoint": checkpointValue]
     }.runOnQueue(queue)
 
     AsyncFunction("read") { (handle: String, requested: Int) -> [String: Any] in

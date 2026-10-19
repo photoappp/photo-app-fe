@@ -172,7 +172,9 @@ const runNativeDeltaSync = async (): Promise<boolean> => {
     }
 
     const checkpoint = await librarySync.finish(handle);
-    await setNativeSyncCheckpoint(checkpoint);
+    /* 2026.10.18 빈 문자열 체크포인트(토큰 미지원 플랫폼)는 저장하지 않음 —
+       저장 시 다음 begin에서 파싱 오류가 나며 매번 폴백하게 됨 by Claude */
+    if (checkpoint) await setNativeSyncCheckpoint(checkpoint);
     await librarySync.close(handle);
     handle = null;
 
