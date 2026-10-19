@@ -53,6 +53,10 @@ import * as amplitude from "@amplitude/analytics-react-native";
 import {
   countPhotoMetadataByDateTime,
   countPhotosMissingCoordsByDateTime,
+  countPhotosMissingPlace,
+  getPhotosMissingCityPage,
+  getPhotosMissingPlace,
+  updatePhotoPlacesByAssetIds,
   enqueueGeocodeJobs,
   getDisplayUriCacheBySourceUris,
   getGeocodeCacheByKey,
@@ -87,6 +91,7 @@ import {
   resolveCountryForCoords,
 } from "@/lib/geo/countryLookup";
 import {
+  countryCodeForDisplayName,
   countryDisplayName,
   setCountryDisplayLanguage,
 } from "@/lib/geo/countryNames";
@@ -166,6 +171,12 @@ const COORD_BACKFILL_CONCURRENCY = 2;
 const COORD_BACKFILL_IDLE_DELAY_MS = 1500;
 const COORD_BACKFILL_BUSY_RETRY_MS = 1000;
 const COORD_BACKFILL_MAX_ERROR_STREAK = 3;
+
+/* 2026.10.18 장소 보강은 전부 로컬 연산이라 배치를 크게 잡아도 네이티브 경합이 없음 by Claude */
+const PLACE_BACKFILL_BATCH = 300;
+const PLACE_BACKFILL_IDLE_DELAY_MS = 300;
+const PLACE_BACKFILL_BUSY_RETRY_MS = 1000;
+const PLACE_BACKFILL_MAX_ERROR_STREAK = 3;
 
 const GEOCODE_DRAIN_INITIAL_DELAY_MS = 2000;
 const GEOCODE_DRAIN_IDLE_DELAY_MS = 1200;
@@ -2335,6 +2346,11 @@ export default function HomeScreen() {
               takenAt: row.takenAt,
               location: dbLocationOrNull(row.latitude, row.longitude),
               coordsChecked: row.latitude !== null && row.longitude !== null,
+              country: row.countryCode
+                ? (countryDisplayName(row.countryCode) ?? undefined)
+                : undefined,
+              city: row.city ?? undefined,
+              cityApprox: row.cityApprox ?? undefined,
             }));
             /* keyset은 taken_at DESC 순서로 반환되므로 전체 재정렬 없이 이어붙임(중복만 제거) */
             streamed = dedupePhotosByUri([...streamed, ...chunkPhotos]);
@@ -3542,6 +3558,10 @@ export default function HomeScreen() {
         takenAt: number | null;
         latitude: number | null;
         longitude: number | null;
+        /* 2026.10.18 장소 컬럼 (국가는 A3 코드) by Claude */
+        countryCode?: string | null;
+        city?: string | null;
+        cityApprox?: string | null;
       }[],
     ): Photo[] => {
       return rows.map((row) => ({
@@ -3551,6 +3571,12 @@ export default function HomeScreen() {
         location: dbLocationOrNull(row.latitude, row.longitude),
         /* 2026.10.12 DB에 좌표 값이 있으면(0/0 'GPS 없음' 포함) 이미 조회를 마친 사진 by Claude */
         coordsChecked: row.latitude !== null && row.longitude !== null,
+        /* 2026.10.18 장소도 DB에서 읽어옴 — 국가는 코드로 저장되므로 현재 언어 표시명으로 변환 by Claude */
+        country: row.countryCode
+          ? (countryDisplayName(row.countryCode) ?? undefined)
+          : undefined,
+        city: row.city ?? undefined,
+        cityApprox: row.cityApprox ?? undefined,
       }));
     },
     [],
@@ -3569,25 +3595,34 @@ export default function HomeScreen() {
       const hasLocationFilter =
         currentFilter.countries.length > 0 || currentFilter.cities.length > 0;
 
-      /* 2026.04.15 로케이션 공용 기능 영향 방지를 위해 위치 필터 사용 시 기존 MediaLibrary 경로로 즉시 우회하기 위해 추가 by June */
+      /* 2026.10.18 위치 필터를 SQL(country/city 컬럼)로 처리하도록 전환 — 기존에는 여기서 무조건
+         MediaLibrary 경로로 우회해 전 범위를 메모리에 올린 뒤 JS로 거르느라 느렸음.
+         단, 장소 보강이 아직 남아 있으면 결과가 비어 보일 수 있으므로 그때만 기존 경로로 양보 by Claude */
       if (hasLocationFilter) {
-        /* 2026.04.22 위치 필터 분기로 DB 경로를 우회한 경우도 지연 로그에 남겨 분기별 빈도를 파악하기 위해 계측을 추가 by June */
-        recordPerfMetric(
-          "home.db_datetime_query.ms",
-          Date.now() - dbLoadStartedAt,
-          {
-            context: { usedDb: false, reason: "location_filter", limit },
-            logEvery: 3,
-          },
-        );
-        return {
-          usedDb: false as const,
-          photos: [] as Photo[],
-          dbHasMore: false,
-          nextAfter: after,
-          isIndexComplete: false,
-          totalCount: 0,
-        };
+        const remainingPlaces = await countPhotosMissingPlace();
+        if (remainingPlaces > 0) {
+          recordPerfMetric(
+            "home.db_datetime_query.ms",
+            Date.now() - dbLoadStartedAt,
+            {
+              context: {
+                usedDb: false,
+                reason: "place_backfill_pending",
+                remainingPlaces,
+                limit,
+              },
+              logEvery: 3,
+            },
+          );
+          return {
+            usedDb: false as const,
+            photos: [] as Photo[],
+            dbHasMore: false,
+            nextAfter: after,
+            isIndexComplete: false,
+            totalCount: 0,
+          };
+        }
       }
 
       const metadataCount = await getPhotoMetadataCount();
@@ -3616,11 +3651,19 @@ export default function HomeScreen() {
       setDbIndexComplete(isIndexComplete);
       const queryDateStartMs = dayStartMs(currentFilter.dateStart);
       const queryDateEndNextMs = dayEndNextMs(currentFilter.dateEnd);
+      /* 2026.10.18 국가/도시 조건을 SQL로 내림 — UI는 표시명으로 선택하므로 A3 코드로 역변환 by Claude */
+      const placeFilter = {
+        countryCodes: currentFilter.countries
+          .map((name) => countryCodeForDisplayName(name))
+          .filter((code): code is string => !!code),
+        cities: currentFilter.cities,
+      };
       const totalCount = await countPhotoMetadataByDateTime({
         dateStartMs: queryDateStartMs,
         dateEndNextMs: queryDateEndNextMs,
         timeStart: currentFilter.timeStart,
         timeEnd: currentFilter.timeEnd,
+        place: placeFilter,
       });
 
       console.log("[PhotoLoad] db query range", {
@@ -3643,6 +3686,7 @@ export default function HomeScreen() {
         limit: limit + 1,
         /* 2026.09.02 append 이어읽기를 OFFSET 대신 keyset 커서로 수행해 백그라운드 인덱싱 중 페이지 밀림을 방지 by Claude */
         after,
+        place: placeFilter,
       });
 
       /* 2026.04.22 limit+1 조회 결과에서 초과 1건 존재 여부를 hasMore로 변환해 스크롤 추가 로딩 가능 여부를 계산하기 위해 추가 by June */
@@ -5566,6 +5610,148 @@ export default function HomeScreen() {
     [refreshSearchWorkEstimate],
   );
 
+  /* 2026.10.18 장소(국가코드/도시) 보강 루프 — 전부 로컬 연산(폴리곤 레이캐스트 + 도시 그리드 +
+     지오코드 캐시 배치 읽기)이라 네이티브/네트워크 호출이 없음. 이 값이 채워져야 위치 필터가
+     SQL로 처리됨 by Claude */
+  const placeBackfillRunningRef = useRef(false);
+
+  const startPlaceBackfill = useCallback((onDone: () => void) => {
+    if (placeBackfillRunningRef.current) return;
+    placeBackfillRunningRef.current = true;
+
+    const sleep = (ms: number) =>
+      new Promise<void>((resolve) => setTimeout(resolve, ms));
+
+    void (async () => {
+      let errorStreak = 0;
+      try {
+        while (!backgroundMetadataSyncCancelledRef.current) {
+          if (requestInFlightRef.current || foregroundBusyRef.current) {
+            await sleep(PLACE_BACKFILL_BUSY_RETRY_MS);
+            continue;
+          }
+          let pending: {
+            assetId: string;
+            latitude: number;
+            longitude: number;
+          }[] = [];
+          try {
+            pending = await getPhotosMissingPlace(PLACE_BACKFILL_BATCH);
+          } catch (err) {
+            errorStreak += 1;
+            console.log("place backfill query error:", err);
+            if (errorStreak >= PLACE_BACKFILL_MAX_ERROR_STREAK) break;
+            await sleep(PLACE_BACKFILL_IDLE_DELAY_MS);
+            continue;
+          }
+          if (pending.length === 0) break;
+
+          /* 좌표 → 국가코드/근사도시 (로컬), 정밀도시는 지오코드 캐시에서 1회 배치 조회 */
+          const keys = new Set<string>();
+          for (const row of pending) {
+            keys.add(toGeoKey(row.latitude, row.longitude, 2));
+          }
+          let cachedPlaces = new Map<
+            string,
+            { country: string | null; city: string | null }
+          >();
+          try {
+            cachedPlaces = await getGeocodeCacheByKeys([...keys]);
+          } catch {}
+
+          const writes = pending.map((row) => {
+            const code = lookupCountryCode(row.latitude, row.longitude);
+            const cached = cachedPlaces.get(
+              toGeoKey(row.latitude, row.longitude, 2),
+            );
+            return {
+              assetId: row.assetId,
+              /* 판별 불가(경계/해상) 좌표는 'XX'로 확정해 매 배치마다 재시도되지 않게 함 by Claude */
+              countryCode: code ?? "XX",
+              city: cached?.city ?? null,
+              cityApprox: code
+                ? approxCityForCoords(row.latitude, row.longitude, code)
+                : null,
+            };
+          });
+
+          try {
+            await updatePhotoPlacesByAssetIds(writes);
+            errorStreak = 0;
+          } catch (err) {
+            errorStreak += 1;
+            console.log("place backfill write error:", err);
+            if (errorStreak >= PLACE_BACKFILL_MAX_ERROR_STREAK) break;
+          }
+
+          await sleep(PLACE_BACKFILL_IDLE_DELAY_MS);
+        }
+      } finally {
+        placeBackfillRunningRef.current = false;
+        if (!backgroundMetadataSyncCancelledRef.current) onDone();
+      }
+    })();
+  }, []);
+
+  /* 2026.10.18 지오코드 캐시의 정밀 도시를 사진 행에 영속화하는 1회 스윕 —
+     커서로 테이블을 한 바퀴만 돌아 종료 보장. 미해결 좌표는 다음 스윕에서 다시 시도 by Claude */
+  const cityPersistRunningRef = useRef(false);
+
+  const persistCachedCities = useCallback(async () => {
+    if (cityPersistRunningRef.current) return;
+    cityPersistRunningRef.current = true;
+    const sleep = (ms: number) =>
+      new Promise<void>((resolve) => setTimeout(resolve, ms));
+    try {
+      let afterTakenAt: number | null = null;
+      let written = 0;
+      while (!backgroundMetadataSyncCancelledRef.current) {
+        if (requestInFlightRef.current || foregroundBusyRef.current) {
+          await sleep(PLACE_BACKFILL_BUSY_RETRY_MS);
+          continue;
+        }
+        const page = await getPhotosMissingCityPage({
+          afterTakenAt,
+          limit: PLACE_BACKFILL_BATCH,
+        });
+        if (page.length === 0) break;
+        afterTakenAt = page[page.length - 1].takenAt;
+
+        const keys = new Set<string>();
+        for (const row of page) keys.add(toGeoKey(row.latitude, row.longitude, 2));
+        let cached = new Map<
+          string,
+          { country: string | null; city: string | null }
+        >();
+        try {
+          cached = await getGeocodeCacheByKeys([...keys]);
+        } catch {}
+
+        const writes = page
+          .map((row) => ({
+            assetId: row.assetId,
+            countryCode: null,
+            city:
+              cached.get(toGeoKey(row.latitude, row.longitude, 2))?.city ?? null,
+            cityApprox: null,
+          }))
+          .filter((row) => !!row.city);
+        if (writes.length > 0) {
+          await updatePhotoPlacesByAssetIds(writes);
+          written += writes.length;
+        }
+        await sleep(PLACE_BACKFILL_IDLE_DELAY_MS);
+      }
+      if (written > 0) {
+        console.log("[CityPersist] rows updated", { written });
+      }
+    } catch (err) {
+      console.log("city persist error:", err);
+    } finally {
+      cityPersistRunningRef.current = false;
+    }
+  }, []);
+
   const geocodeDrainStartedRef = useRef(false);
 
   const startGeocodeQueueDrain = useCallback(() => {
@@ -5628,9 +5814,15 @@ export default function HomeScreen() {
       if (!backgroundMetadataSyncCancelledRef.current) {
         void refreshSearchWorkEstimate(filterRef.current);
         void applyGeocodeCacheToLoadedPhotos();
+        /* 2026.10.18 새로 해소된 정밀 도시를 사진 행에 영속화 — 다음 세션에도 유지 by Claude */
+        void persistCachedCities();
       }
     })();
-  }, [applyGeocodeCacheToLoadedPhotos, refreshSearchWorkEstimate]);
+  }, [
+    applyGeocodeCacheToLoadedPhotos,
+    persistCachedCities,
+    refreshSearchWorkEstimate,
+  ]);
 
   /* 2026.09.02 첫 페인트 이후 사진 메타데이터 인덱스를 백그라운드에서 완성하는 폴라이트 드레인 루프.
      a42ee9a에서 제거된 상시 동기화의 스케줄링 재설계: 초기 로드 완료 후 시작, 사용자 요청 진행 중에는 양보,
@@ -5700,12 +5892,25 @@ export default function HomeScreen() {
       /* 2026.10.12 메타데이터 패스 → 좌표 back-fill → geocode 드레인 순으로 직렬 실행
          (백그라운드 루프가 서로 겹치지 않게 유지) by Claude */
       startCoordBackfill(() => {
-        if (!backgroundMetadataSyncCancelledRef.current) {
-          startGeocodeQueueDrain();
-        }
+        if (backgroundMetadataSyncCancelledRef.current) return;
+        /* 2026.10.18 좌표 → 장소 → 지오코드 순으로 직렬 실행 by Claude */
+        startPlaceBackfill(() => {
+          if (backgroundMetadataSyncCancelledRef.current) return;
+          /* 이전 세션에서 쌓인 캐시를 먼저 반영한 뒤 남은 좌표를 지오코딩 by Claude */
+          void persistCachedCities().finally(() => {
+            if (!backgroundMetadataSyncCancelledRef.current) {
+              startGeocodeQueueDrain();
+            }
+          });
+        });
       });
     })();
-  }, [startCoordBackfill, startGeocodeQueueDrain]);
+  }, [
+    startCoordBackfill,
+    startPlaceBackfill,
+    persistCachedCities,
+    startGeocodeQueueDrain,
+  ]);
 
   useEffect(() => {
     runMetadataSyncLoopRef.current = runMetadataSyncLoop;
