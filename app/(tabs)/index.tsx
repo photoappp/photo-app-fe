@@ -148,9 +148,9 @@ const SEARCH_ESTIMATE_RECOVERY_S_PER_PHOTO = 0.03;
 const SEARCH_ESTIMATE_ROW_S_PER_ROW = 0.0004;
 const SEARCH_ESTIMATE_MAX_S = 300;
 /* 2026.10.11 적응형 검색 팝업: 예상 시간이 이 값 미만(＆인덱스 완성)이면 Start/진행 팝업 없이 조용히 실행 by Claude */
-const SEARCH_PROMPT_SKIP_UNDER_S = 7;
-/* 2026.10.11 인덱스 미완성(콜드) 구간: 범위 사진 수가 이 값 이하면 1~2 페이지로 끝나므로 팝업 생략 by Claude */
-const COLD_QUIET_MAX_PHOTOS = 200;
+/* 2026.10.19 예상 시간 프롬프트(Start/Later)는 더 이상 노출하지 않음 — 검색이 즉시 시작되고,
+   진행 모달은 실제로 오래 걸릴 때만(아래 지연 이후) 표시 by Claude */
+const SEARCH_PROGRESS_MODAL_DELAY_MS = 1500;
 /* 콜드 스캔의 장당 예상 비용(페이지 fetch+hydrate 기준) — 콜드 예상 시간 표기를 정직하게 만들기 위한 계수 by Claude */
 const SEARCH_ESTIMATE_COLD_S_PER_PHOTO = 0.005;
 
@@ -1023,23 +1023,8 @@ export default function HomeScreen() {
     void refreshSearchWorkEstimate(filter);
   }, [filter, refreshSearchWorkEstimate]);
 
-  /* 2026.10.11 적응형 팝업: 예상 <5초 & 인덱스 완성이면 Start/진행 팝업 없이 조용히 실행.
-     콜드 구간/도시 필터 등 느릴 수 있는 케이스는 기존 팝업+취소 유지 by Claude */
-  const [quietLocationSearch, setQuietLocationSearch] = useState(false);
-  const canSkipSearchPrompt = useMemo(() => {
-    if (!searchWorkEstimate) return false;
-    if (searchWorkEstimate.signature !== searchEstimateSignature(filter)) {
-      return false;
-    }
-    if (searchWorkEstimate.indexComplete) {
-      return searchWorkEstimate.seconds < SEARCH_PROMPT_SKIP_UNDER_S;
-    }
-    /* 2026.10.11 콜드: 범위 실측 건수가 작으면(1~2 페이지) 팝업 없이 진행, 크면 정직한 예상 시간과 함께 팝업 by Claude */
-    return (
-      searchWorkEstimate.coldRangeCount !== null &&
-      searchWorkEstimate.coldRangeCount <= COLD_QUIET_MAX_PHOTOS
-    );
-  }, [filter, searchEstimateSignature, searchWorkEstimate]);
+  /* 2026.10.19 Start/Later 프롬프트 제거로 '스킵 가능 여부' 판단이 더 이상 필요 없음.
+     검색은 항상 즉시 실행되며, 느린 경우에만 지연된 진행 모달이 표시됨 by Claude */
 
   const estimateIncrementalLocationSearchSeconds = useCallback(
     (currentFilter: FilterState) => {
@@ -2626,7 +2611,6 @@ export default function HomeScreen() {
      광고 게이트(ad-required)는 이 앞 단계에서 기존대로 처리되므로 영향 없음 by Claude */
   useEffect(() => {
     if (locationSearchWorkflowStatus !== "search-prompt") return;
-    if (!canSkipSearchPrompt) return;
     /* 2026.10.18 같은 필터에서는 자동 시작을 1회로 제한.
        준비 중 예외가 나면 catch에서 idle로 돌아가고 → 재무장 → 자동 시작이 즉시 반복되어
        검색이 무한히 재실행되며 앱이 먹통이 되는 문제가 있었음(테스터 리포트) by Claude */
@@ -2636,23 +2620,26 @@ export default function HomeScreen() {
       return;
     }
     autoStartedSearchSignatureRef.current = currentDateTimeFilterSignature;
-    setQuietLocationSearch(true);
     void handleLocationSearchConfirm();
   }, [
     locationSearchWorkflowStatus,
-    canSkipSearchPrompt,
     currentDateTimeFilterSignature,
     handleLocationSearchConfirm,
   ]);
 
-  /* 2026.10.11 워크플로가 끝나면(완료/취소/오류/백그라운드 중단) quiet 모드 해제 by Claude */
+  /* 2026.10.19 진행 모달은 '실제로 오래 걸릴 때만' 표시 — 1초급 검색에서 모달이 깜빡이지 않도록
+     preparing이 일정 시간 이상 지속될 때만 노출(취소 버튼은 그대로 유지) by Claude */
+  const [showSearchProgressModal, setShowSearchProgressModal] = useState(false);
   useEffect(() => {
-    if (
-      locationSearchWorkflowStatus !== "preparing" &&
-      locationSearchWorkflowStatus !== "search-prompt"
-    ) {
-      setQuietLocationSearch(false);
+    if (locationSearchWorkflowStatus !== "preparing") {
+      setShowSearchProgressModal(false);
+      return;
     }
+    const timer = setTimeout(
+      () => setShowSearchProgressModal(true),
+      SEARCH_PROGRESS_MODAL_DELAY_MS,
+    );
+    return () => clearTimeout(timer);
   }, [locationSearchWorkflowStatus]);
 
   const handleLocationSearchDecline = useCallback(async () => {
@@ -6604,11 +6591,9 @@ export default function HomeScreen() {
     visibleLocationPreparing;
   const locationPreparingMessage = "Preparing location list. Please wait...";
   /* 2026.06.23 ad-required(한 달 초과 게이트)는 이제 공용 리워드 팝업이 처리하므로 위치 검색 모달에서는 제외 by yen */
+  /* 2026.10.19 Start/Later 프롬프트는 렌더하지 않고, 지연 후의 진행 모달만 표시 by Claude */
   const shouldShowLocationSearchModal =
-    !quietLocationSearch &&
-    ((locationSearchWorkflowStatus === "search-prompt" &&
-      !canSkipSearchPrompt) ||
-      locationSearchWorkflowStatus === "preparing");
+    locationSearchWorkflowStatus === "preparing" && showSearchProgressModal;
   const effectiveLocationSearchEstimatedSeconds =
     locationSearchEstimatedSeconds > 0
       ? locationSearchEstimatedSeconds
