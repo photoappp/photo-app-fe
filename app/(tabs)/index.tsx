@@ -693,6 +693,8 @@ export default function HomeScreen() {
 
   const lastDeclinedLocationSearchSignatureRef = useRef<string | null>(null);
   const lastPreparedLocationSearchSignatureRef = useRef<string | null>(null);
+  /* 2026.10.18 적응형 자동 시작이 같은 필터에서 반복 실행되지 않도록 하는 가드 by Claude */
+  const autoStartedSearchSignatureRef = useRef<string | null>(null);
   const locationSearchResumeSignatureRef = useRef<string | null>(null);
   /* 2026.06.23 해금 상태를 공용 리워드 게이트로 통합 — 광고 시청 시 모든 기능이 2시간 해금되고 위치 검색 게이트도 같은 해금을 공유 by yen */
   const {
@@ -2597,13 +2599,21 @@ export default function HomeScreen() {
       finalizeLocationSearchPreparation(deferredEntryPoint);
     } catch (error) {
       if (runToken !== locationSearchRunTokenRef.current) return;
-      console.log("location search preparation error:", error);
+      /* 2026.10.18 실패 시 같은 시그니처로 즉시 재무장되어 프롬프트/자동시작이 반복되지 않도록 표시.
+         사용자는 필터를 다시 바꾸면 재시도할 수 있음 by Claude */
+      console.log("[LocationSearch] preparation failed", {
+        signature: currentDateTimeFilterSignature,
+        error: String(error),
+      });
+      lastDeclinedLocationSearchSignatureRef.current =
+        currentDateTimeFilterSignature;
       setLocationSearchWorkflowStatus("idle");
       resetLocationSearchProgress();
       setDeferredLocationFeatureOpen(null);
       setLocationSearchEntryPoint(null);
     }
   }, [
+    currentDateTimeFilterSignature,
     currentEstimatedLocationSearchSeconds,
     deferredLocationFeatureOpen,
     finalizeLocationSearchPreparation,
@@ -2617,11 +2627,21 @@ export default function HomeScreen() {
   useEffect(() => {
     if (locationSearchWorkflowStatus !== "search-prompt") return;
     if (!canSkipSearchPrompt) return;
+    /* 2026.10.18 같은 필터에서는 자동 시작을 1회로 제한.
+       준비 중 예외가 나면 catch에서 idle로 돌아가고 → 재무장 → 자동 시작이 즉시 반복되어
+       검색이 무한히 재실행되며 앱이 먹통이 되는 문제가 있었음(테스터 리포트) by Claude */
+    if (
+      autoStartedSearchSignatureRef.current === currentDateTimeFilterSignature
+    ) {
+      return;
+    }
+    autoStartedSearchSignatureRef.current = currentDateTimeFilterSignature;
     setQuietLocationSearch(true);
     void handleLocationSearchConfirm();
   }, [
     locationSearchWorkflowStatus,
     canSkipSearchPrompt,
+    currentDateTimeFilterSignature,
     handleLocationSearchConfirm,
   ]);
 
