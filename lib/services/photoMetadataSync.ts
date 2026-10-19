@@ -4,7 +4,10 @@ import * as MediaLibrary from "expo-media-library";
 import {
   PhotoMetadataRow,
   ensureTakenMinutesMatchTimeZone,
+  getNativeSyncCheckpoint,
   getPhotoMetadataCount,
+  markPhotoMetadataDeletedByAssetIds,
+  setNativeSyncCheckpoint,
   getPhotoSyncState,
   initPhotoMetadataDb,
   markPhotoMetadataDeletedBefore,
@@ -12,6 +15,10 @@ import {
   upsertPhotoMetadataRows,
 } from "@/lib/db/photoMetadataDb";
 import { recordPerfMetric } from "@/lib/services/perfMetrics";
+import {
+  librarySync,
+  type LibrarySyncAsset,
+} from "@/lib/services/librarySync";
 
 /* 2026.04.15 동기화 페이지 크기를 상수화해 앱 성능 이슈 시 운영값을 안전하게 조정하기 위해 추가 by June */
 const SYNC_PAGE_SIZE = 300;
@@ -95,6 +102,98 @@ export const upsertPhotoMetadataFromAssets = async (
   );
 };
 
+/* 2026.10.18 네이티브 모듈이 알려준 자산을 기존 row 형태로 변환 by Claude */
+const nativeAssetToRow = (asset: LibrarySyncAsset): PhotoMetadataRow => {
+  const now = Date.now();
+  const takenAt =
+    asset.creationTime && asset.creationTime > 0
+      ? Math.round(asset.creationTime)
+      : asset.modificationTime && asset.modificationTime > 0
+        ? Math.round(asset.modificationTime)
+        : null;
+  const latitude = Number(asset.latitude);
+  const longitude = Number(asset.longitude);
+  const hasCoords = Number.isFinite(latitude) && Number.isFinite(longitude);
+
+  return {
+    assetId: asset.id,
+    uri: asset.uri,
+    takenAt,
+    takenMinute: getTakenMinute(takenAt),
+    /* iOS는 bulk 응답에 좌표가 포함되므로 그대로 저장 — per-asset 조회가 줄어듦 */
+    latitude: hasCoords ? latitude : null,
+    longitude: hasCoords ? longitude : null,
+    createdAt: now,
+    updatedAt: now,
+    isDeleted: 0,
+  };
+};
+
+/* 2026.10.18 네이티브 증분(delta) 동기화 — 지난 실행 이후 바뀐 자산만 처리.
+   delta가 아닌 모드(최초 실행/토큰 만료/권한 변경)에서는 세션을 닫고 false를 반환해
+   기존 JS 전수 패스로 폴백하되, 그때 받은 체크포인트를 저장해 다음 세션부터 증분이 되게 함 by Claude */
+const runNativeDeltaSync = async (): Promise<boolean> => {
+  if (!librarySync) return false;
+
+  const startedAt = Date.now();
+  let handle: string | null = null;
+  try {
+    const saved = await getNativeSyncCheckpoint();
+    const plan = await librarySync.begin(saved, false);
+    handle = plan.handle;
+
+    if (plan.mode !== "delta") {
+      /* 전수 패스는 기존 JS 경로가 담당 — 체크포인트만 선반영 */
+      if (plan.checkpoint) await setNativeSyncCheckpoint(plan.checkpoint);
+      await librarySync.close(handle);
+      handle = null;
+      return false;
+    }
+
+    let upserted = 0;
+    let deleted = 0;
+    for (;;) {
+      const page = await librarySync.read(handle, SYNC_PAGE_SIZE);
+      if (page.assets.length > 0) {
+        await upsertPhotoMetadataRows(page.assets.map(nativeAssetToRow));
+        upserted += page.assets.length;
+      }
+      if (page.deleted.length > 0) {
+        deleted += await markPhotoMetadataDeletedByAssetIds(page.deleted);
+      }
+      if (page.done) break;
+      if (
+        page.assets.length === 0 &&
+        page.deleted.length === 0 &&
+        page.ids.length === 0
+      ) {
+        throw new Error("native sync pagination stalled");
+      }
+    }
+
+    const checkpoint = await librarySync.finish(handle);
+    await setNativeSyncCheckpoint(checkpoint);
+    await librarySync.close(handle);
+    handle = null;
+
+    recordPerfMetric("metadata.native_delta.ms", Date.now() - startedAt, {
+      context: { upserted, deleted },
+      logEvery: 1,
+    });
+    console.log("[NativeSync] delta applied", { upserted, deleted });
+    return true;
+  } catch (err) {
+    console.log("native delta sync error:", err);
+    if (handle && librarySync) {
+      try {
+        await librarySync.close(handle);
+      } catch {}
+    }
+    /* 실패 시 기존 JS 경로로 폴백 */
+    return false;
+  }
+};
+
 /* 2026.04.15 증분 동기화를 백그라운드에서 일정 페이지씩 진행해 UI 블로킹 없이 인덱싱을 누적하기 위해 추가 by June */
 export const syncPhotoMetadataInBackground = async (params?: {
   maxPages?: number;
@@ -132,6 +231,22 @@ export const syncPhotoMetadataInBackground = async (params?: {
       }
     } catch (err) {
       console.log("timezone recompute check error:", err);
+    }
+
+    /* 2026.10.18 네이티브 증분 동기화가 가능하면 변경분만 처리하고 종료 —
+       라이브러리 전수 재탐색과 그로 인한 사진 API 경합을 없앰.
+       단, JS 전수 패스가 아직 끝나지 않은 상태(hasNextPage=true)에서는 인덱스가 불완전하므로
+       델타로 건너뛰지 않는다. 전수 패스가 완료된 이후 세션부터 증분이 적용됨 by Claude */
+    const stateBeforeSync = await getPhotoSyncState();
+    if (!stateBeforeSync.hasNextPage && (await runNativeDeltaSync())) {
+      /* 증분 적용 후에도 인덱스는 완료 상태로 유지 — 드레인 루프가 즉시 종료되도록 함 */
+      await updatePhotoSyncState({
+        nextCursor: null,
+        hasNextPage: false,
+        lastSyncedAt: Date.now(),
+        passStartedAt: null,
+      });
+      return;
     }
 
     const maxPages = params?.maxPages ?? 3;

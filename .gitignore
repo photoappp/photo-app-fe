@@ -39,7 +39,9 @@ yarn-error.*
 app-example
 
 # Ignore prebuilt native folders
-android/
+# 2026.10.18 최상위 prebuild 산출물만 제외하도록 한정 — 'android/'는 하위 경로의
+# 로컬 네이티브 모듈 소스(modules/*/android)까지 제외해버려 빌드에서 누락됨 by Claude
+/android/
 
 # ================================
 # iOS (필수 보존 파일 제외)

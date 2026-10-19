@@ -4,7 +4,7 @@ import * as SQLite from "expo-sqlite";
 /* 2026.04.15 메타데이터 전용 DB 파일명/버전을 고정해 추후 마이그레이션 기준점을 만들기 위해 추가 by June */
 const DB_NAME = "picqly_metadata.db";
 /* 2026.04.15 스키마 변경 시 버전 증가를 통해 구조 변경을 안전하게 적용하기 위해 추가 by June */
-const DB_SCHEMA_VERSION = 7;
+const DB_SCHEMA_VERSION = 8;
 
 /* 2026.04.15 DB 핸들을 싱글톤으로 재사용해 중복 open 비용과 상태 불일치를 줄이기 위해 추가 by June */
 let dbPromise: Promise<SQLite.SQLiteDatabase> | null = null;
@@ -150,6 +150,8 @@ export const initPhotoMetadataDb = async () => {
         pass_started_at INTEGER,
         /* 2026.10.04 taken_minute 계산 기준 시간대를 보존해 기기 시간대 변경 시 일괄 재계산 트리거로 사용 by Claude */
         time_zone TEXT,
+        /* 2026.10.18 네이티브 증분 동기화(변경 토큰/generation) 체크포인트 by Claude */
+        native_checkpoint TEXT,
         updated_at INTEGER NOT NULL
       );
 
@@ -271,6 +273,20 @@ export const initPhotoMetadataDb = async () => {
       await db.execAsync(`
         ALTER TABLE photo_sync_state ADD COLUMN time_zone TEXT;
       `);
+    }
+
+    /* 2026.10.18 기존 설치본에 네이티브 동기화 체크포인트 컬럼 추가 by Claude */
+    const syncStateColumns = await db.getAllAsync<{ name: string }>(
+      `PRAGMA table_info(photo_sync_state)`
+    );
+    if (
+      !syncStateColumns.some(
+        (c: { name: string }) => c.name === "native_checkpoint"
+      )
+    ) {
+      await db.execAsync(
+        `ALTER TABLE photo_sync_state ADD COLUMN native_checkpoint TEXT;`
+      );
     }
 
     /* 2026.10.18 기존 설치본에 장소 컬럼/인덱스를 추가 (SQL 위치 필터용) by Claude */
@@ -1202,6 +1218,55 @@ export const queryPhotoMetadataByDateTime = async (params: {
 };
 
 /* 2026.10.04 검색 예상 시간을 '남은 실제 작업량'으로 계산하기 위해 범위 내 좌표 미보유 사진 수를 조회 by Claude */
+/* 2026.10.18 네이티브 증분 동기화 체크포인트 읽기/쓰기 by Claude */
+export const getNativeSyncCheckpoint = async () => {
+  await initPhotoMetadataDb();
+  const db = await getDb();
+  const row = await db.getFirstAsync<{ native_checkpoint: string | null }>(
+    `SELECT native_checkpoint FROM photo_sync_state WHERE id = 1`
+  );
+  return row?.native_checkpoint ?? null;
+};
+
+export const setNativeSyncCheckpoint = async (checkpoint: string | null) => {
+  await initPhotoMetadataDb();
+  const db = await getDb();
+  await enqueueWrite(async () => {
+    await db.runAsync(
+      `UPDATE photo_sync_state SET native_checkpoint = ?, updated_at = ? WHERE id = 1`,
+      checkpoint,
+      Date.now()
+    );
+  });
+};
+
+/* 2026.10.18 네이티브 델타가 알려준 삭제 자산을 즉시 soft-delete 처리 by Claude */
+export const markPhotoMetadataDeletedByAssetIds = async (assetIds: string[]) => {
+  const unique = [...new Set(assetIds)].filter(Boolean);
+  if (unique.length === 0) return 0;
+  await initPhotoMetadataDb();
+  const db = await getDb();
+  let changes = 0;
+  await enqueueWrite(async () => {
+    for (let i = 0; i < unique.length; i += 500) {
+      const chunk = unique.slice(i, i + 500);
+      const placeholders = chunk.map(() => "?").join(",");
+      const result = await db.runAsync(
+        `
+        UPDATE photo_metadata
+        SET is_deleted = 1, updated_at = ?
+        WHERE is_deleted = 0
+          AND asset_id IN (${placeholders})
+        `,
+        Date.now(),
+        ...chunk
+      );
+      changes += result.changes ?? 0;
+    }
+  });
+  return changes;
+};
+
 /* 2026.10.12 좌표 미보유 사진을 백그라운드에서 일괄 back-fill 하기 위해 최신순으로 조회 by Claude */
 export const getPhotosMissingCoords = async (limit: number) => {
   await initPhotoMetadataDb();
