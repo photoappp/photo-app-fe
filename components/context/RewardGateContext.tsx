@@ -5,6 +5,7 @@
        3) 그 외에는 리워드 팝업을 띄우고, 광고를 보면 2시간 해금 후 통과 / 닫으면 취소
    - 해금 시각(unlockedUntil)을 단일 진실원천으로 두어 기존 위치 검색 게이트와 통합 */
 import AsyncStorage from "@react-native-async-storage/async-storage";
+import { AppState } from "react-native";
 import React, {
   createContext,
   ReactNode,
@@ -112,10 +113,34 @@ export function RewardGateProvider({ children }: { children: ReactNode }) {
         adInFlightRef.current = false;
         setAdLoading(false);
         if (earned) {
-          // 보상 획득 → 해금은 onRewardEarned에서 처리, 여기서 팝업 닫고 통과
-          finishPending(true);
+          /* 2026.10.11 광고 Activity가 닫히는 도중(CLOSED 직후) 다음 Modal을 열면 Android에서
+             Modal 재부착과 충돌해 터치 먹통/크래시 발생 — 앱이 다시 active 상태가 된 뒤
+             여유를 두고 continuation을 실행하도록 변경 by Claude */
+          let settled = false;
+          const settle = () => {
+            if (settled) return;
+            settled = true;
+            finishPending(true);
+          };
+          if (AppState.currentState === "active") {
+            setTimeout(settle, 450);
+          } else {
+            const subscription = AppState.addEventListener("change", (state) => {
+              if (state !== "active") return;
+              subscription.remove();
+              setTimeout(settle, 450);
+            });
+            /* 이벤트 유실 대비 안전망 */
+            setTimeout(() => {
+              subscription.remove();
+              settle();
+            }, 5000);
+          }
+        } else {
+          /* 2026.10.11 광고 노출 전에 팝업을 미리 닫으므로(아래 handleWatchAd 수정),
+             보상 없이 닫은 경우 재시도/닫기를 고를 수 있게 팝업을 다시 띄움 by Claude */
+          setPopupVisible(true);
         }
-        // earned=false(보상 없이 닫음)면 팝업은 그대로 유지해 재시도/닫기를 선택하게 둠
       },
     });
     return teardown;
@@ -179,14 +204,20 @@ export function RewardGateProvider({ children }: { children: ReactNode }) {
     if (isRewardedAdReady()) {
       adInFlightRef.current = true;
       setAdLoading(true);
-      const shown = showRewardedAd();
-      if (!shown) {
-        // 준비됐다고 봤지만 노출 실패 → 막히지 않도록 대체 해금
-        adInFlightRef.current = false;
-        setAdLoading(false);
-        void grantUnlock();
-        finishPending(true);
-      }
+      /* 2026.10.11 광고 Activity 위로 RN Modal이 남아 있으면 복귀 시 재부착 충돌로 터치 먹통/크래시 —
+         팝업을 먼저 닫고(dismiss 완료 여유 350ms) 광고를 띄움. pending resolver는 유지되어
+         광고 종료 후 onClosed에서 계속 진행 by Claude */
+      setPopupVisible(false);
+      setTimeout(() => {
+        const shown = showRewardedAd();
+        if (!shown) {
+          // 준비됐다고 봤지만 노출 실패 → 막히지 않도록 대체 해금
+          adInFlightRef.current = false;
+          setAdLoading(false);
+          void grantUnlock();
+          finishPending(true);
+        }
+      }, 350);
       return;
     }
 

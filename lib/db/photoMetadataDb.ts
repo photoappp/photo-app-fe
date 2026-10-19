@@ -664,6 +664,8 @@ export const getDistinctPhotoCoords = async () => {
     WHERE is_deleted = 0
       AND latitude IS NOT NULL
       AND longitude IS NOT NULL
+      /* 2026.10.12 back-fill이 'GPS 없음'을 0/0으로 표시하므로 지오코딩 시딩 대상에서 제외 by Claude */
+      AND NOT (latitude = 0 AND longitude = 0)
     `
   );
   return rows;
@@ -761,6 +763,31 @@ export const resetStuckGeocodeJobs = async () => {
   });
 
   return { resetRunning, resetFailed };
+};
+
+/* 2026.10.11 보이는 사진의 geo-key를 큐 앞으로 당기기 위해 추가 — claim이 updated_at ASC 순서라 0으로 당기면 우선 처리됨 by Claude */
+export const prioritizeGeocodeJobs = async (geoKeys: string[]) => {
+  const uniqueKeys = [...new Set(geoKeys)].filter(Boolean);
+  if (uniqueKeys.length === 0) return;
+
+  await initPhotoMetadataDb();
+  const db = await getDb();
+
+  await enqueueWrite(async () => {
+    for (let i = 0; i < uniqueKeys.length; i += 500) {
+      const chunk = uniqueKeys.slice(i, i + 500);
+      const placeholders = chunk.map(() => "?").join(",");
+      await db.runAsync(
+        `
+        UPDATE geocode_jobs
+        SET updated_at = 0
+        WHERE status = 'pending'
+          AND geo_key IN (${placeholders})
+        `,
+        ...chunk
+      );
+    }
+  });
 };
 
 /* 2026.09.02 스로틀링 감지 시 재시도 카운트를 소모하지 않고 작업을 큐로 되돌리기 위해 추가 by Claude */
@@ -973,6 +1000,25 @@ export const queryPhotoMetadataByDateTime = async (params: {
 };
 
 /* 2026.10.04 검색 예상 시간을 '남은 실제 작업량'으로 계산하기 위해 범위 내 좌표 미보유 사진 수를 조회 by Claude */
+/* 2026.10.12 좌표 미보유 사진을 백그라운드에서 일괄 back-fill 하기 위해 최신순으로 조회 by Claude */
+export const getPhotosMissingCoords = async (limit: number) => {
+  await initPhotoMetadataDb();
+  const db = await getDb();
+  const rows = await db.getAllAsync<{ assetId: string }>(
+    `
+    SELECT asset_id as assetId
+    FROM photo_metadata
+    WHERE is_deleted = 0
+      AND latitude IS NULL
+      AND taken_at IS NOT NULL
+    ORDER BY taken_at DESC
+    LIMIT ?
+    `,
+    limit
+  );
+  return rows.map((row) => row.assetId);
+};
+
 export const countPhotosMissingCoordsByDateTime = async (params: {
   dateStartMs: number;
   dateEndNextMs: number;

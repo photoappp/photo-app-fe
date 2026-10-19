@@ -6,11 +6,13 @@ import { Photo } from "@/types/Photo";
 import { Ionicons } from "@expo/vector-icons";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 // import { useNavigation } from '@react-navigation/native';
+/* 2026.10.12 그리드 썸네일을 expo-image로 교체 — 메모리/디스크 캐시, 리스트 리사이클링, 재렌더 시 재요청 방지 by Claude */
+import { Image as ExpoImage } from "expo-image";
 import { LinearGradient } from "expo-linear-gradient";
 import * as Location from "expo-location";
 import * as MediaLibrary from "expo-media-library";
 import { useNavigation, useRouter } from "expo-router";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   ActivityIndicator,
   Alert,
@@ -60,7 +62,9 @@ import {
   getOldestPhotoTakenAt,
   getPhotoMetadataCount,
   getPhotoSyncState,
+  getPhotosMissingCoords,
   initPhotoMetadataDb,
+  prioritizeGeocodeJobs,
   type PhotoPageCursor,
   queryPhotoMetadataByDateTime,
   updatePhotoCoordinatesByAssetIds,
@@ -78,8 +82,16 @@ import {
   seedGeocodeJobsFromPhotoMetadata,
 } from "@/lib/services/geocodeJobWorker";
 /* 2026.10.04 좌표→국가 오프라인 판별(폴리곤) — 국가 표기는 지오코더 대신 이걸 우선 사용 by Claude */
-import { resolveCountryForCoords } from "@/lib/geo/countryLookup";
-import { setCountryDisplayLanguage } from "@/lib/geo/countryNames";
+import {
+  lookupCountryCode,
+  resolveCountryForCoords,
+} from "@/lib/geo/countryLookup";
+import {
+  countryDisplayName,
+  setCountryDisplayLanguage,
+} from "@/lib/geo/countryNames";
+/* 2026.10.12 좌표→근사 도시(영문) 플레이스홀더 — 정밀 도시 캐시 전까지 즉시 표시/필터용 by Claude */
+import { approxCityForCoords } from "@/lib/geo/cityLookup";
 
 /* 2026.09.02 keyset 페이지네이션 이어가기용: 이미 로드된 사진 중 가장 오래된 (takenAt, assetId) 커서 계산 헬퍼 by Claude */
 const oldestCursorOfPhotos = (
@@ -102,6 +114,17 @@ const oldestCursorOfPhotos = (
   return oldest;
 };
 
+/* 2026.10.12 좌표 back-fill이 'GPS 없음'을 0/0으로 표시하므로, DB row를 Photo로 변환할 때
+   정확히 0/0은 위치 없음으로 취급 — 지도에 Null Island 마커가 찍히는 것을 방지 by Claude */
+const dbLocationOrNull = (
+  latitude: number | null,
+  longitude: number | null,
+): { latitude: number; longitude: number } | null => {
+  if (typeof latitude !== "number" || typeof longitude !== "number") return null;
+  if (latitude === 0 && longitude === 0) return null;
+  return { latitude, longitude };
+};
+
 /* 2026.09.02 백그라운드 인덱싱 폴라이트 드레인 루프 운영값 by Claude */
 const BACKGROUND_SYNC_INITIAL_DELAY_MS = 3000;
 const BACKGROUND_SYNC_IDLE_DELAY_MS = 1500;
@@ -115,11 +138,33 @@ const MEDIA_LIBRARY_CHANGE_DEBOUNCE_MS = 1500;
 /* 2026.10.04 검색 예상 시간 공식 계수: 예상 = BASE + 좌표미보유수×RECOVERY + 전체행수×ROW.
    RECOVERY는 6-병렬 getAssetInfoAsync 1건의 실측 수준, ROW는 DB행 읽기/정렬/렌더 비용 by Claude */
 const SEARCH_ESTIMATE_BASE_S = 4;
-const SEARCH_ESTIMATE_RECOVERY_S_PER_PHOTO = 0.08;
+/* 2026.10.12 좌표 복구는 6-병렬이라 사진당 체감 비용은 호출 지연/동시성 — 직렬 가정(0.08)이 과대추정이라 보정 by Claude */
+const SEARCH_ESTIMATE_RECOVERY_S_PER_PHOTO = 0.03;
 const SEARCH_ESTIMATE_ROW_S_PER_ROW = 0.0004;
 const SEARCH_ESTIMATE_MAX_S = 300;
+/* 2026.10.11 적응형 검색 팝업: 예상 시간이 이 값 미만(＆인덱스 완성)이면 Start/진행 팝업 없이 조용히 실행 by Claude */
+const SEARCH_PROMPT_SKIP_UNDER_S = 7;
+/* 2026.10.11 인덱스 미완성(콜드) 구간: 범위 사진 수가 이 값 이하면 1~2 페이지로 끝나므로 팝업 생략 by Claude */
+const COLD_QUIET_MAX_PHOTOS = 200;
+/* 콜드 스캔의 장당 예상 비용(페이지 fetch+hydrate 기준) — 콜드 예상 시간 표기를 정직하게 만들기 위한 계수 by Claude */
+const SEARCH_ESTIMATE_COLD_S_PER_PHOTO = 0.005;
+
+/* 2026.10.11 검색 스트리밍: 첫 청크는 즉시 그릴 만큼 작게, 이후는 큰 청크로 이어붙임 by Claude */
+const SEARCH_FIRST_PAINT_COUNT = 120;
+const SEARCH_STREAM_CHUNK_COUNT = 600;
+
+/* 2026.10.11 첫 페인트 직후 가시 영역(첫 페이지)의 도시를 즉시 해소할 사진 수 — 측정용으로 상한 없음 by Claude */
+const FIRST_PAGE_CITY_COUNT = 100;
 
 /* 2026.09.02 geocode 큐 드레인 루프 운영값 — 메타데이터 인덱싱 완료 후에만 시작 by Claude */
+/* 2026.10.12 좌표 back-fill 루프: 인덱서가 타임스탬프만 적재하므로(Android는 bulk에 GPS 없음)
+   좌표 미보유 row가 영구히 남아 검색 예상 시간이 줄지 않던 문제를 해소 by Claude */
+const COORD_BACKFILL_BATCH = 24;
+const COORD_BACKFILL_CONCURRENCY = 6;
+const COORD_BACKFILL_IDLE_DELAY_MS = 800;
+const COORD_BACKFILL_BUSY_RETRY_MS = 1000;
+const COORD_BACKFILL_MAX_ERROR_STREAK = 3;
+
 const GEOCODE_DRAIN_INITIAL_DELAY_MS = 2000;
 const GEOCODE_DRAIN_IDLE_DELAY_MS = 1200;
 const GEOCODE_DRAIN_BUSY_RETRY_MS = 1000;
@@ -197,6 +242,107 @@ const getAssetIdFromPhUri = (uri: string): string | null => {
 };
 
 /** ---------- HomeScreen ---------- */
+/* 2026.10.12 그리드 셀을 모듈 스코프의 memo 컴포넌트로 분리 —
+   스트리밍 청크/도시 갱신/썸네일 onLoad 등 상태 변화마다 보이는 셀 전체가 재렌더되던 비용 제거.
+   props가 바뀐 셀만 재렌더됨 by Claude */
+type PhotoGridCellProps = {
+  item: Photo;
+  index: number;
+  isReady: boolean;
+  skeletonTranslateX: Animated.AnimatedInterpolation<string | number>;
+  onPress: (item: Photo, index: number) => void;
+  onReady: (uri: string) => void;
+};
+
+const PhotoGridCell = React.memo(function PhotoGridCell({
+  item,
+  index,
+  isReady,
+  skeletonTranslateX,
+  onPress,
+  onReady,
+}: PhotoGridCellProps) {
+  /* 2026.10.18 iOS ph:// URI를 expo-image가 PhotoLibraryAssetLoader(PHImageManager)로 직접 로드 —
+     getAssetInfoAsync로 localUri를 미리 해상하던 단계를 제거. 그 경로는 사진당 네이티브 왕복이고
+     iCloud 최적화 보관 시 원본 다운로드까지 유발해 첫 화면이 수십 초 걸리던 원인.
+     OS가 뷰 크기에 맞춘 썸네일을 돌려주므로 원본 풀해상도 디코딩도 사라짐 by Claude */
+  const shouldShowThumbnailPlaceholder = !isReady;
+
+  return (
+    <TouchableOpacity
+      style={styles.imageContainer}
+      activeOpacity={0.9}
+      onPress={() => onPress(item, index)}
+    >
+      <View style={styles.imageFrame}>
+        {
+          /* 2026.06.03 일반 URI도 실제 onLoad 전까지는 placeholder를 남겨 흰 박스처럼 보이지 않도록 조정 by June */
+          <ExpoImage
+            source={{
+              uri: item.uri,
+              /* 사진이 편집되면 캐시가 무효화되도록 식별자+시각을 캐시 키로 사용 by Claude */
+              cacheKey: `${item.assetId ?? item.uri}:${item.takenAt ?? 0}`,
+            }}
+            style={[
+              styles.image,
+              styles.imageLayer,
+              !isReady && styles.imageHidden,
+            ]}
+            contentFit="cover"
+            /* 리스트 재활용 시 이전 이미지가 잠깐 보이는 것을 방지 */
+            recyclingKey={item.uri}
+            cachePolicy="memory-disk"
+            transition={0}
+            onLoad={() => onReady(item.uri)}
+            onError={() => onReady(item.uri)}
+          />
+        }
+        {shouldShowThumbnailPlaceholder ? (
+          /* 2026.04.28 빈 URI 전달 경고를 없애기 위해 미해결 ph:// 썸네일은 임시 플레이스홀더로 렌더링 by June */
+          <View
+            style={[
+              styles.image,
+              styles.imagePlaceholder,
+              styles.imagePlaceholderLayer,
+            ]}
+          >
+            <LinearGradient
+              colors={["#F4F7FB", "#EAEFF6", "#F7FAFC"]}
+              start={{ x: 0, y: 0 }}
+              end={{ x: 1, y: 1 }}
+              style={StyleSheet.absoluteFillObject}
+            />
+            <View style={styles.imagePlaceholderTint} />
+            <View style={styles.imagePlaceholderBars}>
+              <View
+                style={[styles.imagePlaceholderBar, styles.imagePlaceholderBarWide]}
+              />
+              <View
+                style={[styles.imagePlaceholderBar, styles.imagePlaceholderBarMedium]}
+              />
+            </View>
+            <Animated.View
+              pointerEvents="none"
+              style={[
+                styles.imagePlaceholderSheen,
+                {
+                  transform: [
+                    { translateX: skeletonTranslateX },
+                    { skewX: "-12deg" },
+                  ],
+                },
+              ]}
+            />
+          </View>
+        ) : null}
+      </View>
+    </TouchableOpacity>
+  );
+});
+
+/* 2026.10.12 고정 크기 그리드이므로 getItemLayout으로 측정 비용을 제거 by Claude */
+const GRID_ROW_HEIGHT = imageWidth + imageMargin * 2;
+
 export default function HomeScreen() {
   const router = useRouter();
   const navigation = useNavigation();
@@ -765,6 +911,10 @@ export default function HomeScreen() {
   const [searchWorkEstimate, setSearchWorkEstimate] = useState<{
     signature: string;
     seconds: number;
+    /* 2026.10.11 인덱스 미완성 구간은 카운트가 과소 추정되므로 적응형 스킵 판단에 함께 사용 by Claude */
+    indexComplete: boolean;
+    /* 콜드 구간에서 MediaLibrary가 알려준 범위 내 실제 사진 수(인덱스와 무관) by Claude */
+    coldRangeCount: number | null;
   } | null>(null);
 
   const searchEstimateSignature = useCallback(
@@ -782,24 +932,62 @@ export default function HomeScreen() {
           timeStart: f.timeStart,
           timeEnd: f.timeEnd,
         };
-        const [totalRows, missingCoords] = await Promise.all([
+        const [totalRows, missingCoords, syncState] = await Promise.all([
           countPhotoMetadataByDateTime(params),
           countPhotosMissingCoordsByDateTime(params),
+          getPhotoSyncState(),
         ]);
-        const seconds = Math.round(
-          Math.min(
-            SEARCH_ESTIMATE_MAX_S,
-            Math.max(
-              SEARCH_ESTIMATE_BASE_S,
-              SEARCH_ESTIMATE_BASE_S +
-                missingCoords * SEARCH_ESTIMATE_RECOVERY_S_PER_PHOTO +
-                totalRows * SEARCH_ESTIMATE_ROW_S_PER_ROW,
+        const indexComplete = !syncState.hasNextPage;
+
+        /* 2026.10.11 콜드 구간은 DB 카운트가 과소라 MediaLibrary의 범위 실측 건수로 예상 시간을 계산 —
+           '10장인데 5초' 같은 허위 표기와, 콜드 대범위의 과소 추정을 함께 수정 by Claude */
+        let coldRangeCount: number | null = null;
+        let seconds: number;
+        if (indexComplete) {
+          seconds = Math.round(
+            Math.min(
+              SEARCH_ESTIMATE_MAX_S,
+              Math.max(
+                SEARCH_ESTIMATE_BASE_S,
+                SEARCH_ESTIMATE_BASE_S +
+                  missingCoords * SEARCH_ESTIMATE_RECOVERY_S_PER_PHOTO +
+                  totalRows * SEARCH_ESTIMATE_ROW_S_PER_ROW,
+              ),
             ),
-          ),
-        );
+          );
+        } else {
+          try {
+            const librarySnapshot = await MediaLibrary.getAssetsAsync({
+              first: 1,
+              mediaType: MediaLibrary.MediaType.photo,
+              createdAfter: params.dateStartMs,
+              createdBefore: params.dateEndNextMs,
+            });
+            coldRangeCount =
+              typeof librarySnapshot.totalCount === "number"
+                ? librarySnapshot.totalCount
+                : null;
+          } catch {
+            coldRangeCount = null;
+          }
+          seconds = Math.round(
+            Math.min(
+              SEARCH_ESTIMATE_MAX_S,
+              Math.max(
+                SEARCH_ESTIMATE_BASE_S,
+                SEARCH_ESTIMATE_BASE_S +
+                  (coldRangeCount ?? totalRows) *
+                    SEARCH_ESTIMATE_COLD_S_PER_PHOTO,
+              ),
+            ),
+          );
+        }
+
         setSearchWorkEstimate({
           signature: searchEstimateSignature(f),
           seconds,
+          indexComplete,
+          coldRangeCount,
         });
       } catch {
         /* 조회 실패 시 기존 카운트 공식으로 폴백 */
@@ -813,6 +1001,24 @@ export default function HomeScreen() {
   useEffect(() => {
     void refreshSearchWorkEstimate(filter);
   }, [filter, refreshSearchWorkEstimate]);
+
+  /* 2026.10.11 적응형 팝업: 예상 <5초 & 인덱스 완성이면 Start/진행 팝업 없이 조용히 실행.
+     콜드 구간/도시 필터 등 느릴 수 있는 케이스는 기존 팝업+취소 유지 by Claude */
+  const [quietLocationSearch, setQuietLocationSearch] = useState(false);
+  const canSkipSearchPrompt = useMemo(() => {
+    if (!searchWorkEstimate) return false;
+    if (searchWorkEstimate.signature !== searchEstimateSignature(filter)) {
+      return false;
+    }
+    if (searchWorkEstimate.indexComplete) {
+      return searchWorkEstimate.seconds < SEARCH_PROMPT_SKIP_UNDER_S;
+    }
+    /* 2026.10.11 콜드: 범위 실측 건수가 작으면(1~2 페이지) 팝업 없이 진행, 크면 정직한 예상 시간과 함께 팝업 by Claude */
+    return (
+      searchWorkEstimate.coldRangeCount !== null &&
+      searchWorkEstimate.coldRangeCount <= COLD_QUIET_MAX_PHOTOS
+    );
+  }, [filter, searchEstimateSignature, searchWorkEstimate]);
 
   const estimateIncrementalLocationSearchSeconds = useCallback(
     (currentFilter: FilterState) => {
@@ -915,13 +1121,8 @@ export default function HomeScreen() {
   const locationSearchPhaseShownAtRef = useRef(0);
   const showLocationSearchPhaseText = useCallback(
     async (nextPhase: TranslationKey) => {
-      const minimumVisibleMs = 140;
-      const elapsedMs = Date.now() - locationSearchPhaseShownAtRef.current;
-      if (locationSearchPhaseShownAtRef.current > 0 && elapsedMs < minimumVisibleMs) {
-        await new Promise((resolve) =>
-          setTimeout(resolve, minimumVisibleMs - elapsedMs),
-        );
-      }
+      /* 2026.10.11 단계 문구당 최소 140ms 노출 대기가 검색당 ~1초의 인위적 지연을 만들어 제거 —
+         문구가 빨리 지나가는 것은 검색이 빠르다는 뜻이므로 허용. 렌더 양보용 yield만 유지 by Claude */
       locationSearchPhaseShownAtRef.current = Date.now();
       setLocationSearchPhaseText(nextPhase);
       await new Promise((resolve) => setTimeout(resolve, 0));
@@ -1571,7 +1772,10 @@ export default function HomeScreen() {
           return;
         }
       }
-      if (typeof img.uri === "string") recoveryIndices.push(index);
+      /* 2026.10.12 이미 조회가 끝난(GPS 없음으로 확인된) 사진은 매 검색마다 재조회하지 않음 by Claude */
+      if (typeof img.uri === "string" && !img.coordsChecked) {
+        recoveryIndices.push(index);
+      }
     });
 
     /* 2026.10.04 복구한 좌표를 DB에 영속화해 같은 사진의 복구 비용을 평생 1회로 제한 by Claude */
@@ -1643,10 +1847,14 @@ export default function HomeScreen() {
     /* 2026.10.04 국가는 오프라인 폴리곤 판별을 우선 사용(µs, 오프라인 동작) — 과거 캐시/지오코더의
        상이한 국가 표기가 섞이지 않도록 키 단위로 먼저 계산해 모든 경로에서 덮어씀 by Claude */
     const polygonCountryByKey = new Map<string, string | null>();
+    /* 2026.10.12 같은 레이캐스트 1회로 국가명과 근사 도시를 함께 계산 by Claude */
+    const approxCityByKey = new Map<string, string | null>();
     for (const [key, coord] of coordByKey) {
-      polygonCountryByKey.set(
+      const code = lookupCountryCode(coord.latitude, coord.longitude);
+      polygonCountryByKey.set(key, code ? countryDisplayName(code) : null);
+      approxCityByKey.set(
         key,
-        resolveCountryForCoords(coord.latitude, coord.longitude),
+        code ? approxCityForCoords(coord.latitude, coord.longitude, code) : null,
       );
     }
 
@@ -1744,7 +1952,12 @@ export default function HomeScreen() {
       }
       const place = placeByKey.get(key) ?? { country: null, city: null };
       /* 2026.05.27 ph:// 폴백으로 복구한 좌표(imgLocation)를 결과 photo에 반영 — 그래야 ShowOnMap이 마커를 표시할 수 있음 by yen */
-      return { ...img, location: coord, ...place };
+      return {
+        ...img,
+        location: coord,
+        cityApprox: approxCityByKey.get(key) ?? img.cityApprox,
+        ...place,
+      };
     });
 
     if (cacheUpsertRows.length > 0) {
@@ -1926,7 +2139,8 @@ export default function HomeScreen() {
 
       return items.filter((photo) => {
         const country = String(photo.country ?? "").trim();
-        const city = String(photo.city ?? "").trim();
+        /* 2026.10.12 정밀 도시가 아직 없으면 근사 도시로도 매칭 — 업그레이드 후에도 양쪽 다 매칭돼 선택이 고아가 되지 않음 by Claude */
+        const city = String(photo.city ?? photo.cityApprox ?? "").trim();
         const matchesCountry =
           countries.length === 0 ? true : countries.includes(country);
 
@@ -1978,70 +2192,6 @@ export default function HomeScreen() {
     });
   }, [language, deriveVisiblePhotos]);
 
-  async function loadPreparedPhotosFromDbForLocationSearch(
-    currentFilter: FilterState,
-  ) {
-    const syncState = await getPhotoSyncState();
-    const isIndexComplete = !syncState.hasNextPage;
-    if (!isIndexComplete) {
-      return {
-        photos: [] as Photo[],
-        totalCount: 0,
-        isIndexComplete: false,
-        isCacheHit: false,
-      };
-    }
-
-    const totalCount = await countPhotoMetadataByDateTime({
-      dateStartMs: dayStartMs(currentFilter.dateStart),
-      dateEndNextMs: dayEndNextMs(currentFilter.dateEnd),
-      timeStart: currentFilter.timeStart,
-      timeEnd: currentFilter.timeEnd,
-    });
-
-    if (totalCount <= 0) {
-      return {
-        photos: [] as Photo[],
-        totalCount: 0,
-        isIndexComplete: true,
-        isCacheHit: false,
-      };
-    }
-
-    const rows = await queryPhotoMetadataByDateTime({
-      dateStartMs: dayStartMs(currentFilter.dateStart),
-      dateEndNextMs: dayEndNextMs(currentFilter.dateEnd),
-      timeStart: currentFilter.timeStart,
-      timeEnd: currentFilter.timeEnd,
-      limit: totalCount,
-    });
-
-    const photosFromDb = sortPhotosForDisplay(
-      dedupePhotosByUri(
-        rows.map((row) => ({
-          uri: row.uri,
-          assetId: row.assetId,
-          takenAt: row.takenAt,
-          location:
-            typeof row.latitude === "number" &&
-            typeof row.longitude === "number"
-              ? {
-                  latitude: row.latitude,
-                  longitude: row.longitude,
-                }
-              : null,
-        })),
-      ),
-    );
-
-    return {
-      photos: photosFromDb,
-      totalCount,
-      isIndexComplete: true,
-      isCacheHit: photosFromDb.length > 0,
-    };
-  }
-
   const ensureVisiblePhotosLocationReady = useCallback(async () => {
     if (visibleLocationPreparationPromiseRef.current) {
       return visibleLocationPreparationPromiseRef.current;
@@ -2065,7 +2215,10 @@ export default function HomeScreen() {
         if (!needsWork) return;
 
         const withPlaces = await imagesWithLocation(currentPhotos, {
-          maxLookups: currentPhotos.length,
+          /* 2026.10.11 lazy city: 도시 필터가 있을 때만 라이브 지오코딩을 기다림 — 국가는 폴리곤으로 즉시,
+             도시 라벨은 백그라운드 큐가 점진 보강 (콜드 런 수 분 대기 제거) by Claude */
+          maxLookups:
+            filterRef.current.cities.length > 0 ? currentPhotos.length : 0,
           precision: 2,
           delayMs: 80,
         });
@@ -2130,52 +2283,117 @@ export default function HomeScreen() {
         setLocationSearchProgressPercent((prev) => Math.max(prev, fakePercent));
       }, 500);
 
-      const dbPrepared = await loadPreparedPhotosFromDbForLocationSearch(
-        currentFilter,
-      );
-      if (runToken !== locationSearchRunTokenRef.current) return;
-
-      if (dbPrepared.isIndexComplete && dbPrepared.isCacheHit) {
-        await showLocationSearchPhaseText(locationSearchPhaseLabels.sort);
-        total = Math.max(total, dbPrepared.totalCount, dbPrepared.photos.length);
-        processedCount = dbPrepared.photos.length;
-        setLocationSearchTargetTotalCount(
-          dbPrepared.totalCount > 0 ? dbPrepared.totalCount : null,
-        );
-        setLocationSearchProgressTotal(total);
-        setLocationSearchProgressChecked(processedCount);
-
-        await showLocationSearchPhaseText(locationSearchPhaseLabels.thumbnail);
-        await hydratePersistedDisplayUriCache(
-          dbPrepared.photos,
-          "location-search-db",
-        );
-        if (runToken !== locationSearchRunTokenRef.current) return;
-
-        await showLocationSearchPhaseText(locationSearchPhaseLabels.enrich);
-        setPhotosAll(dbPrepared.photos);
-        setPhotos(deriveVisiblePhotos(dbPrepared.photos, filterRef.current));
-        photosAllRef.current = dbPrepared.photos;
-        photosRef.current = deriveVisiblePhotos(dbPrepared.photos, filterRef.current);
-        pruneDisplayUriCacheForPhotos(dbPrepared.photos);
-        setEndCursor(null);
-        setHasNextPage(false);
-        dbDateTimePagingRef.current = {
-          enabled: true,
-          after: oldestCursorOfPhotos(dbPrepared.photos),
+      /* 2026.10.11 전체 적재 후 일괄 표시(수 초 대기) 대신 keyset 청크 스트리밍으로 교체 —
+         첫 청크(120장)를 즉시 그려 1초급 첫 화면, 이후 청크를 이어붙이며 실제 진행률 표시.
+         인덱스 완성 시에만 DB 스트리밍, 미완성이면 기존 MediaLibrary 폴백 유지 by Claude */
+      const syncState = await getPhotoSyncState();
+      if (!syncState.hasNextPage) {
+        const baseFilter = buildBaseDateTimeFilter(currentFilter);
+        const queryParams = {
+          dateStartMs: dayStartMs(baseFilter.dateStart),
+          dateEndNextMs: dayEndNextMs(baseFilter.dateEnd),
+          timeStart: baseFilter.timeStart,
+          timeEnd: baseFilter.timeEnd,
         };
-
-        await ensureVisiblePhotosLocationReady();
+        const dbTotalCount = await countPhotoMetadataByDateTime(queryParams);
         if (runToken !== locationSearchRunTokenRef.current) return;
 
-        processedCount = Math.max(processedCount, photosAllRef.current.length);
-        setLocationSearchProgressChecked(processedCount);
-        setLocationSearchProgressTotal(
-          Math.max(total, photosAllRef.current.length),
-        );
-        await showLocationSearchPhaseText(locationSearchPhaseLabels.apply);
-        markLoadedBaseRange(currentFilter, true);
-        return;
+        if (dbTotalCount > 0) {
+          total = Math.max(total, dbTotalCount);
+          setLocationSearchTargetTotalCount(dbTotalCount);
+          setLocationSearchProgressTotal(total);
+          await showLocationSearchPhaseText(locationSearchPhaseLabels.sort);
+
+          let after: PhotoPageCursor | null = null;
+          let streamed: Photo[] = [];
+          let firstChunk = true;
+          let hasMoreRows = true;
+
+          while (hasMoreRows) {
+            if (runToken !== locationSearchRunTokenRef.current) return;
+            const limit = firstChunk
+              ? SEARCH_FIRST_PAINT_COUNT
+              : SEARCH_STREAM_CHUNK_COUNT;
+            const rows = await queryPhotoMetadataByDateTime({
+              ...queryParams,
+              limit: limit + 1,
+              after,
+            });
+            hasMoreRows = rows.length > limit;
+            const trimmed = hasMoreRows ? rows.slice(0, limit) : rows;
+            if (trimmed.length === 0) break;
+            const lastRow = trimmed[trimmed.length - 1];
+            if (typeof lastRow.takenAt === "number") {
+              after = { takenAt: lastRow.takenAt, assetId: lastRow.assetId };
+            }
+            /* mapDbRowsToPhotos는 이 지점보다 뒤에 선언되어(TDZ) 간단한 변환을 인라인으로 수행 */
+            const chunkPhotos: Photo[] = trimmed.map((row) => ({
+              uri: row.uri,
+              assetId: row.assetId,
+              takenAt: row.takenAt,
+              location: dbLocationOrNull(row.latitude, row.longitude),
+              coordsChecked: row.latitude !== null && row.longitude !== null,
+            }));
+            /* keyset은 taken_at DESC 순서로 반환되므로 전체 재정렬 없이 이어붙임(중복만 제거) */
+            streamed = dedupePhotosByUri([...streamed, ...chunkPhotos]);
+            const nextVisible = deriveVisiblePhotos(streamed, filterRef.current);
+            photosAllRef.current = streamed;
+            photosRef.current = nextVisible;
+            setPhotosAll(streamed);
+            setPhotos(nextVisible);
+
+            if (firstChunk) {
+              setCurrentDataSource("db");
+              setEndCursor(null);
+              /* 첫 화면 썸네일은 캐시 하이드레이션을 기다렸다 그림(120장, ms 단위) */
+              /* 2026.10.18 그리드가 ph://를 직접 쓰므로 첫 페인트를 캐시 읽기로 막지 않음(뷰어 폴백용으로만 비동기 적재) by Claude */
+              void hydratePersistedDisplayUriCache(
+                chunkPhotos,
+                "location-search-db-first",
+              );
+              await showLocationSearchPhaseText(locationSearchPhaseLabels.apply);
+            } else {
+              void hydratePersistedDisplayUriCache(
+                chunkPhotos,
+                "location-search-db-stream",
+              );
+            }
+
+            processedCount = streamed.length;
+            setLocationSearchProgressChecked(processedCount);
+            /* 2026.10.11 청크 스트리밍으로 실제 진행 신호가 생겨, 심리적 연출값 위에 실측 비율을 우선 반영 by Claude */
+            setLocationSearchProgressPercent((prev) =>
+              Math.max(
+                prev,
+                Math.min(
+                  97,
+                  Math.round((processedCount / Math.max(total, 1)) * 100),
+                ),
+              ),
+            );
+            firstChunk = false;
+            await new Promise((resolve) => setTimeout(resolve, 0));
+          }
+
+          if (runToken !== locationSearchRunTokenRef.current) return;
+          setHasNextPage(false);
+          dbDateTimePagingRef.current = {
+            enabled: true,
+            after: oldestCursorOfPhotos(streamed),
+          };
+          pruneDisplayUriCacheForPhotos(streamed);
+
+          await ensureVisiblePhotosLocationReady();
+          if (runToken !== locationSearchRunTokenRef.current) return;
+
+          processedCount = Math.max(processedCount, photosAllRef.current.length);
+          setLocationSearchProgressChecked(processedCount);
+          setLocationSearchProgressTotal(
+            Math.max(total, photosAllRef.current.length),
+          );
+          markLoadedBaseRange(currentFilter, true);
+          return;
+        }
       }
 
       if (photosAllRef.current.length > 0) {
@@ -2211,7 +2429,9 @@ export default function HomeScreen() {
 
         await showLocationSearchPhaseText(locationSearchPhaseLabels.enrich);
         photosChunk = await imagesWithLocation(photosChunk, {
-          maxLookups: photosChunk.length,
+          /* 2026.10.11 lazy city: 도시 필터가 있을 때만 라이브 지오코딩 대기 by Claude */
+          maxLookups:
+            currentFilter.cities.length > 0 ? photosChunk.length : 0,
           precision: 2,
           delayMs: 80,
         });
@@ -2240,7 +2460,7 @@ export default function HomeScreen() {
         const nextVisible = deriveVisiblePhotos(mergedBase, filterRef.current);
 
         await showLocationSearchPhaseText(locationSearchPhaseLabels.thumbnail);
-        await hydratePersistedDisplayUriCache(photosChunk, "location-search");
+        void hydratePersistedDisplayUriCache(photosChunk, "location-search");
         await showLocationSearchPhaseText(locationSearchPhaseLabels.apply);
         setPhotosAll(mergedBase);
         setPhotos(nextVisible);
@@ -2282,7 +2502,7 @@ export default function HomeScreen() {
       hydrateAssetsToPhotos,
       hydratePersistedDisplayUriCache,
       imagesWithLocation,
-      loadPreparedPhotosFromDbForLocationSearch,
+      buildBaseDateTimeFilter,
       markLoadedBaseRange,
       matchesDateTimeFilter,
       getPsychologicalLocationSearchPercent,
@@ -2367,6 +2587,29 @@ export default function HomeScreen() {
     reloadPhotosForFilterRef,
     runLightweightLocationSearchPreparation,
   ]);
+
+  /* 2026.10.11 search-prompt 진입 시 적응형 스킵 — 조용히 즉시 시작.
+     광고 게이트(ad-required)는 이 앞 단계에서 기존대로 처리되므로 영향 없음 by Claude */
+  useEffect(() => {
+    if (locationSearchWorkflowStatus !== "search-prompt") return;
+    if (!canSkipSearchPrompt) return;
+    setQuietLocationSearch(true);
+    void handleLocationSearchConfirm();
+  }, [
+    locationSearchWorkflowStatus,
+    canSkipSearchPrompt,
+    handleLocationSearchConfirm,
+  ]);
+
+  /* 2026.10.11 워크플로가 끝나면(완료/취소/오류/백그라운드 중단) quiet 모드 해제 by Claude */
+  useEffect(() => {
+    if (
+      locationSearchWorkflowStatus !== "preparing" &&
+      locationSearchWorkflowStatus !== "search-prompt"
+    ) {
+      setQuietLocationSearch(false);
+    }
+  }, [locationSearchWorkflowStatus]);
 
   const handleLocationSearchDecline = useCallback(async () => {
     locationSearchResumeSignatureRef.current = null;
@@ -2783,6 +3026,22 @@ export default function HomeScreen() {
         }),
       );
 
+      /* 2026.10.11 보이는 사진의 미해결 geo-key를 큐 앞으로 당겨 가시 영역 도시가 먼저 해소되도록 우선순위 부여 by Claude */
+      try {
+        const visibleKeys = new Set<string>();
+        for (const photo of withCoordinates) {
+          const loc = photo.location;
+          if (!loc || photo.city) continue;
+          const lat = Number(loc.latitude);
+          const lon = Number(loc.longitude);
+          if (!Number.isFinite(lat) || !Number.isFinite(lon)) continue;
+          visibleKeys.add(toGeoKey(lat, lon, 2));
+        }
+        if (visibleKeys.size > 0) {
+          void prioritizeGeocodeJobs([...visibleKeys]).catch(() => {});
+        }
+      } catch {}
+
       const withPlaces = await imagesWithLocation(withCoordinates, {
         /* 2026.09.02 드레인 루프의 진행형 라벨 갱신은 maxLookups 0으로 캐시만 읽도록 옵션화 by Claude */
         maxLookups: opts?.maxLookups ?? 20,
@@ -2799,6 +3058,7 @@ export default function HomeScreen() {
                 ...photo,
                 location: next.location ?? photo.location ?? null,
                 city: next.city ?? photo.city,
+                cityApprox: next.cityApprox ?? photo.cityApprox,
                 country: next.country ?? photo.country,
               }
             : photo;
@@ -2808,6 +3068,122 @@ export default function HomeScreen() {
       });
     } finally {
       locationFollowUpInFlightRef.current = false;
+    }
+  }, [deriveVisiblePhotos]);
+
+  /* 2026.10.11 백그라운드 도시 해소 잔여 수 — 위치 선택기에 '정리 중 (n)' 표시용 by Claude */
+  const [geocodeQueuePending, setGeocodeQueuePending] = useState(0);
+
+  /* 2026.10.11 드레인 사이클마다 로드된 전체 사진에 지오코드 캐시를 재적용 — 네이티브 호출 없이
+     배치 캐시 읽기 1회로 도시 라벨/선택기 목록이 실시간으로 자라게 함 by Claude */
+  const applyGeocodeCacheToLoadedPhotos = useCallback(async () => {
+    const loaded = photosAllRef.current;
+    if (loaded.length === 0) return;
+    const keys = new Set<string>();
+    for (const photo of loaded) {
+      if (photo.city) continue;
+      const loc = photo.location;
+      if (!loc) continue;
+      const lat = Number(loc.latitude);
+      const lon = Number(loc.longitude);
+      if (!Number.isFinite(lat) || !Number.isFinite(lon)) continue;
+      keys.add(toGeoKey(lat, lon, 2));
+    }
+    if (keys.size === 0) return;
+    try {
+      const cached = await getGeocodeCacheByKeys([...keys]);
+      if (cached.size === 0) return;
+      let changed = false;
+      /* 2026.10.12 근사 도시 계산은 키 단위로 메모해 사진 수만큼 레이캐스트를 반복하지 않음 by Claude */
+      const approxByKey = new Map<string, string | null>();
+      const nextBase = loaded.map((photo) => {
+        if ((photo.city && photo.cityApprox) || !photo.location) return photo;
+        const lat = Number(photo.location.latitude);
+        const lon = Number(photo.location.longitude);
+        if (!Number.isFinite(lat) || !Number.isFinite(lon)) return photo;
+        const key = toGeoKey(lat, lon, 2);
+        const place = photo.city ? null : cached.get(key);
+        let nextCityApprox = photo.cityApprox;
+        if (!nextCityApprox) {
+          if (!approxByKey.has(key)) {
+            approxByKey.set(key, approxCityForCoords(lat, lon));
+          }
+          nextCityApprox = approxByKey.get(key) ?? undefined;
+        }
+        const nextCity = place?.city ?? photo.city;
+        const nextCountry = photo.country ?? place?.country ?? undefined;
+        if (
+          nextCity === photo.city &&
+          nextCountry === photo.country &&
+          nextCityApprox === photo.cityApprox
+        ) {
+          return photo;
+        }
+        changed = true;
+        return {
+          ...photo,
+          city: nextCity,
+          cityApprox: nextCityApprox,
+          country: nextCountry,
+        };
+      });
+      if (!changed) return;
+      photosAllRef.current = nextBase;
+      const nextVisible = deriveVisiblePhotos(nextBase, filterRef.current);
+      photosRef.current = nextVisible;
+      setPhotosAll(nextBase);
+      setPhotos(nextVisible);
+    } catch (err) {
+      console.log("apply geocode cache error:", err);
+    }
+  }, [deriveVisiblePhotos]);
+
+  /* 2026.10.11 첫 페인트 직후 첫 페이지(최대 100장)의 도시를 즉시 해소 — 상한 없이 실측해
+     [FirstPageCity] 로그/metric으로 소요 시간을 확인한 뒤 예산(cutoff) 도입 여부를 결정 by Claude */
+  const firstPageCityRanRef = useRef(false);
+  const resolveFirstPageCities = useCallback(async () => {
+    if (firstPageCityRanRef.current) return;
+    const targets = photosAllRef.current.slice(0, FIRST_PAGE_CITY_COUNT);
+    if (targets.length === 0) return;
+    firstPageCityRanRef.current = true;
+    const startedAt = Date.now();
+    try {
+      const withPlaces = await imagesWithLocation(targets, {
+        maxLookups: targets.length,
+        precision: 2,
+        delayMs: 80,
+      });
+      const byUri = new Map(withPlaces.map((p: Photo) => [p.uri, p]));
+      setPhotosAll((prev) => {
+        const nextBase = prev.map((photo) => {
+          const next = byUri.get(photo.uri);
+          return next
+            ? {
+                ...photo,
+                location: next.location ?? photo.location ?? null,
+                city: next.city ?? photo.city,
+                cityApprox: next.cityApprox ?? photo.cityApprox,
+                country: next.country ?? photo.country,
+              }
+            : photo;
+        });
+        photosAllRef.current = nextBase;
+        const nextVisible = deriveVisiblePhotos(nextBase, filterRef.current);
+        photosRef.current = nextVisible;
+        setPhotos(nextVisible);
+        return nextBase;
+      });
+      const elapsedMs = Date.now() - startedAt;
+      console.log("[FirstPageCity] resolved", {
+        ms: elapsedMs,
+        photos: targets.length,
+      });
+      recordPerfMetric("home.first_page_city.ms", elapsedMs, {
+        context: { photos: targets.length },
+        logEvery: 1,
+      });
+    } catch (err) {
+      console.log("[FirstPageCity] error", err);
     }
   }, [deriveVisiblePhotos]);
 
@@ -2955,6 +3331,37 @@ export default function HomeScreen() {
     setThumbnailReadyByUri({});
   }, [thumbnailBlockingSignature]);
 
+  /* 2026.10.12 '사진 세트 확정 → 첫 화면 썸네일 20장 페인트 완료'까지의 실제 시간을 계측 —
+     남은 지연이 데이터 경로인지 디코드/렌더인지 분리하기 위한 지표 by Claude */
+  const thumbnailPaintStartRef = useRef<number | null>(null);
+
+  useEffect(() => {
+    thumbnailPaintStartRef.current =
+      thumbnailBlockingUris.length > 0 ? Date.now() : null;
+    /* 의도적으로 signature에만 반응 — 같은 세트의 ready 갱신에는 타이머를 리셋하지 않음 */
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [thumbnailBlockingSignature]);
+
+  useEffect(() => {
+    const startedAt = thumbnailPaintStartRef.current;
+    if (startedAt === null) return;
+    if (thumbnailBlockingUris.length === 0) return;
+    const allReady = thumbnailBlockingUris.every(
+      (uri) => thumbnailReadyByUri[uri],
+    );
+    if (!allReady) return;
+    thumbnailPaintStartRef.current = null;
+    const elapsedMs = Date.now() - startedAt;
+    console.log("[ThumbnailPaint] first screen ready", {
+      ms: elapsedMs,
+      count: thumbnailBlockingUris.length,
+    });
+    recordPerfMetric("home.thumbnail_paint.ms", elapsedMs, {
+      context: { count: thumbnailBlockingUris.length },
+      logEvery: 1,
+    });
+  }, [thumbnailBlockingUris, thumbnailReadyByUri]);
+
   const markThumbnailReady = useCallback((uri: string) => {
     if (!uri) return;
     if (thumbnailReadyByUriRef.current[uri]) return;
@@ -3000,12 +3407,13 @@ export default function HomeScreen() {
   );
 
   useEffect(() => {
-    if (Platform.OS !== "ios") {
-      setThumbnailResolving(false);
-      return;
-    }
+    /* 2026.10.18 그리드가 ph://를 직접 렌더하므로 사전 해상(getAssetInfoAsync) 파이프라인을 중단.
+       이 루프가 사진당 네이티브 호출 + iCloud 원본 다운로드를 유발해 iOS 첫 화면 지연의 주원인이었음.
+       뷰어 전용 고해상도 해상(resolveViewerDetailUri)은 그대로 유지 by Claude */
+    setThumbnailResolving(false);
+    if (true) return;
 
-    /* 2026.05.28 기존 200장 동시 변환은 iOS 메모리 피크를 만들 수 있어 현재 화면 근처 항목만 순차 배치로 해상하도록 변경 by June */
+    // eslint-disable-next-line no-unreachable
     const targets = photos
       .slice(0, thumbnailResolveLimit)
       .map((p) => p.uri)
@@ -3133,13 +3541,9 @@ export default function HomeScreen() {
         uri: row.uri,
         assetId: row.assetId,
         takenAt: row.takenAt,
-        location:
-          typeof row.latitude === "number" && typeof row.longitude === "number"
-            ? {
-                latitude: row.latitude,
-                longitude: row.longitude,
-              }
-            : null,
+        location: dbLocationOrNull(row.latitude, row.longitude),
+        /* 2026.10.12 DB에 좌표 값이 있으면(0/0 'GPS 없음' 포함) 이미 조회를 마친 사진 by Claude */
+        coordsChecked: row.latitude !== null && row.longitude !== null,
       }));
     },
     [],
@@ -3395,7 +3799,9 @@ export default function HomeScreen() {
 
         if (needsLocation) {
           photosChunk = await imagesWithLocation(photosChunk, {
-            maxLookups: photosChunk.length,
+            /* 2026.10.11 lazy city: 도시 필터가 있을 때만 라이브 지오코딩 대기 by Claude */
+            maxLookups:
+              currentFilter.cities.length > 0 ? photosChunk.length : 0,
             precision: 2,
             delayMs: 80,
           });
@@ -3716,7 +4122,7 @@ export default function HomeScreen() {
       const nextVisible = deriveVisiblePhotos(nextBase, currentFilter);
 
       await showLocationSearchPhaseText(locationSearchPhaseLabels.thumbnail);
-      await hydratePersistedDisplayUriCache(nextBase, "incremental-date-reload");
+      void hydratePersistedDisplayUriCache(nextBase, "incremental-date-reload");
       await showLocationSearchPhaseText(locationSearchPhaseLabels.apply);
       setPhotosAll(nextBase);
       setPhotos(nextVisible);
@@ -3874,7 +4280,9 @@ export default function HomeScreen() {
 
     if (needsLocation) {
       photosChunk = await imagesWithLocation(photosChunk, {
-        maxLookups: photosChunk.length,
+        /* 2026.10.11 lazy city: 도시 필터가 있을 때만 라이브 지오코딩 대기 by Claude */
+        maxLookups:
+          currentFilter.cities.length > 0 ? photosChunk.length : 0,
         precision: 2,
         delayMs: 80,
       });
@@ -4152,7 +4560,7 @@ export default function HomeScreen() {
         return;
       }
 
-      await hydratePersistedDisplayUriCache(initialBase, "initial-medialibrary");
+      void hydratePersistedDisplayUriCache(initialBase, "initial-medialibrary");
       setPhotos(initial);
       setPhotosAll(initialBase);
       /* 2026.04.22 초기 MediaLibrary 경로에서도 현재 표출 건수를 progress에 반영해 사용자에게 로드 상태를 보여주기 위해 추가 by June */
@@ -4372,7 +4780,7 @@ export default function HomeScreen() {
       }
 
       await showLocationSearchPhaseText(locationSearchPhaseLabels.thumbnail);
-      await hydratePersistedDisplayUriCache(sortedBase, "filter-medialibrary");
+      void hydratePersistedDisplayUriCache(sortedBase, "filter-medialibrary");
       await showLocationSearchPhaseText(locationSearchPhaseLabels.apply);
       setPhotos(sorted);
       setPhotosAll(sortedBase);
@@ -4557,7 +4965,7 @@ export default function HomeScreen() {
           return;
         }
 
-        await hydratePersistedDisplayUriCache(sortedBase, `${mode}-medialibrary`);
+        void hydratePersistedDisplayUriCache(sortedBase, `${mode}-medialibrary`);
         setPhotos(sorted);
         setPhotosAll(sortedBase);
         pruneDisplayUriCacheForPhotos(sortedBase);
@@ -5031,6 +5439,126 @@ export default function HomeScreen() {
 
   /* 2026.09.02 메타데이터 인덱싱 완료 후 geocode 큐를 소모하는 드레인 루프 — 같은 pause 규칙, 스로틀 백오프, 큐 소진 시 종료.
      시딩은 인덱스 완성 시 1회. 취소 플래그는 메타데이터 루프와 공유(언마운트 시 함께 중단) by Claude */
+  /* 2026.10.12 좌표 back-fill 드레인: 인덱스 완성 후 좌표 미보유 사진의 GPS를 백그라운드에서 채워
+     (사진당 평생 1회) 이후 모든 검색의 예상/실제 비용에서 복구 항을 제거 by Claude */
+  /* 2026.10.12 실행 중 여부로 관리 — 완료 후 새 사진이 들어오면 다음 패스에서 다시 돌 수 있어야 함 by Claude */
+  const coordBackfillRunningRef = useRef(false);
+
+  const startCoordBackfill = useCallback(
+    (onDone: () => void) => {
+      if (coordBackfillRunningRef.current) {
+        /* 이미 돌고 있으면 후속(geocode 드레인)은 그 실행의 완료 콜백이 책임 — 중복 실행 방지 by Claude */
+        return;
+      }
+      coordBackfillRunningRef.current = true;
+
+      const sleep = (ms: number) =>
+        new Promise<void>((resolve) => setTimeout(resolve, ms));
+
+      void (async () => {
+        let errorStreak = 0;
+        let batchCount = 0;
+        try {
+          while (!backgroundMetadataSyncCancelledRef.current) {
+            if (requestInFlightRef.current) {
+              await sleep(COORD_BACKFILL_BUSY_RETRY_MS);
+              continue;
+            }
+            let assetIds: string[] = [];
+            try {
+              assetIds = await getPhotosMissingCoords(COORD_BACKFILL_BATCH);
+            } catch (err) {
+              errorStreak += 1;
+              console.log("coord backfill query error:", err);
+              if (errorStreak >= COORD_BACKFILL_MAX_ERROR_STREAK) break;
+              await sleep(COORD_BACKFILL_IDLE_DELAY_MS);
+              continue;
+            }
+            if (assetIds.length === 0) break;
+
+            const resolved: {
+              assetId: string;
+              latitude: number;
+              longitude: number;
+            }[] = [];
+            /* 2026.10.12 '조회 성공했지만 GPS 없음'과 '조회 실패(오류)'를 구분 —
+               전자는 즉시 0/0으로 확정해 같은 사진이 매 배치마다 재조회되는 낭비를 제거하고,
+               후자(일시적 오류)는 다음 기회에 재시도 by Claude */
+            const noLocation: string[] = [];
+            const errored: string[] = [];
+            let cursor = 0;
+            const workers = Array.from(
+              {
+                length: Math.min(COORD_BACKFILL_CONCURRENCY, assetIds.length),
+              },
+              async () => {
+                while (cursor < assetIds.length) {
+                  const assetId = assetIds[cursor];
+                  cursor += 1;
+                  try {
+                    const info = await MediaLibrary.getAssetInfoAsync(assetId, {
+                      shouldDownloadFromNetwork: false,
+                    });
+                    const lat = Number(info?.location?.latitude);
+                    const lon = Number(info?.location?.longitude);
+                    if (Number.isFinite(lat) && Number.isFinite(lon)) {
+                      resolved.push({ assetId, latitude: lat, longitude: lon });
+                    } else {
+                      noLocation.push(assetId);
+                    }
+                  } catch {
+                    errored.push(assetId);
+                  }
+                }
+              },
+            );
+            await Promise.all(workers);
+            if (backgroundMetadataSyncCancelledRef.current) break;
+
+            const writes = [
+              ...resolved,
+              /* GPS 없음이 확인된 사진은 0/0으로 표시(= 조회 완료) — 재조회 대상에서 제외 by Claude */
+              ...noLocation.map((assetId) => ({
+                assetId,
+                latitude: 0,
+                longitude: 0,
+              })),
+            ];
+            if (writes.length > 0) {
+              try {
+                await updatePhotoCoordinatesByAssetIds(writes);
+                errorStreak = 0;
+              } catch (err) {
+                errorStreak += 1;
+                console.log("coord backfill write error:", err);
+                if (errorStreak >= COORD_BACKFILL_MAX_ERROR_STREAK) break;
+              }
+            } else if (errored.length === assetIds.length) {
+              /* 배치 전체가 오류면 일시적 장애로 보고 스트릭 종료 조건 적용 by Claude */
+              errorStreak += 1;
+              if (errorStreak >= COORD_BACKFILL_MAX_ERROR_STREAK) break;
+            }
+
+            batchCount += 1;
+            /* 2026.10.12 COUNT 2건을 매 배치마다 돌리지 않도록 10배치마다 예상치 갱신 by Claude */
+            if (batchCount % 10 === 0) {
+              void refreshSearchWorkEstimate(filterRef.current);
+            }
+            await sleep(COORD_BACKFILL_IDLE_DELAY_MS);
+          }
+        } finally {
+          coordBackfillRunningRef.current = false;
+          if (!backgroundMetadataSyncCancelledRef.current) {
+            /* 완료 시점의 잔여 작업량을 한 번 더 반영 by Claude */
+            void refreshSearchWorkEstimate(filterRef.current);
+            onDone();
+          }
+        }
+      })();
+    },
+    [refreshSearchWorkEstimate],
+  );
+
   const geocodeDrainStartedRef = useRef(false);
 
   const startGeocodeQueueDrain = useCallback(() => {
@@ -5070,8 +5598,8 @@ export default function HomeScreen() {
             continue;
           }
           if ((result?.claimedJobs ?? 0) > 0) {
-            /* 2026.09.02 사이클마다 보이는 사진의 라벨을 캐시에서만 갱신(진행형 표시) by Claude */
-            void followUpVisibleLocations({ maxLookups: 0 });
+            /* 2026.10.11 사이클마다 로드된 전체 사진에 캐시 재적용 — 선택기 도시 목록이 실시간으로 자람 by Claude */
+            void applyGeocodeCacheToLoadedPhotos();
           }
         } catch (err) {
           errorStreak += 1;
@@ -5082,17 +5610,20 @@ export default function HomeScreen() {
         }
         try {
           const pending = await getGeocodePendingJobCount();
+          setGeocodeQueuePending(pending);
           if (pending === 0) break;
         } catch {}
         await sleep(GEOCODE_DRAIN_IDLE_DELAY_MS);
       }
 
+      setGeocodeQueuePending(0);
       /* 2026.10.04 큐 소진 직후 잔여 작업량을 갱신해 다음 검색의 예상 시간에 즉시 반영 by Claude */
       if (!backgroundMetadataSyncCancelledRef.current) {
         void refreshSearchWorkEstimate(filterRef.current);
+        void applyGeocodeCacheToLoadedPhotos();
       }
     })();
-  }, [followUpVisibleLocations, refreshSearchWorkEstimate]);
+  }, [applyGeocodeCacheToLoadedPhotos, refreshSearchWorkEstimate]);
 
   /* 2026.09.02 첫 페인트 이후 사진 메타데이터 인덱스를 백그라운드에서 완성하는 폴라이트 드레인 루프.
      a42ee9a에서 제거된 상시 동기화의 스케줄링 재설계: 초기 로드 완료 후 시작, 사용자 요청 진행 중에는 양보,
@@ -5156,10 +5687,15 @@ export default function HomeScreen() {
         return;
       }
 
-      /* 2026.09.02 메타데이터 패스 종료 후 geocode 큐 드레인으로 전환 — 두 백그라운드 루프가 동시에 돌지 않도록 순차화 by Claude */
-      startGeocodeQueueDrain();
+      /* 2026.10.12 메타데이터 패스 → 좌표 back-fill → geocode 드레인 순으로 직렬 실행
+         (백그라운드 루프가 서로 겹치지 않게 유지) by Claude */
+      startCoordBackfill(() => {
+        if (!backgroundMetadataSyncCancelledRef.current) {
+          startGeocodeQueueDrain();
+        }
+      });
     })();
-  }, [startGeocodeQueueDrain]);
+  }, [startCoordBackfill, startGeocodeQueueDrain]);
 
   useEffect(() => {
     runMetadataSyncLoopRef.current = runMetadataSyncLoop;
@@ -5175,7 +5711,13 @@ export default function HomeScreen() {
     if (!didInitialLoad) return;
     startBackgroundMetadataSync();
     void refreshSearchWorkEstimate(filterRef.current);
-  }, [didInitialLoad, startBackgroundMetadataSync, refreshSearchWorkEstimate]);
+    void resolveFirstPageCities();
+  }, [
+    didInitialLoad,
+    startBackgroundMetadataSync,
+    refreshSearchWorkEstimate,
+    resolveFirstPageCities,
+  ]);
 
   useEffect(() => {
     /* 2026.09.02 초기 로드가 지연/중단돼도 인덱싱이 시작되도록 10초 후 fallback 시작을 보장 by Claude */
@@ -5355,99 +5897,56 @@ export default function HomeScreen() {
   /** 2026.03.26 By June */
 
   // 썸네일 그리드에 사진 데이터 렌더링
-  const renderItem: ListRenderItem<Photo> = ({ item, index }) => {
-    const isThumbnailReady = Boolean(thumbnailReadyByUri[item.uri]);
-    const resolvedDisplayUri = displayUriMap[item.uri];
-    const hasUsableDisplayUri =
-      !item.uri.startsWith("ph://") ||
-      (typeof resolvedDisplayUri === "string" &&
-        resolvedDisplayUri.startsWith("file://"));
-    const shouldShowPhPlaceholder =
-      Platform.OS === "ios" &&
-      item.uri.startsWith("ph://") &&
-      !hasUsableDisplayUri;
-    const shouldShowThumbnailPlaceholder =
-      shouldShowPhPlaceholder || !isThumbnailReady;
+  /* 2026.10.12 셀 렌더를 memo 컴포넌트(PhotoGridCell)로 분리하고, 탭 핸들러를 안정 참조로 유지해
+     상태 변화 시 보이는 셀 전체가 재렌더되지 않도록 변경 by Claude */
+  const handlePhotoCellPress = useCallback(
+    (item: Photo, index: number) => {
+      amplitude.track("tap_photo_thumbnail", {
+        screen_name: "home",
+        photo_index: index,
+        photo_count: photosRef.current.length,
+      });
+      // 뷰어 swipe 카운트 초기화 (열 때마다)
+      swipe_count_ref.current = 0;
+      swipe_threshold_fired_ref.current = false;
 
-    // console.log("PHOTO URI >>>", item.uri);
-    return (
-      <TouchableOpacity
-        style={styles.imageContainer}
-        activeOpacity={0.9}
-        onPress={() => {
-          amplitude.track("tap_photo_thumbnail", {
-            screen_name: "home",
-            photo_index: index,
-            photo_count: photosRef.current.length,
-          });
-          // 뷰어 swipe 카운트 초기화 (열 때마다)
-          swipe_count_ref.current = 0;
-          swipe_threshold_fired_ref.current = false;
+      setViewerEntryPoint("home");
+      setViewerPhotoUris(photosRef.current.map((photo) => photo.uri));
+      setViewerIndex(index);
+      setViewerVisible(true);
+      /* 2026.05.27 선택한 사진의 위치 메타 유무를 즉시 확인하기 위한 진단 로그 추가 by June */
+      void debugPhotoLocationMeta(item);
+      /* 2026.04.22 상세 보기 진입 시 선택 사진만 고해상도 URI를 비동기 보강해 리스트 전체 메모리 사용 없이 상세 품질을 확보하기 위해 추가 by June */
+      void resolveViewerDetailUri(item.uri);
+      /* 2026.05.06 사용자가 선택한 사진의 위치정보는 즉시 우선 보강해 상세 진입 직후 공백 시간을 줄이기 위해 추가 by June */
+      void prioritizePhotoLocation(item);
+      /* 2026.04.22 좌우 스와이프 첫 체감을 개선하기 위해 인접 1장의 URI도 선행 보강하되 범위를 최소화해 메모리 피크를 제한 by June */
+      const next = photosRef.current[index + 1];
+      if (next?.uri) {
+        void resolveViewerDetailUri(next.uri);
+      }
+    },
+    [debugPhotoLocationMeta, prioritizePhotoLocation, resolveViewerDetailUri],
+  );
 
-          setViewerEntryPoint("home");
-          setViewerPhotoUris(photosRef.current.map((photo) => photo.uri));
-          setViewerIndex(index);
-          setViewerVisible(true);
-          /* 2026.05.27 선택한 사진의 위치 메타 유무를 즉시 확인하기 위한 진단 로그 추가 by June */
-          void debugPhotoLocationMeta(item);
-          /* 2026.04.22 상세 보기 진입 시 선택 사진만 고해상도 URI를 비동기 보강해 리스트 전체 메모리 사용 없이 상세 품질을 확보하기 위해 추가 by June */
-          void resolveViewerDetailUri(item.uri);
-          /* 2026.05.06 사용자가 선택한 사진의 위치정보는 즉시 우선 보강해 상세 진입 직후 공백 시간을 줄이기 위해 추가 by June */
-          void prioritizePhotoLocation(item);
-          /* 2026.04.22 좌우 스와이프 첫 체감을 개선하기 위해 인접 1장의 URI도 선행 보강하되 범위를 최소화해 메모리 피크를 제한 by June */
-          const next = photosRef.current[index + 1];
-          if (next?.uri) {
-            void resolveViewerDetailUri(next.uri);
-          }
-        }}
-      >
-        <View style={styles.imageFrame}>
-          {!shouldShowPhPlaceholder ? (
-            /* 2026.06.03 일반 URI도 실제 onLoad 전까지는 placeholder를 남겨 흰 박스처럼 보이지 않도록 조정 by June */
-            <Image
-              source={{
-                uri: hasUsableDisplayUri
-                  ? (resolvedDisplayUri ?? item.uri)
-                  : item.uri,
-              }}
-              style={[styles.image, styles.imageLayer, !isThumbnailReady && styles.imageHidden]}
-              resizeMode="cover"
-              onLoad={() => markThumbnailReady(item.uri)}
-              onError={() => markThumbnailReady(item.uri)}
-            />
-          ) : null}
-          {shouldShowThumbnailPlaceholder ? (
-            /* 2026.04.28 빈 URI 전달 경고를 없애기 위해 미해결 ph:// 썸네일은 임시 플레이스홀더로 렌더링 by June */
-            <View style={[styles.image, styles.imagePlaceholder, styles.imagePlaceholderLayer]}>
-              <LinearGradient
-                colors={["#F4F7FB", "#EAEFF6", "#F7FAFC"]}
-                start={{ x: 0, y: 0 }}
-                end={{ x: 1, y: 1 }}
-                style={StyleSheet.absoluteFillObject}
-              />
-              <View style={styles.imagePlaceholderTint} />
-              <View style={styles.imagePlaceholderBars}>
-                <View style={[styles.imagePlaceholderBar, styles.imagePlaceholderBarWide]} />
-                <View style={[styles.imagePlaceholderBar, styles.imagePlaceholderBarMedium]} />
-              </View>
-              <Animated.View
-                pointerEvents="none"
-                style={[
-                  styles.imagePlaceholderSheen,
-                  {
-                    transform: [
-                      { translateX: thumbnailSkeletonTranslateX },
-                      { skewX: "-12deg" },
-                    ],
-                  },
-                ]}
-              />
-            </View>
-          ) : null}
-        </View>
-      </TouchableOpacity>
-    );
-  };
+  const renderItem: ListRenderItem<Photo> = useCallback(
+    ({ item, index }) => (
+      <PhotoGridCell
+        item={item}
+        index={index}
+        isReady={Boolean(thumbnailReadyByUri[item.uri])}
+        skeletonTranslateX={thumbnailSkeletonTranslateX}
+        onPress={handlePhotoCellPress}
+        onReady={markThumbnailReady}
+      />
+    ),
+    [
+      handlePhotoCellPress,
+      markThumbnailReady,
+      thumbnailReadyByUri,
+      thumbnailSkeletonTranslateX,
+    ],
+  );
 
   // 시각(분) 윈도우 판정: timeStart~timeEnd(분), 1439=23:59 처리 포함
   const inTimeWindow = (
@@ -5764,11 +6263,8 @@ export default function HomeScreen() {
     edges.push("top"); // iOS는 top 추가해야 UI 안깨짐
   }
   const safeAreaEdges: Edges = edges as Edges;
-  const hasPendingDisplayThumbnails =
-    Platform.OS === "ios" &&
-    photos
-      .slice(0, thumbnailResolveLimit)
-      .some((p) => p.uri.startsWith("ph://") && !displayUriMap[p.uri]);
+  /* 2026.10.18 ph:// 직접 렌더로 전환되어 사전 해상 대기 상태가 사라짐 by Claude */
+  const hasPendingDisplayThumbnails = false;
   const hasPendingVisibleThumbnailPaint =
     thumbnailBlockingUris.length > 0 &&
     thumbnailBlockingUris.some((uri) => !thumbnailReadyByUri[uri]);
@@ -5803,8 +6299,10 @@ export default function HomeScreen() {
   const locationPreparingMessage = "Preparing location list. Please wait...";
   /* 2026.06.23 ad-required(한 달 초과 게이트)는 이제 공용 리워드 팝업이 처리하므로 위치 검색 모달에서는 제외 by yen */
   const shouldShowLocationSearchModal =
-    locationSearchWorkflowStatus === "search-prompt" ||
-    locationSearchWorkflowStatus === "preparing";
+    !quietLocationSearch &&
+    ((locationSearchWorkflowStatus === "search-prompt" &&
+      !canSkipSearchPrompt) ||
+      locationSearchWorkflowStatus === "preparing");
   const effectiveLocationSearchEstimatedSeconds =
     locationSearchEstimatedSeconds > 0
       ? locationSearchEstimatedSeconds
@@ -6070,9 +6568,16 @@ export default function HomeScreen() {
                 data={photos}
                 numColumns={numColumns}
                 /* 2026.04.22 index key 사용 시 append/재정렬 구간에서 셀 재생성이 과도해져 스크롤 안정성이 저하될 수 있어 URI 우선 key로 변경 by June */
-                keyExtractor={(item, i) => `${item.uri || "missing-uri"}::${i}`}
+                /* 2026.10.12 index를 키에서 제외 — 정렬/삽입 시 전체 셀이 remount되던 문제 방지 by Claude */
+                keyExtractor={(item, i) => item.uri || `missing-uri-${i}`}
                 renderItem={renderItem}
                 /* 2026.04.22 대량 사진 스크롤 시 메모리 사용량을 낮춰 OS 강제 종료 가능성을 줄이기 위해 FlatList 배치 렌더 파라미터를 최적화 by June */
+                /* 2026.10.12 고정 크기 그리드이므로 측정 없이 레이아웃 계산 by Claude */
+                getItemLayout={(_data, index) => ({
+                  length: GRID_ROW_HEIGHT,
+                  offset: GRID_ROW_HEIGHT * Math.floor(index / numColumns),
+                  index,
+                })}
                 initialNumToRender={25}
                 maxToRenderPerBatch={20}
                 windowSize={7}
@@ -6229,6 +6734,7 @@ export default function HomeScreen() {
               onLocationGate={() => requestRewardAccess("placeSearch")}
               locationPreparing={isLocationListPreparing}
               locationPreparingMessage={locationPreparingMessage}
+              geocodePendingCount={geocodeQueuePending}
               onOpenLocationRequest={() =>
                 requestLocationFeatureOpen("location-filter")
               }

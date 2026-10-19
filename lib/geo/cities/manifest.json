@@ -1,0 +1,15 @@
+{
+  "revision": "natural-earth-5.1.2-populated-places-v1",
+  "sourceUrl": "https://raw.githubusercontent.com/nvkelso/natural-earth-vector/v5.1.2/geojson/ne_10m_populated_places_simple.geojson",
+  "sourceSha256": "fd3fa867a320cbd5c5b6bb5bc550afeec2939fb2cef688e508007282a55ac42f",
+  "license": "Public domain",
+  "sourceFeatureCount": 7342,
+  "indexedFeatureCount": 7341,
+  "skippedFeatureCount": 1,
+  "catalogBytes": 372439,
+  "coordinateTransform": "none",
+  "countryAliases": {
+    "SSD": "SDS",
+    "SJM": "NOR"
+  }
+}

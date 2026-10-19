@@ -43,6 +43,8 @@ type Props = {
   /* 2026.05.28 위치 후보 목록이 아직 준비 중이면 선택 UI 위에 안내 오버레이를 띄워 중복 입력을 막기 위해 추가 by June */
   isPreparing?: boolean;
   preparingMessage?: string;
+  /* 2026.10.11 백그라운드 도시 해소 잔여 수 — >0이면 목록이 아직 자라는 중임을 비차단으로 안내 by Claude */
+  pendingCityCount?: number;
   onSelectionChange?: (selected: {
     countries: string[];
     cities: string[];
@@ -61,6 +63,7 @@ const LocationSelector = forwardRef<LocationSelectorHandle, Props>(
       onClose,
       isPreparing = false,
       preparingMessage,
+      pendingCityCount,
       onSelectionChange,
       onGate,
     },
@@ -119,8 +122,10 @@ const LocationSelector = forwardRef<LocationSelectorHandle, Props>(
             });
           });
 
-          photos.forEach(({ country, city }) => {
+          photos.forEach(({ country, city, cityApprox }) => {
             if (!country) return;
+            /* 2026.10.12 정밀 도시가 캐시되기 전엔 근사 도시(영문)로 목록을 즉시 구성 by Claude */
+            const cityLabel = city ?? cityApprox;
 
             if (!nextLocationMap[country]) {
               nextLocationMap[country] = {
@@ -130,13 +135,13 @@ const LocationSelector = forwardRef<LocationSelectorHandle, Props>(
             }
 
             allCountriesSet.add(country);
-            if (city) {
+            if (cityLabel) {
               const exists = nextLocationMap[country].cities.some(
-                (c) => c.en === city,
+                (c) => c.en === cityLabel,
               );
-              allCitiesSet.add(city);
+              allCitiesSet.add(cityLabel);
               if (!exists) {
-                nextLocationMap[country].cities.push({ en: city });
+                nextLocationMap[country].cities.push({ en: cityLabel });
               }
             }
           });
@@ -433,6 +438,19 @@ const LocationSelector = forwardRef<LocationSelectorHandle, Props>(
               </View>
             ) : null}
             <View style={styles.selectionContainer}>
+              {typeof pendingCityCount === "number" && pendingCityCount > 0 ? (
+                <Text
+                  style={{
+                    textAlign: "center",
+                    color: "#6366F1",
+                    fontSize: 12,
+                    paddingVertical: 4,
+                  }}
+                >
+                  {t("locationListFilling", "Organizing location info…")} (
+                  {pendingCityCount})
+                </Text>
+              ) : null}
               <View
                 style={{
                   flexDirection: "row",
