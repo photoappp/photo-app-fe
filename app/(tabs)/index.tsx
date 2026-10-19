@@ -1226,6 +1226,10 @@ export default function HomeScreen() {
       lastPreparedLocationSearchSignatureRef.current = null;
       locationSearchResumeSignatureRef.current = null;
       pendingLocationSearchPromptSignatureRef.current = null;
+      /* 2026.10.19 자동 시작 가드도 함께 초기화 — 그러지 않으면 같은 필터로 재무장될 때
+         (앱 복귀/재진입 등) 자동 시작이 막혀 search-prompt 상태로 멈춘 채 아무 것도 진행되지 않음.
+         무한 반복 방지는 실패 시 declined 표시가 담당하므로 안전 by Claude */
+      autoStartedSearchSignatureRef.current = null;
       setLocationSearchEntryPoint(null);
       setDeferredLocationFeatureOpen(null);
       setLocationSearchWorkflowStatus(
