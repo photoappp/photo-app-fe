@@ -3652,10 +3652,38 @@ export default function HomeScreen() {
       const queryDateStartMs = dayStartMs(currentFilter.dateStart);
       const queryDateEndNextMs = dayEndNextMs(currentFilter.dateEnd);
       /* 2026.10.18 국가/도시 조건을 SQL로 내림 — UI는 표시명으로 선택하므로 A3 코드로 역변환 by Claude */
+      const mappedCountryCodes = currentFilter.countries
+        .map((name) => countryCodeForDisplayName(name))
+        .filter((code): code is string => !!code);
+
+      /* 2026.10.18 선택한 국가명 중 하나라도 코드로 변환되지 않으면(지오코더 표기 등 카탈로그 외 값)
+         SQL 조건이 과소/누락되어 결과가 틀어지므로 기존 경로로 양보 by Claude */
+      if (mappedCountryCodes.length !== currentFilter.countries.length) {
+        recordPerfMetric(
+          "home.db_datetime_query.ms",
+          Date.now() - dbLoadStartedAt,
+          {
+            context: {
+              usedDb: false,
+              reason: "country_code_unmapped",
+              selected: currentFilter.countries.length,
+              mapped: mappedCountryCodes.length,
+            },
+            logEvery: 1,
+          },
+        );
+        return {
+          usedDb: false as const,
+          photos: [] as Photo[],
+          dbHasMore: false,
+          nextAfter: after,
+          isIndexComplete: false,
+          totalCount: 0,
+        };
+      }
+
       const placeFilter = {
-        countryCodes: currentFilter.countries
-          .map((name) => countryCodeForDisplayName(name))
-          .filter((code): code is string => !!code),
+        countryCodes: mappedCountryCodes,
         cities: currentFilter.cities,
       };
       const totalCount = await countPhotoMetadataByDateTime({
@@ -5896,6 +5924,9 @@ export default function HomeScreen() {
         /* 2026.10.18 좌표 → 장소 → 지오코드 순으로 직렬 실행 by Claude */
         startPlaceBackfill(() => {
           if (backgroundMetadataSyncCancelledRef.current) return;
+          /* 2026.10.18 보강 직후 화면에 이미 로드된 사진의 국가/도시 라벨을 즉시 반영해
+             위치 선택기 목록이 재조회 없이 채워지도록 함(캐시만 사용, 네트워크 없음) by Claude */
+          void followUpVisibleLocations({ maxLookups: 0 });
           /* 이전 세션에서 쌓인 캐시를 먼저 반영한 뒤 남은 좌표를 지오코딩 by Claude */
           void persistCachedCities().finally(() => {
             if (!backgroundMetadataSyncCancelledRef.current) {
@@ -5909,6 +5940,7 @@ export default function HomeScreen() {
     startCoordBackfill,
     startPlaceBackfill,
     persistCachedCities,
+    followUpVisibleLocations,
     startGeocodeQueueDrain,
   ]);
 
