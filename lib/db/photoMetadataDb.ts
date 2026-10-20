@@ -198,6 +198,11 @@ export const initPhotoMetadataDb = async () => {
         display_uri TEXT NOT NULL,
         updated_at INTEGER NOT NULL
       );
+
+      /* 2026.10.19 전수/감사 패스에서 '이번에 본 자산 id'를 모아 삭제를 판별하기 위한 스테이징 by Claude */
+      CREATE TABLE IF NOT EXISTS sync_seen (
+        asset_id TEXT PRIMARY KEY NOT NULL
+      );
     `);
 
     /* 2026.04.15 기존 설치본에도 taken_minute 컬럼을 추가해 장기 범위 시간 필터를 SQL 인덱스로 처리하기 위해 마이그레이션 추가 by June */
@@ -1264,6 +1269,48 @@ export const queryPhotoMetadataByDateTime = async (params: {
 };
 
 /* 2026.10.04 검색 예상 시간을 '남은 실제 작업량'으로 계산하기 위해 범위 내 좌표 미보유 사진 수를 조회 by Claude */
+/* 2026.10.19 전수 패스 스테이징 — 시작 시 비우고, 페이지마다 본 id를 쌓고, 완주 시 없는 것을 삭제 처리 by Claude */
+export const resetSyncStaging = async () => {
+  await initPhotoMetadataDb();
+  const db = await getDb();
+  await enqueueWrite(async () => {
+    await db.execAsync(`DELETE FROM sync_seen;`);
+  });
+};
+
+export const stageSyncSeenIds = async (assetIds: string[]) => {
+  const unique = [...new Set(assetIds)].filter(Boolean);
+  if (unique.length === 0) return;
+  await initPhotoMetadataDb();
+  const db = await getDb();
+  await enqueueWrite(async () => {
+    await db.runAsync(
+      `INSERT OR IGNORE INTO sync_seen (asset_id) SELECT value FROM json_each(?)`,
+      JSON.stringify(unique)
+    );
+  });
+};
+
+export const markDeletedNotStaged = async () => {
+  await initPhotoMetadataDb();
+  const db = await getDb();
+  let changes = 0;
+  await enqueueWrite(async () => {
+    const result = await db.runAsync(
+      `
+      UPDATE photo_metadata
+      SET is_deleted = 1, updated_at = ?
+      WHERE is_deleted = 0
+        AND asset_id NOT IN (SELECT asset_id FROM sync_seen)
+      `,
+      Date.now()
+    );
+    changes = result.changes ?? 0;
+    await db.execAsync(`DELETE FROM sync_seen;`);
+  });
+  return changes;
+};
+
 /* 2026.10.18 네이티브 증분 동기화 체크포인트 읽기/쓰기 by Claude */
 export const getNativeSyncCheckpoint = async () => {
   await initPhotoMetadataDb();

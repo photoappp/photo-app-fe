@@ -6,8 +6,11 @@ import {
   ensureTakenMinutesMatchTimeZone,
   getNativeSyncCheckpoint,
   getPhotoMetadataCount,
+  markDeletedNotStaged,
   markPhotoMetadataDeletedByAssetIds,
+  resetSyncStaging,
   setNativeSyncCheckpoint,
+  stageSyncSeenIds,
   getPhotoSyncState,
   initPhotoMetadataDb,
   markPhotoMetadataDeletedBefore,
@@ -129,31 +132,56 @@ const nativeAssetToRow = (asset: LibrarySyncAsset): PhotoMetadataRow => {
   };
 };
 
-/* 2026.10.18 네이티브 증분(delta) 동기화 — 지난 실행 이후 바뀐 자산만 처리.
-   delta가 아닌 모드(최초 실행/토큰 만료/권한 변경)에서는 세션을 닫고 false를 반환해
-   기존 JS 전수 패스로 폴백하되, 그때 받은 체크포인트를 저장해 다음 세션부터 증분이 되게 함 by Claude */
-const runNativeDeltaSync = async (): Promise<boolean> => {
-  if (!librarySync) return false;
+/* 2026.10.19 네이티브 모듈로 모든 모드(full/delta/audit/reconcile)를 처리한다.
+   delta가 아닌 패스에서는 본 id를 스테이징해 완주 시 삭제를 판별(PicQly-T의 sync_seen과 동일).
+   세션은 모듈 스코프에 유지해, 폴라이트 루프가 호출할 때마다 정해진 페이지 수만 처리하고 양보한다 by Claude */
+let nativeSession:
+  | { handle: string; mode: string; staging: boolean }
+  | null = null;
+
+const closeNativeSession = async () => {
+  if (nativeSession && librarySync) {
+    try {
+      await librarySync.close(nativeSession.handle);
+    } catch {}
+  }
+  nativeSession = null;
+};
+
+const runNativeSync = async (
+  maxPages: number
+): Promise<"done" | "progress" | "unavailable"> => {
+  if (!librarySync) return "unavailable";
 
   const startedAt = Date.now();
-  let handle: string | null = null;
   try {
-    const saved = await getNativeSyncCheckpoint();
-    const plan = await librarySync.begin(saved, false);
-    handle = plan.handle;
-
-    if (plan.mode !== "delta") {
-      /* 전수 패스는 기존 JS 경로가 담당 — 체크포인트만 선반영 */
-      if (plan.checkpoint) await setNativeSyncCheckpoint(plan.checkpoint);
-      await librarySync.close(handle);
-      handle = null;
-      return false;
+    if (!nativeSession) {
+      const saved = await getNativeSyncCheckpoint();
+      const plan = await librarySync.begin(saved, false);
+      nativeSession = {
+        handle: plan.handle,
+        mode: plan.mode,
+        staging: plan.mode !== "delta",
+      };
+      if (nativeSession.staging) await resetSyncStaging();
+      /* 진행 중에는 인덱스를 미완료로 표시해 드레인 루프가 계속 호출하도록 함 */
+      await updatePhotoSyncState({
+        nextCursor: null,
+        hasNextPage: true,
+        lastSyncedAt: Date.now(),
+        passStartedAt: null,
+      });
+      console.log("[NativeSync] begin", { mode: plan.mode, total: plan.total });
     }
 
+    let pages = 0;
     let upserted = 0;
     let deleted = 0;
-    for (;;) {
-      const page = await librarySync.read(handle, SYNC_PAGE_SIZE);
+
+    while (pages < maxPages) {
+      const page = await librarySync.read(nativeSession.handle, SYNC_PAGE_SIZE);
+      pages += 1;
+
       if (page.assets.length > 0) {
         await upsertPhotoMetadataRows(page.assets.map(nativeAssetToRow));
         upserted += page.assets.length;
@@ -161,7 +189,32 @@ const runNativeDeltaSync = async (): Promise<boolean> => {
       if (page.deleted.length > 0) {
         deleted += await markPhotoMetadataDeletedByAssetIds(page.deleted);
       }
-      if (page.done) break;
+      if (nativeSession.staging && page.ids.length > 0) {
+        await stageSyncSeenIds(page.ids);
+      }
+
+      if (page.done) {
+        const checkpoint = await librarySync.finish(nativeSession.handle);
+        if (nativeSession.staging) {
+          deleted += await markDeletedNotStaged();
+        }
+        if (checkpoint) await setNativeSyncCheckpoint(checkpoint);
+        const mode = nativeSession.mode;
+        await closeNativeSession();
+        await updatePhotoSyncState({
+          nextCursor: null,
+          hasNextPage: false,
+          lastSyncedAt: Date.now(),
+          passStartedAt: null,
+        });
+        recordPerfMetric("metadata.native_sync.ms", Date.now() - startedAt, {
+          context: { mode, upserted, deleted },
+          logEvery: 1,
+        });
+        console.log("[NativeSync] applied", { mode, upserted, deleted });
+        return "done";
+      }
+
       if (
         page.assets.length === 0 &&
         page.deleted.length === 0 &&
@@ -171,28 +224,11 @@ const runNativeDeltaSync = async (): Promise<boolean> => {
       }
     }
 
-    const checkpoint = await librarySync.finish(handle);
-    /* 2026.10.18 빈 문자열 체크포인트(토큰 미지원 플랫폼)는 저장하지 않음 —
-       저장 시 다음 begin에서 파싱 오류가 나며 매번 폴백하게 됨 by Claude */
-    if (checkpoint) await setNativeSyncCheckpoint(checkpoint);
-    await librarySync.close(handle);
-    handle = null;
-
-    recordPerfMetric("metadata.native_delta.ms", Date.now() - startedAt, {
-      context: { upserted, deleted },
-      logEvery: 1,
-    });
-    console.log("[NativeSync] delta applied", { upserted, deleted });
-    return true;
+    return "progress";
   } catch (err) {
-    console.log("native delta sync error:", err);
-    if (handle && librarySync) {
-      try {
-        await librarySync.close(handle);
-      } catch {}
-    }
-    /* 실패 시 기존 JS 경로로 폴백 */
-    return false;
+    console.log("native sync error:", err);
+    await closeNativeSession();
+    return "unavailable";
   }
 };
 
@@ -235,21 +271,10 @@ export const syncPhotoMetadataInBackground = async (params?: {
       console.log("timezone recompute check error:", err);
     }
 
-    /* 2026.10.18 네이티브 증분 동기화가 가능하면 변경분만 처리하고 종료 —
-       라이브러리 전수 재탐색과 그로 인한 사진 API 경합을 없앰.
-       단, JS 전수 패스가 아직 끝나지 않은 상태(hasNextPage=true)에서는 인덱스가 불완전하므로
-       델타로 건너뛰지 않는다. 전수 패스가 완료된 이후 세션부터 증분이 적용됨 by Claude */
-    const stateBeforeSync = await getPhotoSyncState();
-    if (!stateBeforeSync.hasNextPage && (await runNativeDeltaSync())) {
-      /* 증분 적용 후에도 인덱스는 완료 상태로 유지 — 드레인 루프가 즉시 종료되도록 함 */
-      await updatePhotoSyncState({
-        nextCursor: null,
-        hasNextPage: false,
-        lastSyncedAt: Date.now(),
-        passStartedAt: null,
-      });
-      return;
-    }
+    /* 2026.10.19 네이티브 모듈이 있으면 최초 전수 패스부터 증분까지 모두 네이티브로 처리.
+       모듈이 없거나 실패한 경우에만 아래 JS 경로로 폴백 by Claude */
+    const nativeResult = await runNativeSync(params?.maxPages ?? 1);
+    if (nativeResult !== "unavailable") return;
 
     const maxPages = params?.maxPages ?? 3;
     const enrichLocation = params?.enrichLocation ?? true;
