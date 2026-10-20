@@ -1912,6 +1912,15 @@ export default function HomeScreen() {
     for (const [key, coord] of coordByKey) {
       if (placeByKey.has(key)) continue;
 
+      /* 2026.10.19 온라인 역지오코딩 사용 중단 — 도시는 오프라인 테이블(근사)만 사용한다.
+         네트워크 호출/대기/작업 큐가 사라져 로딩·필터 경로가 PicQly-T와 동일해짐 by Claude */
+      placeByKey.set(key, {
+        country: polygonCountryByKey.get(key) ?? null,
+        city: approxCityByKey.get(key) ?? null,
+      });
+      continue;
+
+      // eslint-disable-next-line no-unreachable
       if (lookups >= maxLookups) {
         /* 2026.04.22 이번 로드의 geocode 상한으로 미처리된 좌표를 작업 큐에 적재해 단계적 보강 대상에 포함시키기 위해 추가 by June */
         pendingJobMap.set(key, {
@@ -2195,11 +2204,16 @@ export default function HomeScreen() {
     [t],
   );
 
+  /* 2026.10.19 DB 경로가 위치 조건을 이미 SQL로 처리했으면 JS에서 다시 거르지 않는다.
+     (MediaLibrary 폴백으로 들어온 사진은 SQL을 거치지 않았으므로 그때만 JS 필터 적용) by Claude */
   const deriveVisiblePhotos = useCallback(
-    (baseItems: Photo[], currentFilter: FilterState) =>
-      sortPhotosForDisplay(
-        dedupePhotosByUri(applyLocationFilter(baseItems, currentFilter)),
-      ),
+    (baseItems: Photo[], currentFilter: FilterState) => {
+      const filteredBySql = dbDateTimePagingRef.current.enabled;
+      const items = filteredBySql
+        ? baseItems
+        : applyLocationFilter(baseItems, currentFilter);
+      return sortPhotosForDisplay(dedupePhotosByUri(items));
+    },
     [applyLocationFilter, dedupePhotosByUri, sortPhotosForDisplay],
   );
 
@@ -3781,35 +3795,8 @@ export default function HomeScreen() {
       const hasLocationFilter =
         currentFilter.countries.length > 0 || currentFilter.cities.length > 0;
 
-      /* 2026.10.18 위치 필터를 SQL(country/city 컬럼)로 처리하도록 전환 — 기존에는 여기서 무조건
-         MediaLibrary 경로로 우회해 전 범위를 메모리에 올린 뒤 JS로 거르느라 느렸음.
-         단, 장소 보강이 아직 남아 있으면 결과가 비어 보일 수 있으므로 그때만 기존 경로로 양보 by Claude */
-      if (hasLocationFilter) {
-        const remainingPlaces = await countPhotosMissingPlace();
-        if (remainingPlaces > 0) {
-          recordPerfMetric(
-            "home.db_datetime_query.ms",
-            Date.now() - dbLoadStartedAt,
-            {
-              context: {
-                usedDb: false,
-                reason: "place_backfill_pending",
-                remainingPlaces,
-                limit,
-              },
-              logEvery: 3,
-            },
-          );
-          return {
-            usedDb: false as const,
-            photos: [] as Photo[],
-            dbHasMore: false,
-            nextAfter: after,
-            isIndexComplete: false,
-            totalCount: 0,
-          };
-        }
-      }
+      /* 2026.10.19 장소 준비 여부로 기존 경로에 양보하던 가드 제거 — PicQly-T처럼 항상 DB가
+         답한다(아직 보강되지 않은 사진은 country_code가 없으므로 자연스럽게 매칭되지 않음) by Claude */
 
       const metadataCount = await getPhotoMetadataCount();
       if (metadataCount <= 0) {
@@ -6134,6 +6121,9 @@ export default function HomeScreen() {
         /* 2026.10.18 좌표 → 장소 → 지오코드 순으로 직렬 실행 by Claude */
         startPlaceBackfill(() => {
           if (backgroundMetadataSyncCancelledRef.current) return;
+          /* 2026.10.19 지오코드 큐/워커는 더 이상 사용하지 않는다(도시는 오프라인 테이블).
+             장소 보강이 끝나면 백그라운드 작업도 끝 by Claude */
+          return;
           /* 2026.10.18 보강 직후 화면에 이미 로드된 사진의 국가/도시 라벨을 즉시 반영해
              위치 선택기 목록이 재조회 없이 채워지도록 함(캐시만 사용, 네트워크 없음) by Claude */
           void followUpVisibleLocations({ maxLookups: 0 });
