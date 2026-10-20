@@ -244,6 +244,15 @@ const LocationSelector = forwardRef<LocationSelectorHandle, Props>(
       const isSelected = tempCountries.includes(item);
       const countryCities = getCitiesForCountry(item);
 
+      /* 2026.10.19 'All'이 켜진 상태(= 전부 선택)에서 개별 국가를 누르면 그 국가 하나만 남긴다.
+         전체에서 하나를 빼는 동작은 사용자가 기대하는 바가 아니다 — 전체가 켜진 상태의 첫 탭은
+         '이것만 보기'로 읽힌다. 도시도 그 국가의 도시 전체로 맞춰 'All' 상태를 유지한다 by Claude */
+      if (areAllCountriesSelected) {
+        setTempCountries([item]);
+        setTempCities([...countryCities].sort());
+        return;
+      }
+
       if (isSelected) {
         const nextCountries = tempCountries.filter((country) => country !== item);
         const nextCities = tempCities.filter((city) => !countryCities.includes(city));
@@ -267,6 +276,12 @@ const LocationSelector = forwardRef<LocationSelectorHandle, Props>(
 
         const nextCities = Array.from(new Set([...tempCities, ...visibleCities])).sort();
         setTempCities(nextCities);
+        return;
+      }
+
+      /* 2026.10.19 도시도 같은 규칙 — 'All'이 켜진 상태에서 개별 도시를 누르면 그 도시만 남긴다 by Claude */
+      if (areAllVisibleCitiesSelected) {
+        setTempCities([item]);
         return;
       }
 
@@ -402,12 +417,19 @@ const LocationSelector = forwardRef<LocationSelectorHandle, Props>(
     const applyCurrentSelection = () => {
       hasCommittedSelectionRef.current = true;
       const appliedCountries = [...tempCountries].sort();
-      const appliedCities = [...tempCities].sort();
-      const isAllSelected =
+
+      /* 2026.10.19 도시 칼럼이 'All' 상태면 도시 조건 자체를 걸지 않는다.
+         도시 목록을 그대로 넘기면 SQL이 'AND (city IN (...) OR city_approx IN (...))'를 붙이는데,
+         오프라인 도시 테이블(50km 반경)에서 도시가 잡히지 않은 사진은 city/city_approx가 모두
+         NULL이라 국가만 고른 경우에도 전부 빠져버린다.
+         PicQly-T의 cities: { all: true }(= 조건 없음)와 같은 의미 by Claude */
+      const cityIsAll =
+        visibleCities.length === 0 || areAllVisibleCitiesSelected;
+      const appliedCities = cityIsAll ? [] : [...tempCities].sort();
+      const countryIsAll =
         allCountries.length > 0 &&
-        allCities.length > 0 &&
-        areListsEqual(appliedCountries, allCountries) &&
-        areListsEqual(appliedCities, allCities);
+        areListsEqual(appliedCountries, allCountries);
+      const isAllSelected = countryIsAll && cityIsAll;
       const nextCountries = isAllSelected ? [] : appliedCountries;
       const nextCities = isAllSelected ? [] : appliedCities;
       const locationLabel = isAllSelected
