@@ -150,7 +150,6 @@ const SEARCH_ESTIMATE_MAX_S = 300;
 /* 2026.10.11 적응형 검색 팝업: 예상 시간이 이 값 미만(＆인덱스 완성)이면 Start/진행 팝업 없이 조용히 실행 by Claude */
 /* 2026.10.19 예상 시간 프롬프트(Start/Later)는 더 이상 노출하지 않음 — 검색이 즉시 시작되고,
    진행 모달은 실제로 오래 걸릴 때만(아래 지연 이후) 표시 by Claude */
-const SEARCH_PROGRESS_MODAL_DELAY_MS = 1500;
 /* 2026.10.19 'preparing' 상태가 이 시간을 넘기면 강제로 해제한다.
    준비 루틴은 runToken 불일치 시 곧바로 return하는 분기가 여러 곳 있는데(광고 전후의 앱 상태
    전환 등으로 발생), 그 경로들이 status를 'preparing'으로 남겨 화면이 멈춘 것처럼 보였다 by Claude */
@@ -2642,21 +2641,6 @@ export default function HomeScreen() {
     currentDateTimeFilterSignature,
     handleLocationSearchConfirm,
   ]);
-
-  /* 2026.10.19 진행 모달은 '실제로 오래 걸릴 때만' 표시 — 1초급 검색에서 모달이 깜빡이지 않도록
-     preparing이 일정 시간 이상 지속될 때만 노출(취소 버튼은 그대로 유지) by Claude */
-  const [showSearchProgressModal, setShowSearchProgressModal] = useState(false);
-  useEffect(() => {
-    if (locationSearchWorkflowStatus !== "preparing") {
-      setShowSearchProgressModal(false);
-      return;
-    }
-    const timer = setTimeout(
-      () => setShowSearchProgressModal(true),
-      SEARCH_PROGRESS_MODAL_DELAY_MS,
-    );
-    return () => clearTimeout(timer);
-  }, [locationSearchWorkflowStatus]);
 
   /* 2026.10.19 광고 종료 등으로 앱이 다시 활성화됐을 때, 준비 작업이 돌고 있지 않은데도
      'preparing'으로 남아 화면이 잠겨 있으면 즉시 해제 — 워치독(15초)을 기다리지 않도록 by Claude */
@@ -6650,8 +6634,9 @@ export default function HomeScreen() {
   const locationPreparingMessage = "Preparing location list. Please wait...";
   /* 2026.06.23 ad-required(한 달 초과 게이트)는 이제 공용 리워드 팝업이 처리하므로 위치 검색 모달에서는 제외 by yen */
   /* 2026.10.19 Start/Later 프롬프트는 렌더하지 않고, 지연 후의 진행 모달만 표시 by Claude */
-  const shouldShowLocationSearchModal =
-    locationSearchWorkflowStatus === "preparing" && showSearchProgressModal;
+  /* 2026.10.19 검색 관련 모달(예상 시간 프롬프트/진행 모달)을 모두 노출하지 않음.
+     검색은 즉시 실행되고 결과가 스트리밍으로 채워지므로 그리드 자체가 피드백 역할을 한다 by Claude */
+  const shouldShowLocationSearchModal = false;
   const effectiveLocationSearchEstimatedSeconds =
     locationSearchEstimatedSeconds > 0
       ? locationSearchEstimatedSeconds
