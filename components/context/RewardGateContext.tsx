@@ -43,6 +43,9 @@ const UNLOCK_DURATION_MS = USE_TEST_UNLOCK_DURATION
 
 /* 2026.06.23 기존 위치 해금 키를 그대로 재사용해 별도 마이그레이션 없이 해금 상태를 통합 by yen */
 const UNLOCK_STORAGE_KEY = "locationFeatureUnlockedUntil";
+/* 2026.10.19 show() 호출 후 광고가 실제로 뜨기까지의 상한 — 이 안에 OPENED가 오지 않으면
+   실패로 간주하고 사용자를 막지 않는다(버튼 영구 로딩 방지) by Claude */
+const AD_PRESENT_TIMEOUT_MS = 8000;
 
 interface RewardGateContextType {
   /** 현재 모든 기능이 해금된 상태인지 */
@@ -77,6 +80,8 @@ export function RewardGateProvider({ children }: { children: ReactNode }) {
     null,
   );
   const [adLoading, setAdLoading] = useState(false);
+  /* 2026.10.19 광고 노출 감시 타이머 by Claude */
+  const adPresentTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const pendingResolverRef = useRef<((granted: boolean) => void) | null>(null);
   const adInFlightRef = useRef(false);
@@ -109,7 +114,29 @@ export function RewardGateProvider({ children }: { children: ReactNode }) {
       onRewardEarned: () => {
         void grantUnlock();
       },
+      onOpened: () => {
+        /* 광고가 실제로 떴으므로 노출 감시 타이머 해제 — 이후에는 CLOSED/ERROR를 기다린다 */
+        if (adPresentTimerRef.current) {
+          clearTimeout(adPresentTimerRef.current);
+          adPresentTimerRef.current = null;
+        }
+      },
+      onError: () => {
+        /* 2026.10.19 로드/노출 실패 시 기존 정책(사용자를 막지 않음)에 맞춰 해금 부여 by Claude */
+        if (adPresentTimerRef.current) {
+          clearTimeout(adPresentTimerRef.current);
+          adPresentTimerRef.current = null;
+        }
+        adInFlightRef.current = false;
+        setAdLoading(false);
+        void grantUnlock();
+        finishPending(true);
+      },
       onClosed: (earned) => {
+        if (adPresentTimerRef.current) {
+          clearTimeout(adPresentTimerRef.current);
+          adPresentTimerRef.current = null;
+        }
         adInFlightRef.current = false;
         setAdLoading(false);
         if (earned) {
@@ -208,10 +235,25 @@ export function RewardGateProvider({ children }: { children: ReactNode }) {
          팝업을 먼저 닫고(dismiss 완료 여유 350ms) 광고를 띄움. pending resolver는 유지되어
          광고 종료 후 onClosed에서 계속 진행 by Claude */
       setPopupVisible(false);
+      /* 2026.10.19 show() 후 OPENED/CLOSED/ERROR가 하나도 오지 않는 경우에 대비한 안전망 by Claude */
+      if (adPresentTimerRef.current) clearTimeout(adPresentTimerRef.current);
+      adPresentTimerRef.current = setTimeout(() => {
+        adPresentTimerRef.current = null;
+        if (!adInFlightRef.current) return;
+        console.log("[RewardGate] ad did not present in time — unlocking");
+        adInFlightRef.current = false;
+        setAdLoading(false);
+        void grantUnlock();
+        finishPending(true);
+      }, AD_PRESENT_TIMEOUT_MS);
       setTimeout(() => {
         const shown = showRewardedAd();
         if (!shown) {
           // 준비됐다고 봤지만 노출 실패 → 막히지 않도록 대체 해금
+          if (adPresentTimerRef.current) {
+            clearTimeout(adPresentTimerRef.current);
+            adPresentTimerRef.current = null;
+          }
           adInFlightRef.current = false;
           setAdLoading(false);
           void grantUnlock();
