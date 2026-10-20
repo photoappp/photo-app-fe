@@ -9,7 +9,6 @@ import AsyncStorage from "@react-native-async-storage/async-storage";
 /* 2026.10.12 그리드 썸네일을 expo-image로 교체 — 메모리/디스크 캐시, 리스트 리사이클링, 재렌더 시 재요청 방지 by Claude */
 import { Image as ExpoImage } from "expo-image";
 import { LinearGradient } from "expo-linear-gradient";
-import * as Location from "expo-location";
 import * as MediaLibrary from "expo-media-library";
 import { useNavigation, useRouter } from "expo-router";
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -56,37 +55,24 @@ import {
   countPhotosMissingPlace,
   getDistinctPlaces,
   hasPhotosWithoutLocation,
-  getPhotosMissingCityPage,
   getPhotosMissingPlace,
   updatePhotoPlacesByAssetIds,
-  enqueueGeocodeJobs,
   getDisplayUriCacheBySourceUris,
-  getGeocodeCacheByKey,
-  getGeocodeCacheByKeys,
-  getGeocodeCacheCount,
-  getGeocodePendingJobCount,
   getOldestPhotoTakenAt,
   getPhotoMetadataCount,
   getPhotoSyncState,
   getPhotosMissingCoords,
   initPhotoMetadataDb,
-  prioritizeGeocodeJobs,
   type PhotoPageCursor,
   queryPhotoMetadataByDateTime,
   updatePhotoCoordinatesByAssetIds,
-  upsertDisplayUriCacheRows,
-  upsertGeocodeCacheRows
+  upsertDisplayUriCacheRows
 } from "@/lib/db/photoMetadataDb";
 import { recordPerfMetric } from "@/lib/services/perfMetrics";
 import {
   syncPhotoMetadataInBackground,
   upsertPhotoMetadataFromAssets,
 } from "@/lib/services/photoMetadataSync";
-/* 2026.09.02 geocode 큐 드레인/시딩을 홈 화면 백그라운드 루프에 연결하기 위해 import 추가 by Claude */
-import {
-  processGeocodeJobsInBackground,
-  seedGeocodeJobsFromPhotoMetadata,
-} from "@/lib/services/geocodeJobWorker";
 /* 2026.10.04 좌표→국가 오프라인 판별(폴리곤) — 국가 표기는 지오코더 대신 이걸 우선 사용 by Claude */
 import {
   lookupCountryCode,
@@ -166,7 +152,6 @@ const SEARCH_STREAM_CHUNK_COUNT = 600;
 /* 2026.10.11 첫 페인트 직후 가시 영역(첫 페이지)의 도시를 즉시 해소할 사진 수 — 측정용으로 상한 없음 by Claude */
 const FIRST_PAGE_CITY_COUNT = 100;
 
-/* 2026.09.02 geocode 큐 드레인 루프 운영값 — 메타데이터 인덱싱 완료 후에만 시작 by Claude */
 /* 2026.10.12 좌표 back-fill 루프: 인덱서가 타임스탬프만 적재하므로(Android는 bulk에 GPS 없음)
    좌표 미보유 row가 영구히 남아 검색 예상 시간이 줄지 않던 문제를 해소 by Claude */
 /* 2026.10.18 전경 우선 신호의 안전 상한 — 썸네일 onLoad/onError가 한 장이라도 오지 않으면
@@ -189,12 +174,6 @@ const PLACE_BACKFILL_IDLE_DELAY_MS = 300;
 const PLACE_BACKFILL_BUSY_RETRY_MS = 1000;
 const PLACE_BACKFILL_MAX_ERROR_STREAK = 3;
 
-const GEOCODE_DRAIN_INITIAL_DELAY_MS = 2000;
-const GEOCODE_DRAIN_IDLE_DELAY_MS = 1200;
-const GEOCODE_DRAIN_BUSY_RETRY_MS = 1000;
-const GEOCODE_DRAIN_ERROR_RETRY_MS = 15000;
-const GEOCODE_DRAIN_THROTTLE_BACKOFF_MS = 120000;
-const GEOCODE_DRAIN_MAX_ERROR_STREAK = 3;
 
 // Responsive image grid calculations
 const screenWidth = Dimensions.get("window").width;
@@ -1663,19 +1642,17 @@ export default function HomeScreen() {
   /* 2026.04.22 로딩 프로그레스바에 인덱싱 진행 상태를 표시하기 위해 DB 카운트를 수집하는 함수를 추가 by June */
   const refreshIndexingProgress = useCallback(async () => {
     try {
-      const [photoIndexed, photoSyncState, geocodeCached, geocodePending] =
-        await Promise.all([
-          getPhotoMetadataCount(),
-          getPhotoSyncState(),
-          getGeocodeCacheCount(),
-          getGeocodePendingJobCount(),
-        ]);
+      /* 2026.10.19 지오코드 캐시/큐는 더 이상 사용하지 않으므로 집계 쿼리에서 제외 by Claude */
+      const [photoIndexed, photoSyncState] = await Promise.all([
+        getPhotoMetadataCount(),
+        getPhotoSyncState(),
+      ]);
 
       setIndexingProgress({
         photoIndexed,
         isPhotoIndexing: photoSyncState.hasNextPage,
-        geocodeCached,
-        geocodePending,
+        geocodeCached: 0,
+        geocodePending: 0,
       });
     } catch (err) {
       /* 2026.04.22 진행 상태 조회 실패가 메인 로딩 흐름을 막지 않도록 로그만 남기고 무시하기 위해 추가 by June */
@@ -1770,12 +1747,12 @@ export default function HomeScreen() {
      좌표 복구는 제한 병렬, 캐시는 1회 배치 조회, 지오코딩은 고유 키에만 수행. 시그니처/반환 형태는 기존과 동일 by Claude */
   async function imagesWithLocation(
     images: any[],
+    /* 2026.10.19 maxLookups/delayMs는 온라인 역지오코딩 시절의 레이트리밋 옵션 — 지금은
+       국가/도시가 전부 오프라인 계산이라 무시된다(호출부 호환을 위해 타입만 유지) by Claude */
     opts?: { maxLookups?: number; precision?: number; delayMs?: number },
   ) {
     const geocodeStartedAt = Date.now();
-    const maxLookups = opts?.maxLookups ?? 60; // 한 번 로드에서 지오코딩 최대 호출 수
     const precision = opts?.precision ?? 2; // 좌표 라운딩 자릿수(2 ≈ ~1km)
-    const delayMs = opts?.delayMs ?? 150; // 호출 간 지연(ms) — CLGeocoder 레이트리밋 보호
 
     type Place = { country: string | null; city: string | null };
     type Coord = { latitude: number; longitude: number };
@@ -1880,96 +1857,20 @@ export default function HomeScreen() {
       );
     }
 
-    /* 3단계: 캐시를 1회 배치 조회 — 기존 사진 단위 직렬 조회 N회를 대체 */
+    /* 2026.10.19 지오코드 캐시(과거 온라인 조회 결과)는 더 이상 사용하지 않는다.
+       일부 사진만 정밀 현지화 이름('수원시')을 갖고 나머지는 근사 이름('Suwon')을 갖게 되어
+       같은 장소가 목록에 두 번 나오던 문제가 생기므로, 도시는 오프라인 테이블로 통일 by Claude */
     const placeByKey = new Map<string, Place>();
-    let dbCacheHits = 0;
-    try {
-      const cachedPlaces = await getGeocodeCacheByKeys([...coordByKey.keys()]);
-      for (const [key, place] of cachedPlaces) {
-        placeByKey.set(key, {
-          country: polygonCountryByKey.get(key) ?? place.country ?? null,
-          city: place.city ?? null,
-        });
-      }
-      dbCacheHits = cachedPlaces.size;
-    } catch (e: any) {
-      /* 2026.04.22 캐시 조회 실패가 전체 로딩을 막지 않도록 오류를 로깅하고 런타임 geocode로 계속 진행하기 위해 추가 by June */
-      console.log("geocode cache read error:", e);
-    }
+    const dbCacheHits = 0;
 
-    /* 4단계: 미캐시 키만 직렬 지오코딩(150ms 지연 유지), 상한 초과/실패 키는 큐로 */
-    const cacheUpsertRows: {
-      geoKey: string;
-      latitude: number;
-      longitude: number;
-      country: string | null;
-      city: string | null;
-      updatedAt: number;
-    }[] = [];
-    const pendingJobMap = new Map<string, { geoKey: string; latitude: number; longitude: number }>();
-    let lookups = 0;
-
-    for (const [key, coord] of coordByKey) {
+    /* 2026.10.19 4단계: 도시/국가를 오프라인 데이터로만 채운다.
+       (온라인 역지오코딩·캐시 업서트·작업 큐 적재는 모두 제거 — PicQly-T와 동일) by Claude */
+    for (const [key] of coordByKey) {
       if (placeByKey.has(key)) continue;
-
-      /* 2026.10.19 온라인 역지오코딩 사용 중단 — 도시는 오프라인 테이블(근사)만 사용한다.
-         네트워크 호출/대기/작업 큐가 사라져 로딩·필터 경로가 PicQly-T와 동일해짐 by Claude */
       placeByKey.set(key, {
         country: polygonCountryByKey.get(key) ?? null,
         city: approxCityByKey.get(key) ?? null,
       });
-      continue;
-
-      // eslint-disable-next-line no-unreachable
-      if (lookups >= maxLookups) {
-        /* 2026.04.22 이번 로드의 geocode 상한으로 미처리된 좌표를 작업 큐에 적재해 단계적 보강 대상에 포함시키기 위해 추가 by June */
-        pendingJobMap.set(key, {
-          geoKey: key,
-          latitude: coord.latitude,
-          longitude: coord.longitude,
-        });
-        /* 2026.10.04 도시는 큐로 미루더라도 국가는 폴리곤으로 즉시 표시 by Claude */
-        placeByKey.set(key, {
-          country: polygonCountryByKey.get(key) ?? null,
-          city: null,
-        });
-        continue;
-      }
-
-      try {
-        const [res] = await Location.reverseGeocodeAsync({
-          latitude: coord.latitude,
-          longitude: coord.longitude,
-        });
-        const place: Place = {
-          /* 2026.10.04 국가는 폴리곤 판별 우선, 지오코더는 폴백 by Claude */
-          country: polygonCountryByKey.get(key) ?? res?.country ?? null,
-          city: res?.city ?? res?.subregion ?? null,
-        };
-        placeByKey.set(key, place);
-        cacheUpsertRows.push({
-          geoKey: key,
-          latitude: coord.latitude,
-          longitude: coord.longitude,
-          country: place.country,
-          city: place.city,
-          updatedAt: Date.now(),
-        });
-        lookups += 1;
-        if (delayMs > 0) await sleep(delayMs);
-      } catch (e: any) {
-        // 레이트리밋/기타 에러 → 해당 좌표는 빈 값으로 두고 큐에 남겨 백그라운드 재시도
-        placeByKey.set(key, {
-          country: polygonCountryByKey.get(key) ?? null,
-          city: null,
-        });
-        pendingJobMap.set(key, {
-          geoKey: key,
-          latitude: coord.latitude,
-          longitude: coord.longitude,
-        });
-        await sleep(delayMs * 4);
-      }
     }
 
     const photosWithCoords = resolvedCoords.filter(Boolean).length;
@@ -1991,38 +1892,19 @@ export default function HomeScreen() {
       };
     });
 
-    if (cacheUpsertRows.length > 0) {
-      try {
-        /* 2026.04.22 reverse geocode 결과를 요청 종료 시점에 일괄 캐시 저장해 다음 검색 속도를 높이기 위해 추가 by June */
-        await upsertGeocodeCacheRows(cacheUpsertRows);
-      } catch (e: any) {
-        console.log("geocode cache write error:", e);
-      }
-    }
-
-    if (pendingJobMap.size > 0) {
-      try {
-        /* 2026.04.22 miss 좌표를 작업 큐에 적재해 이후 백그라운드 처리 파이프라인으로 연결하기 위해 추가 by June */
-        await enqueueGeocodeJobs(Array.from(pendingJobMap.values()));
-      } catch (e: any) {
-        console.log("geocode job enqueue error:", e);
-      }
-    }
-
-    /* 2026.04.22 위치 보강 처리 시간을 캐시 hit/lookup/큐 적재량과 함께 기록해 다음 최적화 근거를 확보하기 위해 계측을 추가 by June
-       (2026.09.02 memoryCacheHits는 키 그룹핑으로 흡수된 중복 사진 수를 의미하도록 재정의 by Claude) */
+    /* 2026.04.22 위치 보강 처리 시간을 기록해 다음 최적화 근거를 확보하기 위해 계측을 추가 by June
+       (2026.09.02 memoryCacheHits는 키 그룹핑으로 흡수된 중복 사진 수를 의미하도록 재정의 by Claude)
+       (2026.10.19 온라인 역지오코딩 제거로 reverseLookups/queuedJobs 항목은 삭제 by Claude) */
     recordPerfMetric(
       "home.images_with_location.ms",
       Date.now() - geocodeStartedAt,
       {
         context: {
           inputCount: images.length,
-          reverseLookups: lookups,
           memoryCacheHits: Math.max(0, photosWithCoords - coordByKey.size),
           dbCacheHits,
           polygonResolved: [...polygonCountryByKey.values()].filter(Boolean)
             .length,
-          queuedJobs: pendingJobMap.size,
         },
         logEvery: 2,
       },
@@ -2893,11 +2775,6 @@ export default function HomeScreen() {
     return hasLocationFilter;
   };
 
-  /* 2026.05.06 좌표 포맷 키 생성을 공통화해 geocode 캐시 hit율을 안정적으로 유지하기 위해 헬퍼를 추가 by June */
-  /* 2026.05.06 우선 로딩/배치 로딩 모두 동일 좌표 키 규칙을 쓰게 해 geocode 캐시 hit 일관성을 유지하기 위해 공통화 by June */
-  const toGeoKey = (latitude: number, longitude: number, precision = 2) =>
-    `${latitude.toFixed(precision)},${longitude.toFixed(precision)}`;
-
   /* 2026.05.06 사용자가 탭/스와이프로 선택한 단일 사진은 즉시 위치를 우선 보강해 체감 지연을 줄이기 위해 추가 by June */
   /* 2026.05.06 선택된 사진은 백그라운드 순서와 무관하게 즉시 위치를 보강해 상세 진입 직후 위치 공백 시간을 줄이기 위해 추가 by June */
   const prioritizePhotoLocation = useCallback(
@@ -2961,47 +2838,13 @@ export default function HomeScreen() {
           return;
         }
 
-        let city: string | null = null;
-        let country: string | null = null;
-        const geoKey = toGeoKey(latitude, longitude, 2);
-        /* 2026.10.04 국가는 오프라인 폴리곤 판별 우선 by Claude */
-        const polygonCountry = resolveCountryForCoords(latitude, longitude);
-
-        try {
-          const cached = await getGeocodeCacheByKey(geoKey);
-          if (cached) {
-            city = cached.city ?? null;
-            country = cached.country ?? null;
-          }
-        } catch (e) {
-          console.log("priority geocode cache read error:", e);
-        }
-
-        if (!city && !country) {
-          try {
-            const [res] = await Location.reverseGeocodeAsync({
-              latitude,
-              longitude,
-            });
-            country = res?.country ?? null;
-            city = res?.city ?? res?.subregion ?? null;
-
-            await upsertGeocodeCacheRows([
-              {
-                geoKey,
-                latitude,
-                longitude,
-                country,
-                city,
-                updatedAt: Date.now(),
-              },
-            ]);
-          } catch (e) {
-            console.log("priority reverse geocode error:", e);
-          }
-        }
-
-        country = polygonCountry ?? country;
+        /* 2026.10.19 온라인 역지오코딩/지오코드 캐시를 사용하지 않는다 — 국가는 폴리곤,
+           도시는 오프라인 도시 테이블로 통일해 목록/상세의 이름이 어긋나지 않게 함 by Claude */
+        const countryCode = lookupCountryCode(latitude, longitude);
+        const country = countryCode ? countryDisplayName(countryCode) : null;
+        const city = countryCode
+          ? approxCityForCoords(latitude, longitude, countryCode)
+          : null;
 
         setPhotosAll((prev) => {
           const nextBase = prev.map((p) =>
@@ -3152,22 +2995,6 @@ export default function HomeScreen() {
         }),
       );
 
-      /* 2026.10.11 보이는 사진의 미해결 geo-key를 큐 앞으로 당겨 가시 영역 도시가 먼저 해소되도록 우선순위 부여 by Claude */
-      try {
-        const visibleKeys = new Set<string>();
-        for (const photo of withCoordinates) {
-          const loc = photo.location;
-          if (!loc || photo.city) continue;
-          const lat = Number(loc.latitude);
-          const lon = Number(loc.longitude);
-          if (!Number.isFinite(lat) || !Number.isFinite(lon)) continue;
-          visibleKeys.add(toGeoKey(lat, lon, 2));
-        }
-        if (visibleKeys.size > 0) {
-          void prioritizeGeocodeJobs([...visibleKeys]).catch(() => {});
-        }
-      } catch {}
-
       const withPlaces = await imagesWithLocation(withCoordinates, {
         /* 2026.09.02 드레인 루프의 진행형 라벨 갱신은 maxLookups 0으로 캐시만 읽도록 옵션화 by Claude */
         maxLookups: opts?.maxLookups ?? 20,
@@ -3197,8 +3024,9 @@ export default function HomeScreen() {
     }
   }, [deriveVisiblePhotos]);
 
-  /* 2026.10.11 백그라운드 도시 해소 잔여 수 — 위치 선택기에 '정리 중 (n)' 표시용 by Claude */
-  const [geocodeQueuePending, setGeocodeQueuePending] = useState(0);
+  /* 2026.10.11 백그라운드 도시 해소 잔여 수 — 위치 선택기에 '정리 중 (n)' 표시용 by Claude
+     (2026.10.19 도시는 오프라인 테이블로 즉시 결정되어 대기열이 없으므로 항상 0 by Claude) */
+  const geocodeQueuePending = 0;
 
   /* 2026.10.19 위치 선택기 목록을 '현재 로드된 사진'이 아니라 DB 전체에서 구성한다.
      기존에는 화면에 올라온 사진에만 있는 국가/도시가 보여서, 보유 중인데도 목록에
@@ -3259,70 +3087,6 @@ export default function HomeScreen() {
       void refreshDbPlaceOptions();
     };
   }, [refreshDbPlaceOptions]);
-
-  /* 2026.10.11 드레인 사이클마다 로드된 전체 사진에 지오코드 캐시를 재적용 — 네이티브 호출 없이
-     배치 캐시 읽기 1회로 도시 라벨/선택기 목록이 실시간으로 자라게 함 by Claude */
-  const applyGeocodeCacheToLoadedPhotos = useCallback(async () => {
-    const loaded = photosAllRef.current;
-    if (loaded.length === 0) return;
-    const keys = new Set<string>();
-    for (const photo of loaded) {
-      if (photo.city) continue;
-      const loc = photo.location;
-      if (!loc) continue;
-      const lat = Number(loc.latitude);
-      const lon = Number(loc.longitude);
-      if (!Number.isFinite(lat) || !Number.isFinite(lon)) continue;
-      keys.add(toGeoKey(lat, lon, 2));
-    }
-    if (keys.size === 0) return;
-    try {
-      const cached = await getGeocodeCacheByKeys([...keys]);
-      if (cached.size === 0) return;
-      let changed = false;
-      /* 2026.10.12 근사 도시 계산은 키 단위로 메모해 사진 수만큼 레이캐스트를 반복하지 않음 by Claude */
-      const approxByKey = new Map<string, string | null>();
-      const nextBase = loaded.map((photo) => {
-        if ((photo.city && photo.cityApprox) || !photo.location) return photo;
-        const lat = Number(photo.location.latitude);
-        const lon = Number(photo.location.longitude);
-        if (!Number.isFinite(lat) || !Number.isFinite(lon)) return photo;
-        const key = toGeoKey(lat, lon, 2);
-        const place = photo.city ? null : cached.get(key);
-        let nextCityApprox = photo.cityApprox;
-        if (!nextCityApprox) {
-          if (!approxByKey.has(key)) {
-            approxByKey.set(key, approxCityForCoords(lat, lon));
-          }
-          nextCityApprox = approxByKey.get(key) ?? undefined;
-        }
-        const nextCity = place?.city ?? photo.city;
-        const nextCountry = photo.country ?? place?.country ?? undefined;
-        if (
-          nextCity === photo.city &&
-          nextCountry === photo.country &&
-          nextCityApprox === photo.cityApprox
-        ) {
-          return photo;
-        }
-        changed = true;
-        return {
-          ...photo,
-          city: nextCity,
-          cityApprox: nextCityApprox,
-          country: nextCountry,
-        };
-      });
-      if (!changed) return;
-      photosAllRef.current = nextBase;
-      const nextVisible = deriveVisiblePhotos(nextBase, filterRef.current);
-      photosRef.current = nextVisible;
-      setPhotosAll(nextBase);
-      setPhotos(nextVisible);
-    } catch (err) {
-      console.log("apply geocode cache error:", err);
-    }
-  }, [deriveVisiblePhotos]);
 
   /* 2026.10.11 첫 페인트 직후 첫 페이지(최대 100장)의 도시를 즉시 해소 — 상한 없이 실측해
      [FirstPageCity] 로그/metric으로 소요 시간을 확인한 뒤 예산(cutoff) 도입 여부를 결정 by Claude */
@@ -4428,15 +4192,15 @@ export default function HomeScreen() {
     ],
   );
 
-  /* 2026.05.26 Android에서 Location.reverseGeocodeAsync가 위치 권한을 요구하지만 앱 측에서 권한 요청을
-     하지 않아 country/city 보강이 영구 차단되던 문제 수정. 사용자에게 한 번만 묻고 결과를 모듈 스코프에
-     캐시해 반복 다이얼로그를 방지 by yen */
+  /* 2026.05.26 Android에서 사진 EXIF GPS를 읽기 위한 권한을 한 번만 요청 by yen
+     (2026.10.19 온라인 역지오코딩 제거로 foreground 위치 권한은 더 이상 필요하지 않아 요청을 삭제 —
+      좌표→국가/도시는 모두 오프라인 데이터로 처리한다 by Claude) */
   const ensureLocationPermissionOnce = async () => {
     if (locationPermissionAskedRef.current) return;
     locationPermissionAskedRef.current = true;
     try {
       if (Platform.OS === "android") {
-        /* 2026.05.27 Android에서 사진 EXIF GPS를 읽으려면 foreground 위치 권한과 별개로 ACCESS_MEDIA_LOCATION 권한이 필요해 추가 요청 by June */
+        /* 2026.05.27 Android에서 사진 EXIF GPS를 읽으려면 ACCESS_MEDIA_LOCATION 권한이 필요해 추가 요청 by June */
         const hasMediaLocation = await PermissionsAndroid.check(
           PermissionsAndroid.PERMISSIONS.ACCESS_MEDIA_LOCATION,
         );
@@ -4446,11 +4210,6 @@ export default function HomeScreen() {
           );
         }
       }
-
-      const current = await Location.getForegroundPermissionsAsync();
-      if (current.status === "granted") return;
-      if (!current.canAskAgain) return;
-      await Location.requestForegroundPermissionsAsync();
     } catch {
       // 권한 요청 실패는 무시 — 위치 필터만 비어 있고 사진 로딩에는 영향 없음
     }
@@ -4468,10 +4227,9 @@ export default function HomeScreen() {
     }
 
     if (hasPerm) {
-      /* 2026.05.26 Android에서 Location.reverseGeocodeAsync는 위치 권한이 있어야 동작 — 사진 권한 획득 후
-         일회성으로 foreground 위치 권한을 요청해 country/city 보강이 진행되도록 처리. iOS는 권한 없이도
-         reverse geocode가 동작하므로 건너뜀. 사용자가 거부해도 사진 로딩은 그대로 동작하며 위치 필터만
-         빈 상태로 유지됨 by yen */
+      /* 2026.05.26 Android는 사진 EXIF GPS 접근에 ACCESS_MEDIA_LOCATION이 필요 — 사진 권한 획득 후
+         일회성으로 요청한다. iOS는 불필요하므로 건너뜀. 사용자가 거부해도 사진 로딩은 그대로 동작하며
+         위치 필터만 빈 상태로 유지됨 by yen */
       if (Platform.OS === "android") {
         await ensureLocationPermissionOnce();
       }
@@ -5870,29 +5628,15 @@ export default function HomeScreen() {
           }
           if (pending.length === 0) break;
 
-          /* 좌표 → 국가코드/근사도시 (로컬), 정밀도시는 지오코드 캐시에서 1회 배치 조회 */
-          const keys = new Set<string>();
-          for (const row of pending) {
-            keys.add(toGeoKey(row.latitude, row.longitude, 2));
-          }
-          let cachedPlaces = new Map<
-            string,
-            { country: string | null; city: string | null }
-          >();
-          try {
-            cachedPlaces = await getGeocodeCacheByKeys([...keys]);
-          } catch {}
-
+          /* 2026.10.19 좌표 → 국가코드/도시를 모두 오프라인 데이터로만 채운다
+             (지오코드 캐시 조회 제거 — 정밀/근사 이름이 섞이지 않게 함) by Claude */
           const writes = pending.map((row) => {
             const code = lookupCountryCode(row.latitude, row.longitude);
-            const cached = cachedPlaces.get(
-              toGeoKey(row.latitude, row.longitude, 2),
-            );
             return {
               assetId: row.assetId,
               /* 판별 불가(경계/해상) 좌표는 'XX'로 확정해 매 배치마다 재시도되지 않게 함 by Claude */
               countryCode: code ?? "XX",
-              city: cached?.city ?? null,
+              city: null,
               cityApprox: code
                 ? approxCityForCoords(row.latitude, row.longitude, code)
                 : null,
@@ -5916,138 +5660,6 @@ export default function HomeScreen() {
       }
     })();
   }, []);
-
-  /* 2026.10.18 지오코드 캐시의 정밀 도시를 사진 행에 영속화하는 1회 스윕 —
-     커서로 테이블을 한 바퀴만 돌아 종료 보장. 미해결 좌표는 다음 스윕에서 다시 시도 by Claude */
-  const cityPersistRunningRef = useRef(false);
-
-  const persistCachedCities = useCallback(async () => {
-    if (cityPersistRunningRef.current) return;
-    cityPersistRunningRef.current = true;
-    const sleep = (ms: number) =>
-      new Promise<void>((resolve) => setTimeout(resolve, ms));
-    try {
-      let cursor: PhotoPageCursor | null = null;
-      let written = 0;
-      while (!backgroundMetadataSyncCancelledRef.current) {
-        if (requestInFlightRef.current || foregroundBusyRef.current) {
-          await sleep(PLACE_BACKFILL_BUSY_RETRY_MS);
-          continue;
-        }
-        const page = await getPhotosMissingCityPage({
-          after: cursor,
-          limit: PLACE_BACKFILL_BATCH,
-        });
-        if (page.length === 0) break;
-        const lastRow = page[page.length - 1];
-        cursor = { takenAt: lastRow.takenAt, assetId: lastRow.assetId };
-
-        const keys = new Set<string>();
-        for (const row of page) keys.add(toGeoKey(row.latitude, row.longitude, 2));
-        let cached = new Map<
-          string,
-          { country: string | null; city: string | null }
-        >();
-        try {
-          cached = await getGeocodeCacheByKeys([...keys]);
-        } catch {}
-
-        const writes = page
-          .map((row) => ({
-            assetId: row.assetId,
-            countryCode: null,
-            city:
-              cached.get(toGeoKey(row.latitude, row.longitude, 2))?.city ?? null,
-            cityApprox: null,
-          }))
-          .filter((row) => !!row.city);
-        if (writes.length > 0) {
-          await updatePhotoPlacesByAssetIds(writes);
-          written += writes.length;
-        }
-        await sleep(PLACE_BACKFILL_IDLE_DELAY_MS);
-      }
-      if (written > 0) {
-        console.log("[CityPersist] rows updated", { written });
-      }
-    } catch (err) {
-      console.log("city persist error:", err);
-    } finally {
-      cityPersistRunningRef.current = false;
-    }
-  }, []);
-
-  const geocodeDrainStartedRef = useRef(false);
-
-  const startGeocodeQueueDrain = useCallback(() => {
-    if (geocodeDrainStartedRef.current) return;
-    geocodeDrainStartedRef.current = true;
-
-    const sleep = (ms: number) =>
-      new Promise<void>((resolve) => setTimeout(resolve, ms));
-
-    void (async () => {
-      await sleep(GEOCODE_DRAIN_INITIAL_DELAY_MS);
-
-      /* 2026.09.02 인덱스가 완성된 경우에만 라이브러리 전체 고유 좌표를 1회 시딩 by Claude */
-      try {
-        const syncState = await getPhotoSyncState();
-        if (!syncState.hasNextPage) {
-          await seedGeocodeJobsFromPhotoMetadata();
-        }
-      } catch (err) {
-        console.log("geocode seed error:", err);
-      }
-
-      let errorStreak = 0;
-      while (!backgroundMetadataSyncCancelledRef.current) {
-        if (requestInFlightRef.current || foregroundBusyRef.current) {
-          await sleep(GEOCODE_DRAIN_BUSY_RETRY_MS);
-          continue;
-        }
-        try {
-          const result = await processGeocodeJobsInBackground({
-            batchSize: 10,
-          });
-          errorStreak = 0;
-          if (result?.throttled) {
-            /* 2026.09.02 스로틀링 감지 시 분 단위 백오프 — 남은 작업 재시도 카운트를 태우지 않음 by Claude */
-            await sleep(GEOCODE_DRAIN_THROTTLE_BACKOFF_MS);
-            continue;
-          }
-          if ((result?.claimedJobs ?? 0) > 0) {
-            /* 2026.10.11 사이클마다 로드된 전체 사진에 캐시 재적용 — 선택기 도시 목록이 실시간으로 자람 by Claude */
-            void applyGeocodeCacheToLoadedPhotos();
-          }
-        } catch (err) {
-          errorStreak += 1;
-          console.log("geocode drain error:", err);
-          if (errorStreak >= GEOCODE_DRAIN_MAX_ERROR_STREAK) break;
-          await sleep(GEOCODE_DRAIN_ERROR_RETRY_MS);
-          continue;
-        }
-        try {
-          const pending = await getGeocodePendingJobCount();
-          setGeocodeQueuePending(pending);
-          if (pending === 0) break;
-        } catch {}
-        await sleep(GEOCODE_DRAIN_IDLE_DELAY_MS);
-      }
-
-      setGeocodeQueuePending(0);
-      /* 2026.10.04 큐 소진 직후 잔여 작업량을 갱신해 다음 검색의 예상 시간에 즉시 반영 by Claude */
-      if (!backgroundMetadataSyncCancelledRef.current) {
-        void refreshSearchWorkEstimate(filterRef.current);
-        void applyGeocodeCacheToLoadedPhotos();
-        /* 2026.10.18 새로 해소된 정밀 도시를 사진 행에 영속화 — 다음 세션에도 유지 by Claude */
-        void persistCachedCities();
-      }
-    })();
-  }, [
-    applyGeocodeCacheToLoadedPhotos,
-    persistCachedCities,
-    refreshSearchWorkEstimate,
-  ]);
 
   /* 2026.09.02 첫 페인트 이후 사진 메타데이터 인덱스를 백그라운드에서 완성하는 폴라이트 드레인 루프.
      a42ee9a에서 제거된 상시 동기화의 스케줄링 재설계: 초기 로드 완료 후 시작, 사용자 요청 진행 중에는 양보,
@@ -6114,36 +5726,24 @@ export default function HomeScreen() {
         return;
       }
 
-      /* 2026.10.12 메타데이터 패스 → 좌표 back-fill → geocode 드레인 순으로 직렬 실행
+      /* 2026.10.12 메타데이터 패스 → 좌표 back-fill → 장소 보강 순으로 직렬 실행
          (백그라운드 루프가 서로 겹치지 않게 유지) by Claude */
       startCoordBackfill(() => {
         if (backgroundMetadataSyncCancelledRef.current) return;
-        /* 2026.10.18 좌표 → 장소 → 지오코드 순으로 직렬 실행 by Claude */
         startPlaceBackfill(() => {
           if (backgroundMetadataSyncCancelledRef.current) return;
-          /* 2026.10.19 지오코드 큐/워커는 더 이상 사용하지 않는다(도시는 오프라인 테이블).
-             장소 보강이 끝나면 백그라운드 작업도 끝 by Claude */
-          return;
-          /* 2026.10.18 보강 직후 화면에 이미 로드된 사진의 국가/도시 라벨을 즉시 반영해
-             위치 선택기 목록이 재조회 없이 채워지도록 함(캐시만 사용, 네트워크 없음) by Claude */
+          /* 2026.10.19 지오코드 큐/워커는 사용하지 않는다(도시는 오프라인 테이블).
+             장소 보강이 끝나면 화면 라벨과 위치 목록만 갱신하고 백그라운드 작업 종료 by Claude */
           void followUpVisibleLocations({ maxLookups: 0 });
           void refreshDbPlaceOptions();
-          /* 이전 세션에서 쌓인 캐시를 먼저 반영한 뒤 남은 좌표를 지오코딩 by Claude */
-          void persistCachedCities().finally(() => {
-            if (!backgroundMetadataSyncCancelledRef.current) {
-              startGeocodeQueueDrain();
-            }
-          });
         });
       });
     })();
   }, [
     startCoordBackfill,
     startPlaceBackfill,
-    persistCachedCities,
     followUpVisibleLocations,
     refreshDbPlaceOptions,
-    startGeocodeQueueDrain,
   ]);
 
   useEffect(() => {
