@@ -2591,6 +2591,18 @@ export default function HomeScreen() {
     try {
       await reloadPhotosForFilterRef.current();
       if (runToken !== locationSearchRunTokenRef.current) return;
+
+      /* 2026.10.19 DB가 필터를 그대로 처리했으면(인덱스/장소 준비 완료) 여기서 끝낸다.
+         이전에는 그 위에 전 범위를 메모리로 끌어올리는 준비 패스를 매번 추가로 돌려서,
+         같은 필터를 다시 선택해도 전체를 다시 적재했다. 페이지 단위 조회만으로 충분하므로
+         추가 패스를 생략해 반복 검색이 즉시 끝나게 함(나머지는 스크롤 시 이어서 로드) by Claude */
+      if (dbDateTimePagingRef.current.enabled) {
+        /* 라벨(도시/국가)은 화면을 막지 않고 캐시 기반으로 뒤따라 채움 */
+        void ensureVisiblePhotosLocationReady();
+        finalizeLocationSearchPreparation(deferredEntryPoint);
+        return;
+      }
+
       await runLightweightLocationSearchPreparation(runToken);
       if (runToken !== locationSearchRunTokenRef.current) return;
       finalizeLocationSearchPreparation(deferredEntryPoint);
@@ -2616,6 +2628,7 @@ export default function HomeScreen() {
     currentDateTimeFilterSignature,
     currentEstimatedLocationSearchSeconds,
     deferredLocationFeatureOpen,
+    ensureVisiblePhotosLocationReady,
     finalizeLocationSearchPreparation,
     resetLocationSearchProgress,
     reloadPhotosForFilterRef,
@@ -4858,9 +4871,16 @@ export default function HomeScreen() {
 
     try {
       await showLocationSearchPhaseText(locationSearchPhaseLabels.target);
-      const reusedLoadedBase = await tryReuseLoadedBaseRangeFromMemory(
-        currentFilter,
-      );
+      /* 2026.10.19 인덱스가 완성돼 있으면 '메모리 재사용/증분 재적재' 경로를 건너뛰고
+         곧바로 페이지 단위 DB 조회로 간다.
+         두 경로 모두 내부에서 범위 전체를 적재(limit=totalCount, 전 페이지 순회)하기 때문에
+         같은 필터를 다시 선택해도 매번 전체를 다시 올리는 원인이었다.
+         키셋 페이지 조회는 첫 페이지만 읽고 나머지는 스크롤에서 이어 읽는다 by Claude */
+      const indexReadyForPagedQuery = !(await getPhotoSyncState()).hasNextPage;
+
+      const reusedLoadedBase = indexReadyForPagedQuery
+        ? false
+        : await tryReuseLoadedBaseRangeFromMemory(currentFilter);
       if (reusedLoadedBase) {
         reloadPath = "db";
         await showLocationSearchPhaseText(locationSearchPhaseLabels.apply);
@@ -4871,9 +4891,9 @@ export default function HomeScreen() {
       }
 
       await showLocationSearchPhaseText(locationSearchPhaseLabels.db);
-      const incrementalApplied = await tryApplyIncrementalDateRangeReload(
-        currentFilter,
-      );
+      const incrementalApplied = indexReadyForPagedQuery
+        ? false
+        : await tryApplyIncrementalDateRangeReload(currentFilter);
       if (incrementalApplied) {
         reloadPath = "db";
         setCurrentDataSource("db");
