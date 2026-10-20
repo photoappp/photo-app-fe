@@ -55,6 +55,7 @@ import {
   countPhotosMissingCoordsByDateTime,
   countPhotosMissingPlace,
   getDistinctPlaces,
+  hasPhotosWithoutLocation,
   getPhotosMissingCityPage,
   getPhotosMissingPlace,
   updatePhotoPlacesByAssetIds,
@@ -701,6 +702,8 @@ export default function HomeScreen() {
   const autoStartedSearchSignatureRef = useRef<string | null>(null);
   /* 2026.10.19 장소 목록 갱신 함수는 아래에서 정의되므로(TDZ) ref로 간접 호출 by Claude */
   const refreshDbPlaceOptionsRef = useRef<() => void>(() => {});
+  /* 2026.10.19 표시 라벨 → 해당 장소가 가질 수 있는 모든 도시명(정밀/근사) by Claude */
+  const cityAliasesRef = useRef<Record<string, string[]>>({});
   /* 2026.10.19 준비 루틴이 실제로 실행 중인지 추적 by Claude */
   const searchRunInFlightRef = useRef(false);
   const locationSearchResumeSignatureRef = useRef<string | null>(null);
@@ -2156,21 +2159,40 @@ export default function HomeScreen() {
         return items;
       }
 
+      /* 2026.10.19 SQL(buildPlaceClause)과 동일한 의미로 맞춤:
+         - '위치 정보 없음' 항목은 좌표가 없는 사진을 포함
+         - 도시는 정밀/근사 어느 이름이든 선택 라벨(및 그 별칭)과 일치하면 매칭
+         - 위치를 모르는 사진은 도시 필터를 통과하지 않음 by Claude */
+      const noLocationLabel = t("othersNoLocation", "Others (no location)");
+      const wantsNoLocation = countries.includes(noLocationLabel);
+      const selectedCountries = countries.filter(
+        (name) => name !== noLocationLabel,
+      );
+      const expandedCities = new Set(
+        cities.flatMap((label) => cityAliasesRef.current[label] ?? [label]),
+      );
+
       return items.filter((photo) => {
         const country = String(photo.country ?? "").trim();
-        /* 2026.10.12 정밀 도시가 아직 없으면 근사 도시로도 매칭 — 업그레이드 후에도 양쪽 다 매칭돼 선택이 고아가 되지 않음 by Claude */
-        const city = String(photo.city ?? photo.cityApprox ?? "").trim();
-        const matchesCountry =
-          countries.length === 0 ? true : countries.includes(country);
+        const hasLocation = !!photo.location;
 
-        if (!matchesCountry) return false;
-        if (cities.length === 0) return true;
-        if (!city) return true;
+        if (selectedCountries.length > 0 || wantsNoLocation) {
+          const matchesCountry = selectedCountries.includes(country);
+          const matchesNoLocation = wantsNoLocation && !hasLocation;
+          if (!matchesCountry && !matchesNoLocation) return false;
+          if (matchesNoLocation) return true;
+        }
 
-        return cities.includes(city);
+        if (expandedCities.size === 0) return true;
+        const city = String(photo.city ?? "").trim();
+        const approx = String(photo.cityApprox ?? "").trim();
+        return (
+          (!!city && expandedCities.has(city)) ||
+          (!!approx && expandedCities.has(approx))
+        );
       });
     },
-    [],
+    [t],
   );
 
   const deriveVisiblePhotos = useCallback(
@@ -3174,23 +3196,49 @@ export default function HomeScreen() {
   const refreshDbPlaceOptions = useCallback(async () => {
     try {
       const rows = await getDistinctPlaces();
-      const seen = new Set<string>();
-      const options: { country: string; city: string | null }[] = [];
+
+      /* 2026.10.19 같은 장소가 보강 전후로 다른 이름(근사 'Suwon' / 정밀 '수원시')을 갖는 동안
+         목록에 두 번 나오지 않도록, 근사 이름을 묶음 기준으로 삼고 표시만 정밀 이름을 쓴다.
+         선택값(라벨)은 아래 cityAliases로 확장해 양쪽 이름 모두와 매칭된다 by Claude */
+      const groups = new Map<
+        string,
+        { country: string; label: string | null; names: Set<string> }
+      >();
       for (const row of rows) {
         if (!row.countryCode || row.countryCode === "XX") continue;
         const country = countryDisplayName(row.countryCode);
         if (!country) continue;
-        const city = row.city ?? row.cityApprox ?? null;
-        const key = `${country}__${city ?? ""}`;
-        if (seen.has(key)) continue;
-        seen.add(key);
-        options.push({ country, city });
+        const groupKey = `${country}__${row.cityApprox ?? row.city ?? ""}`;
+        const group = groups.get(groupKey) ?? {
+          country,
+          label: null,
+          names: new Set<string>(),
+        };
+        if (row.city) group.names.add(row.city);
+        if (row.cityApprox) group.names.add(row.cityApprox);
+        /* 정밀 이름이 있으면 그것을 라벨로, 없으면 근사 이름 */
+        group.label = row.city ?? group.label ?? row.cityApprox ?? null;
+        groups.set(groupKey, group);
       }
+
+      const options: { country: string; city: string | null }[] = [];
+      const aliases: Record<string, string[]> = {};
+      for (const group of groups.values()) {
+        options.push({ country: group.country, city: group.label });
+        if (group.label) aliases[group.label] = [...group.names];
+      }
+
+      /* 2026.10.19 위치 정보가 없는 사진 묶음 — PicQly-T의 Others 항목과 동일 by Claude */
+      if (await hasPhotosWithoutLocation()) {
+        options.push({ country: t("othersNoLocation", "Others (no location)"), city: null });
+      }
+
+      cityAliasesRef.current = aliases;
       setDbPlaceOptions(options);
     } catch (err) {
       console.log("place options load error:", err);
     }
-  }, []);
+  }, [t]);
 
   useEffect(() => {
     refreshDbPlaceOptionsRef.current = () => {
@@ -3790,13 +3838,20 @@ export default function HomeScreen() {
       const queryDateStartMs = dayStartMs(currentFilter.dateStart);
       const queryDateEndNextMs = dayEndNextMs(currentFilter.dateEnd);
       /* 2026.10.18 국가/도시 조건을 SQL로 내림 — UI는 표시명으로 선택하므로 A3 코드로 역변환 by Claude */
-      const mappedCountryCodes = currentFilter.countries
+      /* 2026.10.19 '위치 정보 없음' 항목은 국가 코드가 아니므로 분리해서 처리 by Claude */
+      const noLocationLabel = t("othersNoLocation", "Others (no location)");
+      const includeNoLocation =
+        currentFilter.countries.includes(noLocationLabel);
+      const selectedCountryNames = currentFilter.countries.filter(
+        (name) => name !== noLocationLabel,
+      );
+      const mappedCountryCodes = selectedCountryNames
         .map((name) => countryCodeForDisplayName(name))
         .filter((code): code is string => !!code);
 
       /* 2026.10.18 선택한 국가명 중 하나라도 코드로 변환되지 않으면(지오코더 표기 등 카탈로그 외 값)
          SQL 조건이 과소/누락되어 결과가 틀어지므로 기존 경로로 양보 by Claude */
-      if (mappedCountryCodes.length !== currentFilter.countries.length) {
+      if (mappedCountryCodes.length !== selectedCountryNames.length) {
         recordPerfMetric(
           "home.db_datetime_query.ms",
           Date.now() - dbLoadStartedAt,
@@ -3820,9 +3875,18 @@ export default function HomeScreen() {
         };
       }
 
+      /* 선택한 도시 라벨을 같은 장소의 모든 이름(정밀/근사)으로 확장 */
+      const expandedCities = Array.from(
+        new Set(
+          currentFilter.cities.flatMap(
+            (label) => cityAliasesRef.current[label] ?? [label],
+          ),
+        ),
+      );
       const placeFilter = {
         countryCodes: mappedCountryCodes,
-        cities: currentFilter.cities,
+        cities: expandedCities,
+        includeNoLocation,
       };
       const totalCount = await countPhotoMetadataByDateTime({
         dateStartMs: queryDateStartMs,

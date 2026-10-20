@@ -93,6 +93,7 @@ export const TRANSLATIONS = {
 		locationSearchRemainingTimeShort: "Estimated remaining time: {seconds} sec",
 		locationSearchRemainingTimeLong: "Estimated remaining time: {minutes} min {seconds} sec",
 		locationListFilling: "Organizing location info…",
+		othersNoLocation: "Others (no location)",
 		locationSearchEstimatedTimeShort: "{seconds} sec",
 		locationSearchEstimatedTimeLong: "{minutes} min {seconds} sec",
 		locationSearchSearchPromptTitle:
@@ -185,6 +186,7 @@ export const TRANSLATIONS = {
 		locationSearchRemainingTimeShort: "예상 남은 시간: {seconds}초",
 		locationSearchRemainingTimeLong: "예상 남은 시간: {minutes}분 {seconds}초",
 		locationListFilling: "위치 정보 정리 중…",
+		othersNoLocation: "기타 (위치 정보 없음)",
 		locationSearchEstimatedTimeShort: "{seconds}초",
 		locationSearchEstimatedTimeLong: "{minutes}분 {seconds}초",
 		locationSearchSearchPromptTitle:

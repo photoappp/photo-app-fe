@@ -12,6 +12,12 @@ let dbPromise: Promise<SQLite.SQLiteDatabase> | null = null;
 let initPromise: Promise<void> | null = null;
 /* 2026.04.15 동시 SQLite write 요청을 직렬화해 트랜잭션 충돌(cannot start transaction within a transaction)을 방지하기 위해 추가 by June */
 let writeQueue: Promise<void> = Promise.resolve();
+/* 2026.10.19 동일 조건의 COUNT를 매 페이지 조회마다 다시 돌리지 않도록 캐시.
+   쓰기가 일어나면 같은 큐 안에서 무효화한다(PicQly-T의 countCache와 동일 방식) by Claude */
+let countCache = new Map<string, number>();
+const invalidateCountCache = () => {
+  if (countCache.size > 0) countCache = new Map();
+};
 
 export type PhotoMetadataRow = {
   assetId: string;
@@ -43,6 +49,8 @@ export type PlaceFilter = {
   /* A3 국가 코드 목록 (표시명 아님) */
   countryCodes?: string[];
   cities?: string[];
+  /* 2026.10.19 '위치 정보 없음' 묶음 포함 여부 (PicQly-T의 Others 항목과 동일) by Claude */
+  includeNoLocation?: boolean;
 };
 
 /* 2026.09.02 OFFSET 드리프트 없이 DB 페이지네이션을 이어가기 위한 keyset 커서 타입 추가 by Claude */
@@ -89,6 +97,8 @@ const getDb = async () => {
 
 /* 2026.04.15 쓰기 작업을 순차 실행해 rollback/start transaction 충돌 로그를 제거하기 위해 write queue 헬퍼를 추가 by June */
 const enqueueWrite = async <T>(task: () => Promise<T>) => {
+  /* 쓰기와 같은 큐에서 캐시를 무효화해, 부분 실패 포함 모든 변경이 반영되도록 함 */
+  invalidateCountCache();
   const run = writeQueue.then(task, task);
   writeQueue = run.then(
     () => undefined,
@@ -1004,24 +1014,30 @@ const buildPlaceClause = (place?: PlaceFilter) => {
   const countryCodes = (place?.countryCodes ?? []).filter(Boolean);
   const cities = (place?.cities ?? []).filter(Boolean);
 
+  const noLocationSql =
+    "(country_code IS NULL AND (latitude IS NULL OR (latitude = 0 AND longitude = 0)))";
+
   if (countryCodes.length > 0) {
+    const inClause = `country_code IN (${countryCodes.map(() => "?").join(",")})`;
     clauses.push(
-      `AND country_code IN (${countryCodes.map(() => "?").join(",")})`
+      place?.includeNoLocation
+        ? `AND (${inClause} OR ${noLocationSql})`
+        : `AND ${inClause}`
     );
     args.push(...countryCodes);
+  } else if (place?.includeNoLocation) {
+    /* '위치 정보 없음'만 선택한 경우 */
+    clauses.push(`AND ${noLocationSql}`);
   }
   if (cities.length > 0) {
     const placeholders = cities.map(() => "?").join(",");
-    /* 2026.10.18 기존 JS 필터(applyLocationFilter)는 도시를 모르는 사진을 통과시킨다.
-       SQL이 더 엄격하면 보강 전 사진이 결과에서 사라져 동작이 바뀌므로 의미를 그대로 맞춤:
-       표시값(city ?? city_approx)이 일치하거나, 도시 정보가 아예 없는 경우 포함 by Claude */
+    /* 2026.10.19 도시는 정밀/근사 어느 쪽이든 선택값과 일치하면 매칭(같은 장소가 보강 전후로
+       다른 이름을 갖는 동안에도 선택이 유지되도록). 위치를 모르는 사진은 'Others' 묶음이
+       담당하므로 여기서 통과시키지 않는다 by Claude */
     clauses.push(
-      `AND (
-        COALESCE(city, city_approx) IN (${placeholders})
-        OR (city IS NULL AND city_approx IS NULL)
-      )`
+      `AND (city IN (${placeholders}) OR city_approx IN (${placeholders}))`
     );
-    args.push(...cities);
+    args.push(...cities, ...cities);
   }
 
   return { sql: clauses.join("\n      "), args };
@@ -1139,6 +1155,23 @@ export const countPhotosMissingPlace = async () => {
     `
   );
   return row?.count ?? 0;
+};
+
+/* 2026.10.19 위치 정보가 없는 사진이 하나라도 있는지 — 'Others' 항목 노출 여부 판단 by Claude */
+export const hasPhotosWithoutLocation = async () => {
+  await initPhotoMetadataDb();
+  const db = await getDb();
+  const row = await db.getFirstAsync<{ id: string }>(
+    `
+    SELECT asset_id as id
+    FROM photo_metadata
+    WHERE is_deleted = 0
+      AND country_code IS NULL
+      AND (latitude IS NULL OR (latitude = 0 AND longitude = 0))
+    LIMIT 1
+    `
+  );
+  return !!row;
 };
 
 /* 2026.10.18 현재 보유한 장소 목록을 SQL로 집계 — 선택기 목록을 메모리 사진 배열이 아닌 DB에서 구성 by Claude */
@@ -1389,6 +1422,9 @@ export const countPhotoMetadataByDateTime = async (params: {
   await initPhotoMetadataDb();
   const db = await getDb();
   const placeFilter = buildPlaceClause(params.place);
+  const cacheKey = JSON.stringify([params, placeFilter.sql]);
+  const cached = countCache.get(cacheKey);
+  if (cached !== undefined) return cached;
 
   const row = await db.getFirstAsync<{ count: number }>(
     `
@@ -1420,5 +1456,7 @@ export const countPhotoMetadataByDateTime = async (params: {
     ...placeFilter.args
   );
 
-  return row?.count ?? 0;
+  const total = row?.count ?? 0;
+  countCache.set(cacheKey, total);
+  return total;
 };
