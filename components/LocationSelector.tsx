@@ -191,10 +191,24 @@ const LocationSelector = forwardRef<LocationSelectorHandle, Props>(
 
     useEffect(() => {
       if (!visible) return;
-      const hasActiveLocationFilter =
-        selectedCountries.length > 0 || selectedCities.length > 0;
-      const nextCities = hasActiveLocationFilter ? selectedCities : allCities;
-      const nextCountries = hasActiveLocationFilter ? selectedCountries : allCountries;
+      const nextCountries =
+        selectedCountries.length > 0 ? selectedCountries : allCountries;
+      /* 2026.10.19 저장된 cities가 비어 있으면 '도시 조건 없음(= 전체 선택)'이라는 뜻이다.
+         applyCurrentSelection이 도시 칼럼 'All' 상태를 []로 커밋하기 때문인데, 그대로 복원하면
+         다시 열었을 때 도시가 하나도 선택되지 않은 것처럼 보였다(국가만 선택된 것처럼).
+         선택된 국가의 도시 전체를 체크한 상태로 되살려 'All'이 유지되게 한다 by Claude */
+      const nextCities =
+        selectedCities.length > 0
+          ? selectedCities
+          : nextCountries.length > 0
+            ? Array.from(
+                new Set(
+                  nextCountries.flatMap((country) =>
+                    getCitiesForCountry(country),
+                  ),
+                ),
+              ).sort()
+            : allCities;
       setTempCities((prev) =>
         areListsEqual(prev, nextCities) ? prev : nextCities,
       );
@@ -205,6 +219,7 @@ const LocationSelector = forwardRef<LocationSelectorHandle, Props>(
       allCities,
       allCountries,
       areListsEqual,
+      getCitiesForCountry,
       selectedCities,
       selectedCountries,
       visible,
