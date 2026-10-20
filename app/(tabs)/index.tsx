@@ -6720,26 +6720,21 @@ export default function HomeScreen() {
     thumbnailBlockingUris.length > 0 &&
     thumbnailBlockingUris.some((uri) => !thumbnailReadyByUri[uri]);
   /* 2026.05.28 메인 썸네일/필터 변경 중에는 중복 입력을 막고 현재 처리 상태를 명확히 보여주기 위한 안내 문구를 분리 by June */
-  const mainLoadingMessage = !didInitialLoad || initialLoading
-    ? t("loadingPhotos", "Loading thumbnails...")
-    : filterLoading
-      ? "Updating thumbnails..."
-    : thumbnailResolving ||
-            hasPendingDisplayThumbnails ||
-            hasPendingVisibleThumbnailPaint
-          ? t("loadingPhotos", "Loading thumbnails...")
-          : isScanning
-            ? "Scanning photos..."
-            : "";
-  const isMainInteractionBlocked =
-    !didInitialLoad || initialLoading || filterLoading;
+  /* 2026.10.19 필터 적용/썸네일 페인트 중에 뜨던 '업데이트/로딩' 안내와 입력 차단 오버레이 제거.
+     필터는 인덱스된 조회 1회로 끝나고 결과는 그리드에 바로 반영되므로, 매번 깜빡이는 오버레이는
+     노이즈이자 조작을 막는 요인이었다. 최초 진입(아직 아무 사진도 없는 상태)에서만 안내한다 by Claude */
+  const mainLoadingMessage =
+    !didInitialLoad || initialLoading
+      ? t("loadingPhotos", "Loading thumbnails...")
+      : isScanning
+        ? "Scanning photos..."
+        : "";
+  const isMainInteractionBlocked = !didInitialLoad || initialLoading;
   const mainInteractionBlockReason = !didInitialLoad
     ? "didInitialLoad=false"
     : initialLoading
       ? "initialLoading=true"
-      : filterLoading
-        ? "filterLoading=true"
-        : "";
+      : "";
   /* 2026.05.28 위치 인덱싱/필터 갱신 중 위치 바텀시트에 아직 목록이 완성되지 않았음을 안내하기 위한 준비 상태 by June */
   const isLocationListPreparing =
     !didInitialLoad ||
