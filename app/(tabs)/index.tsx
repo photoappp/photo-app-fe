@@ -54,6 +54,7 @@ import {
   countPhotoMetadataByDateTime,
   countPhotosMissingCoordsByDateTime,
   countPhotosMissingPlace,
+  getDistinctPlaces,
   getPhotosMissingCityPage,
   getPhotosMissingPlace,
   updatePhotoPlacesByAssetIds,
@@ -698,6 +699,8 @@ export default function HomeScreen() {
   const lastPreparedLocationSearchSignatureRef = useRef<string | null>(null);
   /* 2026.10.18 적응형 자동 시작이 같은 필터에서 반복 실행되지 않도록 하는 가드 by Claude */
   const autoStartedSearchSignatureRef = useRef<string | null>(null);
+  /* 2026.10.19 장소 목록 갱신 함수는 아래에서 정의되므로(TDZ) ref로 간접 호출 by Claude */
+  const refreshDbPlaceOptionsRef = useRef<() => void>(() => {});
   /* 2026.10.19 준비 루틴이 실제로 실행 중인지 추적 by Claude */
   const searchRunInFlightRef = useRef(false);
   const locationSearchResumeSignatureRef = useRef<string | null>(null);
@@ -1227,6 +1230,7 @@ export default function HomeScreen() {
     (nextFilter: FilterState) => {
       /* 2026.10.04 팝업이 뜨는 시점의 실제 잔여 작업량으로 예상 시간이 표시되도록 갱신 by Claude */
       void refreshSearchWorkEstimate(nextFilter);
+      refreshDbPlaceOptionsRef.current();
       lastDeclinedLocationSearchSignatureRef.current = null;
       lastPreparedLocationSearchSignatureRef.current = null;
       locationSearchResumeSignatureRef.current = null;
@@ -3159,6 +3163,40 @@ export default function HomeScreen() {
 
   /* 2026.10.11 백그라운드 도시 해소 잔여 수 — 위치 선택기에 '정리 중 (n)' 표시용 by Claude */
   const [geocodeQueuePending, setGeocodeQueuePending] = useState(0);
+
+  /* 2026.10.19 위치 선택기 목록을 '현재 로드된 사진'이 아니라 DB 전체에서 구성한다.
+     기존에는 화면에 올라온 사진에만 있는 국가/도시가 보여서, 보유 중인데도 목록에
+     없는 장소가 생겼다(PicQly-T는 DISTINCT 쿼리로 라이브러리 전체를 사용) by Claude */
+  const [dbPlaceOptions, setDbPlaceOptions] = useState<
+    { country: string; city: string | null }[]
+  >([]);
+
+  const refreshDbPlaceOptions = useCallback(async () => {
+    try {
+      const rows = await getDistinctPlaces();
+      const seen = new Set<string>();
+      const options: { country: string; city: string | null }[] = [];
+      for (const row of rows) {
+        if (!row.countryCode || row.countryCode === "XX") continue;
+        const country = countryDisplayName(row.countryCode);
+        if (!country) continue;
+        const city = row.city ?? row.cityApprox ?? null;
+        const key = `${country}__${city ?? ""}`;
+        if (seen.has(key)) continue;
+        seen.add(key);
+        options.push({ country, city });
+      }
+      setDbPlaceOptions(options);
+    } catch (err) {
+      console.log("place options load error:", err);
+    }
+  }, []);
+
+  useEffect(() => {
+    refreshDbPlaceOptionsRef.current = () => {
+      void refreshDbPlaceOptions();
+    };
+  }, [refreshDbPlaceOptions]);
 
   /* 2026.10.11 드레인 사이클마다 로드된 전체 사진에 지오코드 캐시를 재적용 — 네이티브 호출 없이
      배치 캐시 읽기 1회로 도시 라벨/선택기 목록이 실시간으로 자라게 함 by Claude */
@@ -6035,6 +6073,7 @@ export default function HomeScreen() {
           /* 2026.10.18 보강 직후 화면에 이미 로드된 사진의 국가/도시 라벨을 즉시 반영해
              위치 선택기 목록이 재조회 없이 채워지도록 함(캐시만 사용, 네트워크 없음) by Claude */
           void followUpVisibleLocations({ maxLookups: 0 });
+          void refreshDbPlaceOptions();
           /* 이전 세션에서 쌓인 캐시를 먼저 반영한 뒤 남은 좌표를 지오코딩 by Claude */
           void persistCachedCities().finally(() => {
             if (!backgroundMetadataSyncCancelledRef.current) {
@@ -6049,6 +6088,7 @@ export default function HomeScreen() {
     startPlaceBackfill,
     persistCachedCities,
     followUpVisibleLocations,
+    refreshDbPlaceOptions,
     startGeocodeQueueDrain,
   ]);
 
@@ -6067,11 +6107,13 @@ export default function HomeScreen() {
     startBackgroundMetadataSync();
     void refreshSearchWorkEstimate(filterRef.current);
     void resolveFirstPageCities();
+    void refreshDbPlaceOptions();
   }, [
     didInitialLoad,
     startBackgroundMetadataSync,
     refreshSearchWorkEstimate,
     resolveFirstPageCities,
+    refreshDbPlaceOptions,
   ]);
 
   useEffect(() => {
@@ -7089,6 +7131,7 @@ export default function HomeScreen() {
               locationPreparing={isLocationListPreparing}
               locationPreparingMessage={locationPreparingMessage}
               geocodePendingCount={geocodeQueuePending}
+              availablePlaces={dbPlaceOptions}
               onOpenLocationRequest={() =>
                 requestLocationFeatureOpen("location-filter")
               }

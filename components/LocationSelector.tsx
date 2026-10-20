@@ -45,6 +45,8 @@ type Props = {
   preparingMessage?: string;
   /* 2026.10.11 백그라운드 도시 해소 잔여 수 — >0이면 목록이 아직 자라는 중임을 비차단으로 안내 by Claude */
   pendingCityCount?: number;
+  /* 2026.10.19 DB 전체(DISTINCT)에서 만든 장소 목록 — 로드된 사진에만 의존하지 않도록 by Claude */
+  availablePlaces?: { country: string; city: string | null }[];
   onSelectionChange?: (selected: {
     countries: string[];
     cities: string[];
@@ -64,6 +66,7 @@ const LocationSelector = forwardRef<LocationSelectorHandle, Props>(
       isPreparing = false,
       preparingMessage,
       pendingCityCount,
+      availablePlaces,
       onSelectionChange,
       onGate,
     },
@@ -122,10 +125,18 @@ const LocationSelector = forwardRef<LocationSelectorHandle, Props>(
             });
           });
 
-          photos.forEach(({ country, city, cityApprox }) => {
+          /* 2026.10.19 목록 구성 소스: DB 전체 장소 목록(availablePlaces)이 있으면 그것을 쓰고,
+             없으면(인덱스/보강 전) 기존처럼 로드된 사진에서 구성 by Claude */
+          const placeEntries: { country: string; city: string | null }[] =
+            availablePlaces && availablePlaces.length > 0
+              ? availablePlaces
+              : photos.map(({ country, city, cityApprox }) => ({
+                  country: country ?? "",
+                  city: city ?? cityApprox ?? null,
+                }));
+
+          placeEntries.forEach(({ country, city: cityLabel }) => {
             if (!country) return;
-            /* 2026.10.12 정밀 도시가 캐시되기 전엔 근사 도시(영문)로 목록을 즉시 구성 by Claude */
-            const cityLabel = city ?? cityApprox;
 
             if (!nextLocationMap[country]) {
               nextLocationMap[country] = {
@@ -159,7 +170,7 @@ const LocationSelector = forwardRef<LocationSelectorHandle, Props>(
           });
         })
         .catch(console.error);
-    }, [photos]);
+    }, [photos, availablePlaces]);
 
     const getCitiesForCountry = useCallback(
       (country: string) =>

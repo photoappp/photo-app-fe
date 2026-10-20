@@ -126,6 +126,8 @@ type DateTimeFilterProps = {
   locationPreparingMessage?: string;
   /* 2026.10.11 백그라운드 도시 해소 잔여 수 — 위치 선택기에 '정리 중 (n)' 표시용 by Claude */
   geocodePendingCount?: number;
+  /* 2026.10.19 DB 전체에서 구성한 장소 목록 by Claude */
+  availablePlaces?: { country: string; city: string | null }[];
   onOpenLocationRequest?: () => boolean | Promise<boolean>;
   locationOpenToken?: number;
   interactionBlocked?: boolean;
@@ -243,6 +245,7 @@ export default function DateTimeFilter({
   locationPreparing = false,
   locationPreparingMessage,
   geocodePendingCount,
+  availablePlaces,
   onOpenLocationRequest,
   locationOpenToken = 0,
   interactionBlocked = false,
@@ -1023,6 +1026,7 @@ export default function DateTimeFilter({
           isPreparing={locationPreparing}
           preparingMessage={locationPreparingMessage}
           pendingCityCount={geocodePendingCount}
+          availablePlaces={availablePlaces}
           onGate={onLocationGate}
         />
       }
