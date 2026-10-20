@@ -7111,29 +7111,9 @@ export default function HomeScreen() {
                 </TouchableOpacity>
               ) : null}
               {/* 썸네일 그리드 END */}
-              {/** Progress bar START */}
-              {!didInitialLoad ||
-              initialLoading ||
-              filterLoading ||
-              thumbnailResolving ||
-              hasPendingDisplayThumbnails ||
-              isScanning ? ( // 2026.03.27 By June
-                <View style={styles.gridOverlay} pointerEvents="auto">
-                  <View style={styles.loadingBox}>
-                    <ActivityIndicator size="large" />
-                    <Text style={styles.loadingText}>
-                      {/* 2026.05.28 최초 로딩/필터 변경/추가 로딩을 구분해 사용자가 현재 상태를 알 수 있도록 문구 세분화 by June */}
-                      {mainLoadingMessage || t("loadingPhotos", "Loading photos...")}
-                    </Text>
-                    <Text style={styles.loadingSubText}>
-                      {`${t("photoIndexing", "Photo indexing")}: ${indexingProgress.photoIndexed.toLocaleString()} (${indexingProgress.isPhotoIndexing ? t("syncing", "syncing") : t("complete", "complete")})`}
-                    </Text>
-                    <Text style={styles.loadingSubText}>
-                      {`${t("geocodeCache", "Geocode cache")}: ${indexingProgress.geocodeCached.toLocaleString()} / ${t("queue", "Queue")}: ${indexingProgress.geocodePending.toLocaleString()}`}
-                    </Text>
-                  </View>
-                </View>
-              ) : error ? (
+              {/** 2026.10.19 로딩 오버레이 제거 — 로딩/필터/썸네일 상태로 전체 화면을 덮고
+                   입력을 막던 팝업을 더 이상 띄우지 않는다. 사진은 준비되는 대로 그리드에 나타난다 by Claude */}
+              {error ? (
                 <View style={styles.centerContainer}>
                   <Text style={styles.errorText}>{error}</Text>
                 </View>
