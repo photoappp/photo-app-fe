@@ -6139,12 +6139,17 @@ export default function HomeScreen() {
   const normalizeEffectiveLocationSelection = useCallback(
     (countriesInput?: string[], citiesInput?: string[]) => {
       /* 2026.05.28 위치 필터는 raw 선택값이 달라도 실제 결과가 같을 수 있어 현재 후보 기준의 의미값으로 정규화 by June */
+      /* 2026.10.19 후보 집합을 '현재 로드된 사진'이 아니라 DB 전체 장소 목록에서 만든다.
+         장소 조건이 SQL로 내려간 뒤로 photosAll은 이미 걸러진 부분집합이다. 예를 들어 Germany만
+         선택된 상태에서는 로드된 사진의 국가가 {Germany} 하나뿐이라 '모든 후보를 덮는다'로 판정되어
+         선택이 []로 정규화됐고, All Locations로 바꿔도 이전 값과 같다고 보여(valueUnchanged)
+         재조회가 일어나지 않았다 — All Locations가 동작하지 않던 원인 by Claude */
       const availableCountries = new Set<string>();
       const availableCities = new Set<string>();
 
-      for (const photo of photosAllRef.current) {
-        const country = String(photo.country ?? "").trim();
-        const city = String(photo.city ?? "").trim();
+      for (const option of dbPlaceOptions) {
+        const country = String(option.country ?? "").trim();
+        const city = String(option.city ?? "").trim();
         if (country) availableCountries.add(country);
         if (city) availableCities.add(city);
       }
@@ -6169,7 +6174,7 @@ export default function HomeScreen() {
         cities: normalizeAxis(citiesInput, availableCities),
       };
     },
-    [normalizeSelectionList],
+    [dbPlaceOptions, normalizeSelectionList],
   );
 
   const handleLocationChange = useCallback(
