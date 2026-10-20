@@ -14,6 +14,7 @@ import {
   Text,
   TouchableOpacity,
   View,
+  useWindowDimensions,
 } from "react-native";
 import { useI18n } from "@/components/context/useI18n";
 /* 2026.06.23 [포인트3] 메뉴 내부 버튼 게이트 팝업을 이 Modal 안에서 직접 렌더하기 위해 추가 by yen */
@@ -45,6 +46,10 @@ type Props = {
   preparingMessage?: string;
   /* 2026.10.11 백그라운드 도시 해소 잔여 수 — >0이면 목록이 아직 자라는 중임을 비차단으로 안내 by Claude */
   pendingCityCount?: number;
+  /* 2026.10.19 DB 전체(DISTINCT)에서 만든 장소 목록 — 로드된 사진에만 의존하지 않도록 by Claude */
+  availablePlaces?: { country: string; city: string | null }[];
+  /* 2026.10.19 검색 진행 중이면 Search 버튼을 비활성화하고 'Searching…'으로 표시 by Claude */
+  searching?: boolean;
   onSelectionChange?: (selected: {
     countries: string[];
     cities: string[];
@@ -64,6 +69,8 @@ const LocationSelector = forwardRef<LocationSelectorHandle, Props>(
       isPreparing = false,
       preparingMessage,
       pendingCityCount,
+      availablePlaces,
+      searching = false,
       onSelectionChange,
       onGate,
     },
@@ -81,6 +88,11 @@ const LocationSelector = forwardRef<LocationSelectorHandle, Props>(
     const hasCommittedSelectionRef = useRef(false);
     /* 2026.04.22 TRANSLATIONS 직접 접근을 제거하고 공용 i18n 훅을 사용해 번역 처리 방식을 통일하기 위해 변경 by June */
     const { language, t } = useI18n();
+    /* 2026.10.19 국가/도시 목록이 길어지면 시트 높이를 넘겨 하단 버튼(All Locations·Search)이
+       화면 밖으로 밀려 보이지 않았다. 목록 높이에 상한을 두어 목록만 스크롤되게 하고
+       버튼은 항상 보이도록 한다 by Claude */
+    const { height: windowHeight } = useWindowDimensions();
+    const placeListMaxHeight = Math.max(160, Math.round(windowHeight * 0.3));
     /* 2026.06.23 [포인트3] 게이트 팝업 상태/콜백 — placeSearch일 때만 이 Modal 안에서 오버레이로 렌더 by yen */
     const {
       popupVisible: gatePopupVisible,
@@ -122,10 +134,18 @@ const LocationSelector = forwardRef<LocationSelectorHandle, Props>(
             });
           });
 
-          photos.forEach(({ country, city, cityApprox }) => {
+          /* 2026.10.19 목록 구성 소스: DB 전체 장소 목록(availablePlaces)이 있으면 그것을 쓰고,
+             없으면(인덱스/보강 전) 기존처럼 로드된 사진에서 구성 by Claude */
+          const placeEntries: { country: string; city: string | null }[] =
+            availablePlaces && availablePlaces.length > 0
+              ? availablePlaces
+              : photos.map(({ country, city, cityApprox }) => ({
+                  country: country ?? "",
+                  city: city ?? cityApprox ?? null,
+                }));
+
+          placeEntries.forEach(({ country, city: cityLabel }) => {
             if (!country) return;
-            /* 2026.10.12 정밀 도시가 캐시되기 전엔 근사 도시(영문)로 목록을 즉시 구성 by Claude */
-            const cityLabel = city ?? cityApprox;
 
             if (!nextLocationMap[country]) {
               nextLocationMap[country] = {
@@ -159,7 +179,7 @@ const LocationSelector = forwardRef<LocationSelectorHandle, Props>(
           });
         })
         .catch(console.error);
-    }, [photos]);
+    }, [photos, availablePlaces]);
 
     const getCitiesForCountry = useCallback(
       (country: string) =>
@@ -171,10 +191,24 @@ const LocationSelector = forwardRef<LocationSelectorHandle, Props>(
 
     useEffect(() => {
       if (!visible) return;
-      const hasActiveLocationFilter =
-        selectedCountries.length > 0 || selectedCities.length > 0;
-      const nextCities = hasActiveLocationFilter ? selectedCities : allCities;
-      const nextCountries = hasActiveLocationFilter ? selectedCountries : allCountries;
+      const nextCountries =
+        selectedCountries.length > 0 ? selectedCountries : allCountries;
+      /* 2026.10.19 저장된 cities가 비어 있으면 '도시 조건 없음(= 전체 선택)'이라는 뜻이다.
+         applyCurrentSelection이 도시 칼럼 'All' 상태를 []로 커밋하기 때문인데, 그대로 복원하면
+         다시 열었을 때 도시가 하나도 선택되지 않은 것처럼 보였다(국가만 선택된 것처럼).
+         선택된 국가의 도시 전체를 체크한 상태로 되살려 'All'이 유지되게 한다 by Claude */
+      const nextCities =
+        selectedCities.length > 0
+          ? selectedCities
+          : nextCountries.length > 0
+            ? Array.from(
+                new Set(
+                  nextCountries.flatMap((country) =>
+                    getCitiesForCountry(country),
+                  ),
+                ),
+              ).sort()
+            : allCities;
       setTempCities((prev) =>
         areListsEqual(prev, nextCities) ? prev : nextCities,
       );
@@ -185,6 +219,7 @@ const LocationSelector = forwardRef<LocationSelectorHandle, Props>(
       allCities,
       allCountries,
       areListsEqual,
+      getCitiesForCountry,
       selectedCities,
       selectedCountries,
       visible,
@@ -224,6 +259,15 @@ const LocationSelector = forwardRef<LocationSelectorHandle, Props>(
       const isSelected = tempCountries.includes(item);
       const countryCities = getCitiesForCountry(item);
 
+      /* 2026.10.19 'All'이 켜진 상태(= 전부 선택)에서 개별 국가를 누르면 그 국가 하나만 남긴다.
+         전체에서 하나를 빼는 동작은 사용자가 기대하는 바가 아니다 — 전체가 켜진 상태의 첫 탭은
+         '이것만 보기'로 읽힌다. 도시도 그 국가의 도시 전체로 맞춰 'All' 상태를 유지한다 by Claude */
+      if (areAllCountriesSelected) {
+        setTempCountries([item]);
+        setTempCities([...countryCities].sort());
+        return;
+      }
+
       if (isSelected) {
         const nextCountries = tempCountries.filter((country) => country !== item);
         const nextCities = tempCities.filter((city) => !countryCities.includes(city));
@@ -247,6 +291,12 @@ const LocationSelector = forwardRef<LocationSelectorHandle, Props>(
 
         const nextCities = Array.from(new Set([...tempCities, ...visibleCities])).sort();
         setTempCities(nextCities);
+        return;
+      }
+
+      /* 2026.10.19 도시도 같은 규칙 — 'All'이 켜진 상태에서 개별 도시를 누르면 그 도시만 남긴다 by Claude */
+      if (areAllVisibleCitiesSelected) {
+        setTempCities([item]);
         return;
       }
 
@@ -371,15 +421,30 @@ const LocationSelector = forwardRef<LocationSelectorHandle, Props>(
       handleReset,
     }));
 
+    /* 2026.10.19 'All Locations' 버튼용 — 초안(temp)만 전체 선택으로 바꾼다.
+       applyCurrentSelection이 '전체 선택'을 필터 해제(빈 배열)로 환산하므로,
+       이 상태에서 Search를 누르면 기존 리셋과 같은 결과가 된다 by Claude */
+    const selectAllPlacesDraft = () => {
+      setTempCountries(allCountries);
+      setTempCities(allCities);
+    };
+
     const applyCurrentSelection = () => {
       hasCommittedSelectionRef.current = true;
       const appliedCountries = [...tempCountries].sort();
-      const appliedCities = [...tempCities].sort();
-      const isAllSelected =
+
+      /* 2026.10.19 도시 칼럼이 'All' 상태면 도시 조건 자체를 걸지 않는다.
+         도시 목록을 그대로 넘기면 SQL이 'AND (city IN (...) OR city_approx IN (...))'를 붙이는데,
+         오프라인 도시 테이블(50km 반경)에서 도시가 잡히지 않은 사진은 city/city_approx가 모두
+         NULL이라 국가만 고른 경우에도 전부 빠져버린다.
+         PicQly-T의 cities: { all: true }(= 조건 없음)와 같은 의미 by Claude */
+      const cityIsAll =
+        visibleCities.length === 0 || areAllVisibleCitiesSelected;
+      const appliedCities = cityIsAll ? [] : [...tempCities].sort();
+      const countryIsAll =
         allCountries.length > 0 &&
-        allCities.length > 0 &&
-        areListsEqual(appliedCountries, allCountries) &&
-        areListsEqual(appliedCities, allCities);
+        areListsEqual(appliedCountries, allCountries);
+      const isAllSelected = countryIsAll && cityIsAll;
       const nextCountries = isAllSelected ? [] : appliedCountries;
       const nextCities = isAllSelected ? [] : appliedCities;
       const locationLabel = isAllSelected
@@ -470,9 +535,9 @@ const LocationSelector = forwardRef<LocationSelectorHandle, Props>(
                     gap: 10,
                   }}
                 >
-                  <TouchableOpacity
-                    onPress={() => runGated(applyCurrentSelection)}
-                  >
+                  {/* 2026.10.19 닫기는 아무것도 적용하지 않는다 — 이전에는 이 X가 선택을 확정하고
+                      검색까지 시작했다. 적용은 하단 Search 버튼에서만 (PicQly-T와 동일) by Claude */}
+                  <TouchableOpacity onPress={onClose}>
                     {/* 2026-03-04 change to close icon by yen */}
                     <ICON_CLOSE width={20} height={20} />
                   </TouchableOpacity>
@@ -482,6 +547,9 @@ const LocationSelector = forwardRef<LocationSelectorHandle, Props>(
             <View
               style={{
                 flexDirection: "row",
+                /* 2026.10.19 시트 높이를 넘길 때 이 영역이 줄어들어야 하단 버튼이 살아남는다 by Claude */
+                flexShrink: 1,
+                minHeight: 0,
               }}
             >
               <View
@@ -489,7 +557,7 @@ const LocationSelector = forwardRef<LocationSelectorHandle, Props>(
                   borderRightWidth: 1.18,
                   borderColor: "#DBEAFE",
                   flex: 1,
-                  justifyContent: "center",
+                  minHeight: 0,
                 }}
               >
                 <Text style={styles.tableTitle}>
@@ -532,11 +600,13 @@ const LocationSelector = forwardRef<LocationSelectorHandle, Props>(
                     );
                   }}
                   keyExtractor={(item) => item}
+                  style={{ maxHeight: placeListMaxHeight }}
                 />
               </View>
               <View
                 style={{
                   flex: 1,
+                  minHeight: 0,
                 }}
               >
                 <Text style={styles.tableTitle}>
@@ -574,19 +644,15 @@ const LocationSelector = forwardRef<LocationSelectorHandle, Props>(
                       );
                     }}
                     keyExtractor={(item) => item}
+                    style={{ maxHeight: placeListMaxHeight }}
                   />
                 )}
               </View>
             </View>
             <View style={styles.buttonContainer}>
-              <TouchableOpacity
-                onPress={() =>
-                  runGated(() => {
-                    handleReset();
-                    onClose();
-                  })
-                }
-              >
+              {/* 2026.10.19 'All Locations'는 선택만 전체로 바꾼다 — 적용/검색/닫기를 하지 않는다.
+                  날짜·시간 시트의 'All Dates'/'All Times' 프리셋과 같은 성격 by Claude */}
+              <TouchableOpacity onPress={selectAllPlacesDraft}>
                 <LinearGradient
                   colors={["#2B7FFF", "#AD46FF"]}
                   start={{ x: 0, y: 0 }}
@@ -595,6 +661,31 @@ const LocationSelector = forwardRef<LocationSelectorHandle, Props>(
                 >
 									
 									<Text style={styles.primaryButtonText}>{t("allLocations")}</Text>
+                </LinearGradient>
+              </TouchableOpacity>
+              {/* 2026.10.19 Search — 이 버튼만이 선택을 확정하고 검색을 시작한다.
+                  리워드 게이트도 여기로 옮겼다(이전에는 X/전체선택 버튼에 걸려 있었다) by Claude */}
+              <TouchableOpacity
+                activeOpacity={0.8}
+                disabled={searching}
+                onPress={() => runGated(applyCurrentSelection)}
+                style={styles.searchButtonWrap}
+              >
+                <LinearGradient
+                  colors={
+                    searching
+                      ? ["#A9C4EC", "#CBB6E8"]
+                      : ["#2B7FFF", "#AD46FF"]
+                  }
+                  start={{ x: 0, y: 0 }}
+                  end={{ x: 1, y: 0 }}
+                  style={styles.primaryButton}
+                >
+                  <Text style={styles.primaryButtonText}>
+                    {searching
+                      ? t("searching", "Searching…")
+                      : t("search", "Search")}
+                  </Text>
                 </LinearGradient>
               </TouchableOpacity>
             </View>
@@ -620,7 +711,9 @@ const styles = StyleSheet.create({
     position: "relative",
     paddingTop: 20,
     paddingBottom: 40, // 아이폰 홈 바 영역 고려
-    maxHeight: "40%",
+    /* 2026.10.19 40%로는 목록 + 하단 버튼 2개가 들어가지 않아 Search가 화면 밖으로 밀렸다.
+       maxHeight는 상한일 뿐이라 목록이 짧으면 시트도 그만큼 낮게 유지된다 by Claude */
+    maxHeight: "80%",
     shadowColor: "#000",
     shadowOffset: {
       width: 0,
@@ -687,6 +780,10 @@ const styles = StyleSheet.create({
     borderTopWidth: 1,
     borderColor: "#ccc",
     backgroundColor: Colors.light.background,
+  },
+  /* 2026.10.19 하단 Search 버튼 — 'All Locations'와 동일한 그라데이션 디자인 by Claude */
+  searchButtonWrap: {
+    marginTop: 8,
   },
   tableTitle: {
     paddingTop: 8,

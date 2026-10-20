@@ -4,7 +4,7 @@ import * as SQLite from "expo-sqlite";
 /* 2026.04.15 메타데이터 전용 DB 파일명/버전을 고정해 추후 마이그레이션 기준점을 만들기 위해 추가 by June */
 const DB_NAME = "picqly_metadata.db";
 /* 2026.04.15 스키마 변경 시 버전 증가를 통해 구조 변경을 안전하게 적용하기 위해 추가 by June */
-const DB_SCHEMA_VERSION = 6;
+const DB_SCHEMA_VERSION = 8;
 
 /* 2026.04.15 DB 핸들을 싱글톤으로 재사용해 중복 open 비용과 상태 불일치를 줄이기 위해 추가 by June */
 let dbPromise: Promise<SQLite.SQLiteDatabase> | null = null;
@@ -12,6 +12,12 @@ let dbPromise: Promise<SQLite.SQLiteDatabase> | null = null;
 let initPromise: Promise<void> | null = null;
 /* 2026.04.15 동시 SQLite write 요청을 직렬화해 트랜잭션 충돌(cannot start transaction within a transaction)을 방지하기 위해 추가 by June */
 let writeQueue: Promise<void> = Promise.resolve();
+/* 2026.10.19 동일 조건의 COUNT를 매 페이지 조회마다 다시 돌리지 않도록 캐시.
+   쓰기가 일어나면 같은 큐 안에서 무효화한다(PicQly-T의 countCache와 동일 방식) by Claude */
+let countCache = new Map<string, number>();
+const invalidateCountCache = () => {
+  if (countCache.size > 0) countCache = new Map();
+};
 
 export type PhotoMetadataRow = {
   assetId: string;
@@ -32,6 +38,19 @@ export type PhotoSummaryRow = {
   takenAt: number | null;
   latitude: number | null;
   longitude: number | null;
+  /* 2026.10.18 SQL에서 필터링/표시에 쓰는 장소 컬럼 (국가는 A3 코드) by Claude */
+  countryCode: string | null;
+  city: string | null;
+  cityApprox: string | null;
+};
+
+/* 2026.10.18 위치 필터를 SQL WHERE로 내리기 위한 선택 조건 by Claude */
+export type PlaceFilter = {
+  /* A3 국가 코드 목록 (표시명 아님) */
+  countryCodes?: string[];
+  cities?: string[];
+  /* 2026.10.19 '위치 정보 없음' 묶음 포함 여부 (PicQly-T의 Others 항목과 동일) by Claude */
+  includeNoLocation?: boolean;
 };
 
 /* 2026.09.02 OFFSET 드리프트 없이 DB 페이지네이션을 이어가기 위한 keyset 커서 타입 추가 by Claude */
@@ -78,6 +97,8 @@ const getDb = async () => {
 
 /* 2026.04.15 쓰기 작업을 순차 실행해 rollback/start transaction 충돌 로그를 제거하기 위해 write queue 헬퍼를 추가 by June */
 const enqueueWrite = async <T>(task: () => Promise<T>) => {
+  /* 쓰기와 같은 큐에서 캐시를 무효화해, 부분 실패 포함 모든 변경이 반영되도록 함 */
+  invalidateCountCache();
   const run = writeQueue.then(task, task);
   writeQueue = run.then(
     () => undefined,
@@ -107,17 +128,27 @@ export const initPhotoMetadataDb = async () => {
         longitude REAL,
         created_at INTEGER NOT NULL,
         updated_at INTEGER NOT NULL,
-        is_deleted INTEGER NOT NULL DEFAULT 0
+        is_deleted INTEGER NOT NULL DEFAULT 0,
+        /* 2026.10.18 위치 필터를 JS가 아닌 SQL에서 처리하기 위해 판별된 장소를 사진 행에 저장.
+           국가는 언어가 바뀌어도 유효하도록 A3 코드로 저장하고 표시명은 읽을 때 변환 by Claude */
+        country_code TEXT,
+        city TEXT,
+        city_approx TEXT
       );
 
       CREATE INDEX IF NOT EXISTS idx_photo_metadata_taken_at
         ON photo_metadata (taken_at ASC);
       
-      CREATE INDEX IF NOT EXISTS idx_photo_metadata_taken_at_minute
-        ON photo_metadata (taken_at ASC, taken_minute ASC);
+      /* 2026.10.19 taken_minute 인덱스도 같은 이유로 여기서 만들지 않는다(컬럼이 ALTER로 추가되는 구버전 DB 대비).
+         마이그레이션 구간에서 ALTER 직후 생성됨 by Claude */
 
       CREATE INDEX IF NOT EXISTS idx_photo_metadata_uri
         ON photo_metadata (uri);
+
+      /* 2026.10.19 country_code 인덱스는 여기서 만들지 않는다.
+         기존 설치본에서는 CREATE TABLE IF NOT EXISTS가 no-op이라 컬럼이 없는 상태인데,
+         같은 execAsync 안에서 그 컬럼으로 인덱스를 만들면 'no such column: country_code'로
+         초기화 전체가 실패하고 무한 재시도에 빠진다. ALTER 이후(마이그레이션 구간)에서 생성 by Claude */
 
       CREATE TABLE IF NOT EXISTS photo_sync_state (
         id INTEGER PRIMARY KEY NOT NULL CHECK (id = 1),
@@ -128,6 +159,8 @@ export const initPhotoMetadataDb = async () => {
         pass_started_at INTEGER,
         /* 2026.10.04 taken_minute 계산 기준 시간대를 보존해 기기 시간대 변경 시 일괄 재계산 트리거로 사용 by Claude */
         time_zone TEXT,
+        /* 2026.10.18 네이티브 증분 동기화(변경 토큰/generation) 체크포인트 by Claude */
+        native_checkpoint TEXT,
         updated_at INTEGER NOT NULL
       );
 
@@ -164,6 +197,11 @@ export const initPhotoMetadataDb = async () => {
         asset_id TEXT,
         display_uri TEXT NOT NULL,
         updated_at INTEGER NOT NULL
+      );
+
+      /* 2026.10.19 전수/감사 패스에서 '이번에 본 자산 id'를 모아 삭제를 판별하기 위한 스테이징 by Claude */
+      CREATE TABLE IF NOT EXISTS sync_seen (
+        asset_id TEXT PRIMARY KEY NOT NULL
       );
     `);
 
@@ -250,6 +288,46 @@ export const initPhotoMetadataDb = async () => {
         ALTER TABLE photo_sync_state ADD COLUMN time_zone TEXT;
       `);
     }
+
+    /* 2026.10.18 기존 설치본에 네이티브 동기화 체크포인트 컬럼 추가 by Claude */
+    const syncStateColumns = await db.getAllAsync<{ name: string }>(
+      `PRAGMA table_info(photo_sync_state)`
+    );
+    if (
+      !syncStateColumns.some(
+        (c: { name: string }) => c.name === "native_checkpoint"
+      )
+    ) {
+      await db.execAsync(
+        `ALTER TABLE photo_sync_state ADD COLUMN native_checkpoint TEXT;`
+      );
+    }
+
+    /* 2026.10.18 기존 설치본에 장소 컬럼/인덱스를 추가 (SQL 위치 필터용) by Claude */
+    const metaInfo = await db.getAllAsync<{ name: string }>(
+      `PRAGMA table_info(photo_metadata)`
+    );
+    const hasColumn = (name: string) =>
+      metaInfo.some((c: { name: string }) => c.name === name);
+    if (!hasColumn("country_code")) {
+      await db.execAsync(
+        `ALTER TABLE photo_metadata ADD COLUMN country_code TEXT;`
+      );
+    }
+    if (!hasColumn("city")) {
+      await db.execAsync(`ALTER TABLE photo_metadata ADD COLUMN city TEXT;`);
+    }
+    if (!hasColumn("city_approx")) {
+      await db.execAsync(
+        `ALTER TABLE photo_metadata ADD COLUMN city_approx TEXT;`
+      );
+    }
+    await db.execAsync(`
+      CREATE INDEX IF NOT EXISTS idx_photo_metadata_country_taken
+        ON photo_metadata (is_deleted, country_code, taken_at DESC);
+      CREATE INDEX IF NOT EXISTS idx_photo_metadata_place_backlog
+        ON photo_metadata (is_deleted, country_code, latitude);
+    `);
 
     await db.execAsync(`PRAGMA user_version = ${DB_SCHEMA_VERSION};`);
   }).catch((err) => {
@@ -934,6 +1012,191 @@ export const markGeocodeJobFailed = async (params: {
   });
 };
 
+/* 2026.10.18 국가/도시 조건을 SQL로 내리는 공통 빌더 — 도시는 정밀(city)과 근사(city_approx) 양쪽 매칭 by Claude */
+const buildPlaceClause = (place?: PlaceFilter) => {
+  const clauses: string[] = [];
+  const args: string[] = [];
+  const countryCodes = (place?.countryCodes ?? []).filter(Boolean);
+  const cities = (place?.cities ?? []).filter(Boolean);
+
+  const noLocationSql =
+    "(country_code IS NULL AND (latitude IS NULL OR (latitude = 0 AND longitude = 0)))";
+
+  if (countryCodes.length > 0) {
+    const inClause = `country_code IN (${countryCodes.map(() => "?").join(",")})`;
+    clauses.push(
+      place?.includeNoLocation
+        ? `AND (${inClause} OR ${noLocationSql})`
+        : `AND ${inClause}`
+    );
+    args.push(...countryCodes);
+  } else if (place?.includeNoLocation) {
+    /* '위치 정보 없음'만 선택한 경우 */
+    clauses.push(`AND ${noLocationSql}`);
+  }
+  if (cities.length > 0) {
+    const placeholders = cities.map(() => "?").join(",");
+    /* 2026.10.19 도시는 정밀/근사 어느 쪽이든 선택값과 일치하면 매칭(같은 장소가 보강 전후로
+       다른 이름을 갖는 동안에도 선택이 유지되도록). 위치를 모르는 사진은 'Others' 묶음이
+       담당하므로 여기서 통과시키지 않는다 by Claude */
+    clauses.push(
+      `AND (city IN (${placeholders}) OR city_approx IN (${placeholders}))`
+    );
+    args.push(...cities, ...cities);
+  }
+
+  return { sql: clauses.join("\n      "), args };
+};
+
+/* 2026.10.18 장소 판별이 아직 안 된(좌표는 있고 country가 비어있는) 사진을 백그라운드 보강 대상으로 조회 by Claude */
+export const getPhotosMissingPlace = async (limit: number) => {
+  await initPhotoMetadataDb();
+  const db = await getDb();
+  return db.getAllAsync<{
+    assetId: string;
+    latitude: number;
+    longitude: number;
+  }>(
+    `
+    SELECT asset_id as assetId, latitude, longitude
+    FROM photo_metadata
+    WHERE is_deleted = 0
+      AND country_code IS NULL
+      AND latitude IS NOT NULL
+      AND longitude IS NOT NULL
+      AND NOT (latitude = 0 AND longitude = 0)
+    ORDER BY taken_at DESC
+    LIMIT ?
+    `,
+    limit
+  );
+};
+
+/* 2026.10.18 정밀 도시가 아직 비어 있는 사진을 taken_at 커서로 한 바퀴 순회 — 지오코드 캐시가
+   채워진 뒤 그 결과를 사진 행에 영속화하기 위한 조회(세션 간 정밀 도시 유지) by Claude */
+export const getPhotosMissingCityPage = async (params: {
+  /* 2026.10.18 동일 taken_at이 페이지 경계에 걸리면 단순 '<' 커서로는 영구히 건너뛰므로
+     (taken_at, asset_id) 복합 커서를 사용 by Claude */
+  after: PhotoPageCursor | null;
+  limit: number;
+}) => {
+  await initPhotoMetadataDb();
+  const db = await getDb();
+  const cursorClause = params.after
+    ? "AND (taken_at < ? OR (taken_at = ? AND asset_id < ?))"
+    : "";
+  const args: (number | string)[] = params.after
+    ? [params.after.takenAt, params.after.takenAt, params.after.assetId, params.limit]
+    : [params.limit];
+  return db.getAllAsync<{
+    assetId: string;
+    latitude: number;
+    longitude: number;
+    takenAt: number;
+  }>(
+    `
+    SELECT asset_id as assetId, latitude, longitude, taken_at as takenAt
+    FROM photo_metadata
+    WHERE is_deleted = 0
+      AND city IS NULL
+      AND taken_at IS NOT NULL
+      AND latitude IS NOT NULL
+      AND longitude IS NOT NULL
+      AND NOT (latitude = 0 AND longitude = 0)
+      ${cursorClause}
+    ORDER BY taken_at DESC, asset_id DESC
+    LIMIT ?
+    `,
+    ...args
+  );
+};
+
+/* 2026.10.18 판별된 장소를 사진 행에 일괄 기록 — updated_at은 삭제 정리 마커이므로 건드리지 않음 by Claude */
+export const updatePhotoPlacesByAssetIds = async (
+  rows: {
+    assetId: string;
+    countryCode: string | null;
+    city: string | null;
+    cityApprox: string | null;
+  }[]
+) => {
+  if (rows.length === 0) return;
+  await initPhotoMetadataDb();
+  const db = await getDb();
+
+  await enqueueWrite(async () => {
+    await db.runAsync(
+      `
+      UPDATE photo_metadata SET
+        country_code = COALESCE(json_extract(r.value, '$.countryCode'), photo_metadata.country_code),
+        city = COALESCE(json_extract(r.value, '$.city'), photo_metadata.city),
+        city_approx = COALESCE(json_extract(r.value, '$.cityApprox'), photo_metadata.city_approx)
+      FROM json_each(?) AS r
+      WHERE photo_metadata.asset_id = json_extract(r.value, '$.assetId')
+      `,
+      JSON.stringify(rows)
+    );
+  });
+};
+
+/* 2026.10.18 장소 보강 잔여량 — 진행 표시/추정에 사용 by Claude */
+export const countPhotosMissingPlace = async () => {
+  await initPhotoMetadataDb();
+  const db = await getDb();
+  /* 2026.10.18 '아직 장소가 확정되지 않은 사진' 수 — 좌표 자체가 아직 없는 사진도 포함해야 한다.
+     (Android 최초 설치는 모든 latitude가 NULL이라, 좌표 보유 행만 세면 0이 나와
+      장소가 하나도 없는 상태에서 SQL 위치 필터가 돌아 결과가 비어 보였음) by Claude */
+  const row = await db.getFirstAsync<{ count: number }>(
+    `
+    SELECT COUNT(*) as count
+    FROM photo_metadata
+    WHERE is_deleted = 0
+      AND country_code IS NULL
+      AND (
+        latitude IS NULL
+        OR longitude IS NULL
+        OR NOT (latitude = 0 AND longitude = 0)
+      )
+    `
+  );
+  return row?.count ?? 0;
+};
+
+/* 2026.10.19 위치 정보가 없는 사진이 하나라도 있는지 — 'Others' 항목 노출 여부 판단 by Claude */
+export const hasPhotosWithoutLocation = async () => {
+  await initPhotoMetadataDb();
+  const db = await getDb();
+  const row = await db.getFirstAsync<{ id: string }>(
+    `
+    SELECT asset_id as id
+    FROM photo_metadata
+    WHERE is_deleted = 0
+      AND country_code IS NULL
+      AND (latitude IS NULL OR (latitude = 0 AND longitude = 0))
+    LIMIT 1
+    `
+  );
+  return !!row;
+};
+
+/* 2026.10.18 현재 보유한 장소 목록을 SQL로 집계 — 선택기 목록을 메모리 사진 배열이 아닌 DB에서 구성 by Claude */
+export const getDistinctPlaces = async () => {
+  await initPhotoMetadataDb();
+  const db = await getDb();
+  return db.getAllAsync<{
+    countryCode: string | null;
+    city: string | null;
+    cityApprox: string | null;
+  }>(
+    `
+    SELECT DISTINCT country_code as countryCode, city, city_approx as cityApprox
+    FROM photo_metadata
+    WHERE is_deleted = 0
+      AND country_code IS NOT NULL
+    `
+  );
+};
+
 /* 2026.04.15 날짜/시간 필터에 대응하는 DB 조회 경로를 준비해 이후 MediaLibrary 전수탐색 제거 기반을 만들기 위해 추가 by June */
 export const queryPhotoMetadataByDateTime = async (params: {
   dateStartMs: number;
@@ -943,6 +1206,8 @@ export const queryPhotoMetadataByDateTime = async (params: {
   limit: number;
   /* 2026.09.02 백그라운드 인덱싱 중 row 삽입으로 OFFSET이 밀리는 문제를 없애기 위해 keyset 커서 기반 페이지네이션으로 교체 by Claude */
   after?: PhotoPageCursor | null;
+  /* 2026.10.18 국가/도시 조건을 SQL로 처리 by Claude */
+  place?: PlaceFilter;
 }) => {
   /* 2026.04.15 taken_minute 컬럼 추가 전 쿼리 실행으로 no such column 에러가 나는 문제를 막기 위해 조회 전 초기화를 강제 by June */
   await initPhotoMetadataDb();
@@ -956,10 +1221,12 @@ export const queryPhotoMetadataByDateTime = async (params: {
   const keysetArgs: (number | string)[] = after
     ? [after.takenAt, after.takenAt, after.assetId]
     : [];
+  const placeFilter = buildPlaceClause(params.place);
 
   const rows = await db.getAllAsync<PhotoSummaryRow>(
     `
-    SELECT asset_id as assetId, uri, taken_at as takenAt, latitude, longitude
+    SELECT asset_id as assetId, uri, taken_at as takenAt, latitude, longitude,
+           country_code as countryCode, city, city_approx as cityApprox
     FROM photo_metadata
     WHERE is_deleted = 0
       /* 2026.04.22 날짜 검색 정확도 우선 정책으로 unknown timestamp row를 제외해 잘못된 연도 노출을 방지하기 위해 조건 수정 by June */
@@ -971,6 +1238,7 @@ export const queryPhotoMetadataByDateTime = async (params: {
         OR (? >= ? AND taken_minute >= ? AND taken_minute <= ?)
         OR (? < ? AND taken_minute >= ? AND taken_minute <= ?)
       )
+      ${placeFilter.sql}
       ${keysetClause}
     ORDER BY
       /* 2026.05.28 홈 썸네일 정책과 동일하게 최신 사진이 먼저 나오도록 DB 조회 정렬을 최신순으로 변경 by June */
@@ -991,6 +1259,7 @@ export const queryPhotoMetadataByDateTime = async (params: {
     params.timeStart,
     params.timeStart,
     params.timeEnd,
+    ...placeFilter.args,
     ...keysetArgs,
     params.limit
   );
@@ -1000,6 +1269,97 @@ export const queryPhotoMetadataByDateTime = async (params: {
 };
 
 /* 2026.10.04 검색 예상 시간을 '남은 실제 작업량'으로 계산하기 위해 범위 내 좌표 미보유 사진 수를 조회 by Claude */
+/* 2026.10.19 전수 패스 스테이징 — 시작 시 비우고, 페이지마다 본 id를 쌓고, 완주 시 없는 것을 삭제 처리 by Claude */
+export const resetSyncStaging = async () => {
+  await initPhotoMetadataDb();
+  const db = await getDb();
+  await enqueueWrite(async () => {
+    await db.execAsync(`DELETE FROM sync_seen;`);
+  });
+};
+
+export const stageSyncSeenIds = async (assetIds: string[]) => {
+  const unique = [...new Set(assetIds)].filter(Boolean);
+  if (unique.length === 0) return;
+  await initPhotoMetadataDb();
+  const db = await getDb();
+  await enqueueWrite(async () => {
+    await db.runAsync(
+      `INSERT OR IGNORE INTO sync_seen (asset_id) SELECT value FROM json_each(?)`,
+      JSON.stringify(unique)
+    );
+  });
+};
+
+export const markDeletedNotStaged = async () => {
+  await initPhotoMetadataDb();
+  const db = await getDb();
+  let changes = 0;
+  await enqueueWrite(async () => {
+    const result = await db.runAsync(
+      `
+      UPDATE photo_metadata
+      SET is_deleted = 1, updated_at = ?
+      WHERE is_deleted = 0
+        AND asset_id NOT IN (SELECT asset_id FROM sync_seen)
+      `,
+      Date.now()
+    );
+    changes = result.changes ?? 0;
+    await db.execAsync(`DELETE FROM sync_seen;`);
+  });
+  return changes;
+};
+
+/* 2026.10.18 네이티브 증분 동기화 체크포인트 읽기/쓰기 by Claude */
+export const getNativeSyncCheckpoint = async () => {
+  await initPhotoMetadataDb();
+  const db = await getDb();
+  const row = await db.getFirstAsync<{ native_checkpoint: string | null }>(
+    `SELECT native_checkpoint FROM photo_sync_state WHERE id = 1`
+  );
+  return row?.native_checkpoint ?? null;
+};
+
+export const setNativeSyncCheckpoint = async (checkpoint: string | null) => {
+  await initPhotoMetadataDb();
+  const db = await getDb();
+  await enqueueWrite(async () => {
+    await db.runAsync(
+      `UPDATE photo_sync_state SET native_checkpoint = ?, updated_at = ? WHERE id = 1`,
+      checkpoint,
+      Date.now()
+    );
+  });
+};
+
+/* 2026.10.18 네이티브 델타가 알려준 삭제 자산을 즉시 soft-delete 처리 by Claude */
+export const markPhotoMetadataDeletedByAssetIds = async (assetIds: string[]) => {
+  const unique = [...new Set(assetIds)].filter(Boolean);
+  if (unique.length === 0) return 0;
+  await initPhotoMetadataDb();
+  const db = await getDb();
+  let changes = 0;
+  await enqueueWrite(async () => {
+    for (let i = 0; i < unique.length; i += 500) {
+      const chunk = unique.slice(i, i + 500);
+      const placeholders = chunk.map(() => "?").join(",");
+      const result = await db.runAsync(
+        `
+        UPDATE photo_metadata
+        SET is_deleted = 1, updated_at = ?
+        WHERE is_deleted = 0
+          AND asset_id IN (${placeholders})
+        `,
+        Date.now(),
+        ...chunk
+      );
+      changes += result.changes ?? 0;
+    }
+  });
+  return changes;
+};
+
 /* 2026.10.12 좌표 미보유 사진을 백그라운드에서 일괄 back-fill 하기 위해 최신순으로 조회 by Claude */
 export const getPhotosMissingCoords = async (limit: number) => {
   await initPhotoMetadataDb();
@@ -1102,10 +1462,16 @@ export const countPhotoMetadataByDateTime = async (params: {
   dateEndNextMs: number;
   timeStart: number;
   timeEnd: number;
+  /* 2026.10.18 위치 필터가 걸린 범위의 건수도 SQL로 계산 by Claude */
+  place?: PlaceFilter;
 }) => {
   /* 2026.04.22 카운트 조회도 스키마 초기화 이후에 실행되도록 보장해 구버전 DB에서 컬럼 누락 오류를 방지하기 위해 초기화 선행 by June */
   await initPhotoMetadataDb();
   const db = await getDb();
+  const placeFilter = buildPlaceClause(params.place);
+  const cacheKey = JSON.stringify([params, placeFilter.sql]);
+  const cached = countCache.get(cacheKey);
+  if (cached !== undefined) return cached;
 
   const row = await db.getFirstAsync<{ count: number }>(
     `
@@ -1120,6 +1486,7 @@ export const countPhotoMetadataByDateTime = async (params: {
         OR (? >= ? AND taken_minute >= ? AND taken_minute <= ?)
         OR (? < ? AND taken_minute >= ? AND taken_minute <= ?)
       )
+      ${placeFilter.sql}
     `,
     params.dateStartMs,
     params.dateEndNextMs,
@@ -1132,8 +1499,11 @@ export const countPhotoMetadataByDateTime = async (params: {
     params.timeEnd,
     params.timeStart,
     params.timeStart,
-    params.timeEnd
+    params.timeEnd,
+    ...placeFilter.args
   );
 
-  return row?.count ?? 0;
+  const total = row?.count ?? 0;
+  countCache.set(cacheKey, total);
+  return total;
 };

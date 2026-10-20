@@ -30,6 +30,10 @@ export const TRANSLATIONS = {
 		// 2026-05-12: 위치 라벨을 'All Locations'로 통일하고 한쪽 축만 전체일 때 'All Countries'/'All Cities'로 표기하기 위해 추가 by yen
 		allCountries: 'All Countries',
 		allCities: 'All Cities',
+		/* 2026.10.19 필터 시트의 검색 버튼 — 조건 변경은 이 버튼을 눌러야 적용된다 (PicQly-T와 동일) by Claude */
+		search: 'Search',
+		searching: 'Searching…',
+		invalidDateRange: 'Start date is after the end date.',
 		play: 'Play',
 		map: 'Map',
 		country: 'Country',
@@ -93,6 +97,7 @@ export const TRANSLATIONS = {
 		locationSearchRemainingTimeShort: "Estimated remaining time: {seconds} sec",
 		locationSearchRemainingTimeLong: "Estimated remaining time: {minutes} min {seconds} sec",
 		locationListFilling: "Organizing location info…",
+		othersNoLocation: "Others (no location)",
 		locationSearchEstimatedTimeShort: "{seconds} sec",
 		locationSearchEstimatedTimeLong: "{minutes} min {seconds} sec",
 		locationSearchSearchPromptTitle:
@@ -142,6 +147,10 @@ export const TRANSLATIONS = {
 		// 2026-05-12: 위치 라벨을 '모든 위치'로 통일하고 한쪽 축만 전체일 때 '모든 국가'/'모든 도시'로 표기하기 위해 추가 by yen
 		allCountries: '모든 국가',
 		allCities: '모든 도시',
+		/* 2026.10.19 필터 시트의 검색 버튼 — 조건 변경은 이 버튼을 눌러야 적용된다 (PicQly-T와 동일) by Claude */
+		search: '검색',
+		searching: '검색 중…',
+		invalidDateRange: '시작일이 종료일보다 늦습니다.',
 		play: '플레이',
 		map: '지도',
 		country: '국가',
@@ -185,6 +194,7 @@ export const TRANSLATIONS = {
 		locationSearchRemainingTimeShort: "예상 남은 시간: {seconds}초",
 		locationSearchRemainingTimeLong: "예상 남은 시간: {minutes}분 {seconds}초",
 		locationListFilling: "위치 정보 정리 중…",
+		othersNoLocation: "기타 (위치 정보 없음)",
 		locationSearchEstimatedTimeShort: "{seconds}초",
 		locationSearchEstimatedTimeLong: "{minutes}분 {seconds}초",
 		locationSearchSearchPromptTitle:
@@ -222,6 +232,10 @@ export const TRANSLATIONS = {
 		// 2026-05-12: 위치 라벨을 'すべての場所'로 통일하고 한쪽 축만 전체일 때 'すべての国'/'すべての都市'로 표기하기 위해 추가 by yen
 		allCountries: 'すべての国',
 		allCities: 'すべての都市',
+		/* 2026.10.19 필터 시트의 검색 버튼 — 조건 변경은 이 버튼을 눌러야 적용된다 (PicQly-T와 동일) by Claude */
+		search: '検索',
+		searching: '検索中…',
+		invalidDateRange: '開始日が終了日より後になっています。',
 		play: 'プレイ',
 		map: '地図',
 		country: '国',
@@ -301,6 +315,10 @@ export const TRANSLATIONS = {
 		// 2026-05-12: 위치 라벨을 '所有位置'로 통일하고 한쪽 축만 전체일 때 '所有國家'/'所有城市'로 표기하기 위해 추가 by yen
 		allCountries: '所有國家',
 		allCities: '所有城市',
+		/* 2026.10.19 필터 시트의 검색 버튼 — 조건 변경은 이 버튼을 눌러야 적용된다 (PicQly-T와 동일) by Claude */
+		search: '搜尋',
+		searching: '搜尋中…',
+		invalidDateRange: '開始日期晚於結束日期。',
 		play: '播放',
 		map: '地圖',
 		country: '國家',
@@ -380,6 +398,10 @@ export const TRANSLATIONS = {
 		// 2026-05-12: 위치 라벨을 '所有位置'로 통일하고 한쪽 축만 전체일 때 '所有国家'/'所有城市'로 표기하기 위해 추가 by yen
 		allCountries: '所有国家',
 		allCities: '所有城市',
+		/* 2026.10.19 필터 시트의 검색 버튼 — 조건 변경은 이 버튼을 눌러야 적용된다 (PicQly-T와 동일) by Claude */
+		search: '搜索',
+		searching: '搜索中…',
+		invalidDateRange: '开始日期晚于结束日期。',
 		play: '播放',
 		map: '地图',
 		country: '国家',
@@ -459,6 +481,10 @@ export const TRANSLATIONS = {
 		// 2026-05-12: 위치 라벨을 'Tous les lieux'로 통일하고 한쪽 축만 전체일 때 'Tous les pays'/'Toutes les villes'로 표기하기 위해 추가 by yen
 		allCountries: 'Tous les pays',
 		allCities: 'Toutes les villes',
+		/* 2026.10.19 필터 시트의 검색 버튼 — 조건 변경은 이 버튼을 눌러야 적용된다 (PicQly-T와 동일) by Claude */
+		search: 'Rechercher',
+		searching: 'Recherche…',
+		invalidDateRange: 'La date de début est postérieure à la date de fin.',
 		play: 'Lecture',
 		map: 'Carte',
 		country: 'Pays',
@@ -538,6 +564,10 @@ export const TRANSLATIONS = {
 		// 2026-05-12: 위치 라벨을 'Todas las ubicaciones'로 통일하고 한쪽 축만 전체일 때 'Todos los países'/'Todas las ciudades'로 표기하기 위해 추가 by yen
 		allCountries: 'Todos los países',
 		allCities: 'Todas las ciudades',
+		/* 2026.10.19 필터 시트의 검색 버튼 — 조건 변경은 이 버튼을 눌러야 적용된다 (PicQly-T와 동일) by Claude */
+		search: 'Buscar',
+		searching: 'Buscando…',
+		invalidDateRange: 'La fecha de inicio es posterior a la de fin.',
 		play: 'Reproducir',
 		map: 'Mapa',
 		country: 'País',

@@ -101,6 +101,10 @@ const fmtDate = (d: Date) =>
   `${d.getFullYear()}/${pad(d.getMonth() + 1)}/${pad(d.getDate())}`;
 const fmtTime = (m: number) => `${pad(Math.floor(m / 60))}:${pad(m % 60)}`;
 
+/* 2026.10.19 Search 버튼은 'All Dates'/'All Times' 프리셋과 같은 그라데이션 디자인을 쓴다 by Claude */
+const SEARCH_GRADIENT = ["#2B7FFF", "#AD46FF"] as const;
+const SEARCH_GRADIENT_DISABLED = ["#A9C4EC", "#CBB6E8"] as const;
+
 const today = new Date();
 const recent31DaysStart = new Date(
   today.getFullYear(),
@@ -126,10 +130,14 @@ type DateTimeFilterProps = {
   locationPreparingMessage?: string;
   /* 2026.10.11 백그라운드 도시 해소 잔여 수 — 위치 선택기에 '정리 중 (n)' 표시용 by Claude */
   geocodePendingCount?: number;
+  /* 2026.10.19 DB 전체에서 구성한 장소 목록 by Claude */
+  availablePlaces?: { country: string; city: string | null }[];
   onOpenLocationRequest?: () => boolean | Promise<boolean>;
   locationOpenToken?: number;
   interactionBlocked?: boolean;
   interactionBlockedReason?: string;
+  /* 2026.10.19 검색 진행 중이면 시트의 Search 버튼을 비활성화하고 'Searching…'으로 표시 by Claude */
+  searching?: boolean;
   onLocationChange: (value: {
     countries: string[];
     cities: string[];
@@ -243,10 +251,12 @@ export default function DateTimeFilter({
   locationPreparing = false,
   locationPreparingMessage,
   geocodePendingCount,
+  availablePlaces,
   onOpenLocationRequest,
   locationOpenToken = 0,
   interactionBlocked = false,
   interactionBlockedReason,
+  searching = false,
   onLocationChange,
   onLocationGate,
 }: DateTimeFilterProps) {
@@ -287,11 +297,17 @@ export default function DateTimeFilter({
     "start" | "end" | null
   >(null);
 
-  const DEBOUNCE_MS = 500; // 0.5초
-
-  // 날짜, 시간 변경 타이밍 관련
-  const debounceTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const lastEmittedRef = useRef<string>(""); // 동일 값 중복 emit 방지용(선택이지만 추천)
+  /* 2026.10.19 시트를 여는 순간의 값을 스냅샷으로 들고, 시트 안의 조작은 모두 '초안(draft)'으로 취급한다.
+     Search를 누르면 초안을 확정해 onChange로 올리고, 닫기(X/배경/백버튼)는 스냅샷으로 되돌린다.
+     기존 디바운스 자동 emit(DEBOUNCE_MS/debounceTimerRef/bypassDebounceRef)은 '닫기=검색'이었기 때문에
+     전부 제거했다 — Search만이 검색의 유일한 트리거 (PicQly-T와 동일) by Claude */
+  const dateDraftSnapshotRef = useRef<{ dateStart: Date; dateEnd: Date } | null>(
+    null,
+  );
+  const timeDraftSnapshotRef = useRef<{
+    timeStart: number;
+    timeEnd: number;
+  } | null>(null);
   const sheetTransitionLockUntilRef = useRef(0);
 
   const onChangeStartSafe = (d: Date) => {
@@ -323,28 +339,34 @@ export default function DateTimeFilter({
     sheetTransitionLockUntilRef.current = Date.now() + 350;
   };
 
+  /* 2026.10.19 닫기는 아무것도 적용하지 않는다 — 시트를 열 때 찍어둔 스냅샷으로 값을 되돌리고 닫기만 한다.
+     (이전에는 닫기가 flushPendingChange로 검색을 트리거했다) by Claude */
   const closeDateSheet = (source: string) => {
     if (!dateModalVisible) return;
     if (isSheetTransitionLocked("date", `close:${source}`)) return;
     lockSheetTransition();
-    console.log("[FilterSheet] close", { type: "date", source });
+    console.log("[FilterSheet] close", { type: "date", source, applied: false });
+    const snapshot = dateDraftSnapshotRef.current;
+    if (snapshot) {
+      setDateStart(snapshot.dateStart);
+      setDateEnd(snapshot.dateEnd);
+    }
+    setAndroidDateField(null);
     setDateModalVisible(false);
-    setTimeout(() => {
-      flushPendingChange();
-    }, 0);
   };
 
-  const closeTimeSheet = (source: string, flush = true) => {
+  const closeTimeSheet = (source: string) => {
     if (!timeModalVisible) return;
     if (isSheetTransitionLocked("time", `close:${source}`)) return;
     lockSheetTransition();
-    console.log("[FilterSheet] close", { type: "time", source });
-    setTimeModalVisible(false);
-    if (flush) {
-      setTimeout(() => {
-        flushPendingChange();
-      }, 0);
+    console.log("[FilterSheet] close", { type: "time", source, applied: false });
+    const snapshot = timeDraftSnapshotRef.current;
+    if (snapshot) {
+      setTimeStart(snapshot.timeStart);
+      setTimeEnd(snapshot.timeEnd);
     }
+    setAndroidTimeField(null);
+    setTimeModalVisible(false);
   };
 
   const closeLocationSheet = (source: string) => {
@@ -374,6 +396,8 @@ export default function DateTimeFilter({
     lockSheetTransition();
     console.log("[FilterSheet] open", { type: "date" });
     amplitude.track("tap_date_filter", { screen_name: "home" });
+    /* 2026.10.19 되돌리기용 스냅샷 — 닫기로 빠져나가면 이 값으로 복원 by Claude */
+    dateDraftSnapshotRef.current = { dateStart, dateEnd };
     setDateModalVisible(true);
   };
 
@@ -396,6 +420,8 @@ export default function DateTimeFilter({
     lockSheetTransition();
     console.log("[FilterSheet] open", { type: "time" });
     amplitude.track("tap_time_filter", { screen_name: "home" });
+    /* 2026.10.19 되돌리기용 스냅샷 — 닫기로 빠져나가면 이 값으로 복원 by Claude */
+    timeDraftSnapshotRef.current = { timeStart, timeEnd };
     setTimeModalVisible(true);
   };
 
@@ -435,55 +461,14 @@ export default function DateTimeFilter({
     performOpenLocationSheet();
   }, [locationOpenToken]);
 
-  useEffect(() => {
-    if (!onChange) return;
-    if (
-      dateModalVisible ||
-      timeModalVisible ||
-      androidDateField !== null ||
-      androidTimeField !== null
-    ) {
-      return;
-    }
+  /* 2026.10.19 값이 바뀌면 디바운스 후 자동으로 onChange를 쏘던 effect를 제거했다 —
+     시트를 닫는 것만으로 검색이 돌던 동작의 원인이었다. 지금은 Search 버튼과
+     칩의 초기화 버튼만 emitChange를 호출한다 by Claude */
 
-    // 즐겨찾기 버튼 클릭 시 딜레이 없음
-    if (bypassDebounceRef.current) {
-      bypassDebounceRef.current = false;
-      if (debounceTimerRef.current) {
-        clearTimeout(debounceTimerRef.current);
-        debounceTimerRef.current = null;
-      }
-      emitChange();
-      return;
-    }
-
-    // 이전 예약 취소
-    if (debounceTimerRef.current) clearTimeout(debounceTimerRef.current);
-
-    // 새로 예약
-    debounceTimerRef.current = setTimeout(() => {
-      emitChange();
-      debounceTimerRef.current = null;
-    }, DEBOUNCE_MS);
-
-    // cleanup (언마운트/다음 변경 시 안전)
-    return () => {
-      if (debounceTimerRef.current) clearTimeout(debounceTimerRef.current);
-    };
-    // 2026-03-04 add onLocationChange to emit value by yen
-  }, [
-    androidDateField,
-    androidTimeField,
-    dateEnd,
-    dateModalVisible,
-    dateStart,
-    normalizeTimeRange,
-    onChange,
-    onLocationChange,
-    timeEnd,
-    timeModalVisible,
-    timeStart,
-  ]);
+  /* 2026.10.19 상위가 '새로' 밀어준 값만 받아들인다 — 이전에는 local != value 이면 언제든 덮어썼기 때문에,
+     Search로 확정한 직후(상위가 아직 반영 전) 이 effect가 돌면 방금 확정한 값이 옛 value로 되돌아갔다.
+     value가 지난번에 본 값과 같으면(=상위에서 새로 온 게 없음) 아무것도 하지 않는다 by Claude */
+  const lastSeenValueSigRef = useRef<string | null>(null);
 
   useEffect(() => {
     if (!value) return;
@@ -499,8 +484,11 @@ export default function DateTimeFilter({
     const nextDateStart = clampToToday(value.dateStart);
     const nextDateEnd = clampToToday(value.dateEnd);
     const externalSig = `${nextDateStart.getTime()}|${nextDateEnd.getTime()}|${value.timeStart}|${value.timeEnd}`;
-    const localSig = `${dateStart.getTime()}|${dateEnd.getTime()}|${timeStart}|${timeEnd}`;
 
+    if (externalSig === lastSeenValueSigRef.current) return;
+    lastSeenValueSigRef.current = externalSig;
+
+    const localSig = `${dateStart.getTime()}|${dateEnd.getTime()}|${timeStart}|${timeEnd}`;
     if (externalSig === localSig) return;
 
     setDateStart(nextDateStart);
@@ -508,7 +496,6 @@ export default function DateTimeFilter({
     const normalizedTime = normalizeTimeRange(value.timeStart, value.timeEnd);
     setTimeStart(normalizedTime.timeStart);
     setTimeEnd(normalizedTime.timeEnd);
-    lastEmittedRef.current = externalSig;
   }, [
     androidDateField,
     androidTimeField,
@@ -573,13 +560,13 @@ export default function DateTimeFilter({
       end_ms: end.getTime(),
     });
 
-    bypassDebounceRef.current = true;
+    /* 2026.10.19 프리셋은 초안만 바꾼다 — 검색은 Search 버튼에서만 (PicQly-T와 동일) by Claude */
     setDateStart(start);
     setDateEnd(end);
   };
 
   const applyTimePreset = (s: number, e: number) => {
-    bypassDebounceRef.current = true;
+    /* 2026.10.19 프리셋은 초안만 바꾼다 — 검색은 Search 버튼에서만 by Claude */
     const normalized = normalizeTimeRange(s, e);
     setTimeStart(normalized.timeStart);
     setTimeEnd(normalized.timeEnd);
@@ -655,39 +642,53 @@ export default function DateTimeFilter({
   const [locationLabel, setLocationLabel] = useState("");
 
   const emitCountRef = useRef(0);
-  const bypassDebounceRef = useRef(false);
-  const emitChange = () => {
-    const payload = { dateStart, dateEnd, timeStart, timeEnd };
+  /* 2026.10.19 emit할 값을 인자로 받는다 — 이전에는 렌더 클로저의 state를 읽어서,
+     setState 직후에 호출하면 한 틱 전 값이 올라가는 문제가 있었다(칩 초기화 버튼이 그 경로였다) by Claude */
+  const emitChange = (payload: DateTimeFilterValue) => {
+    const { dateStart: nextStart, dateEnd: nextEnd, timeStart: nextTimeStart, timeEnd: nextTimeEnd } =
+      payload;
 
-    // 같은 값이면 또 안 쏘게
-    const sig = `${dateStart.getTime()}|${dateEnd.getTime()}|${timeStart}|${timeEnd}`;
-
-    if (sig === lastEmittedRef.current) return;
-    lastEmittedRef.current = sig;
-
-    // 딜레이 처리 제대로 되는지 테스트 START
+    /* 2026.10.19 동일 값 중복 emit 가드를 제거했다 — 상위 handleDateTimeChange가 이미
+       valueUnchanged로 걸러내고, 여기서 또 막으면 직전 emit이 적용되지 않은 상황(검색 취소 등)에서
+       Search가 아무 반응도 하지 않는 막힌 상태가 생긴다 by Claude */
     emitCountRef.current += 1;
     console.log(`[EMIT #${emitCountRef.current}]`, new Date().toISOString(), {
-      dateStart: dateStart.toISOString().slice(0, 10),
-      dateEnd: dateEnd.toISOString().slice(0, 10),
-      timeStart,
-      timeEnd,
+      dateStart: nextStart.toISOString().slice(0, 10),
+      dateEnd: nextEnd.toISOString().slice(0, 10),
+      timeStart: nextTimeStart,
+      timeEnd: nextTimeEnd,
     });
-    // 딜레이 처리 제대로 되는지 테스트 END
 
     onChange?.(payload);
   };
 
   const insets = useSafeAreaInsets();
 
-  // close 눌렀을시
-  function flushPendingChange() {
-    if (debounceTimerRef.current) {
-      clearTimeout(debounceTimerRef.current);
-      debounceTimerRef.current = null;
-    }
-    emitChange();
-  }
+  /* 2026.10.19 Search 버튼 — 시트 안의 초안을 확정해 검색을 돌린다. 검색의 유일한 트리거 by Claude */
+  const isDateRangeInvalid = dateStart.getTime() > dateEnd.getTime();
+  const isSearchDisabled = searching || interactionBlocked;
+
+  const runDateSearch = () => {
+    if (isSearchDisabled || isDateRangeInvalid) return;
+    console.log("[FilterSheet] search", { type: "date" });
+    /* 닫기와 같은 전환 잠금 — 닫히는 애니메이션 중 재오픈으로 시트가 꼬이지 않게 by Claude */
+    lockSheetTransition();
+    /* 되돌릴 대상이 없어지므로 스냅샷을 비운다 — 이후 닫기에서 복원되지 않도록 */
+    dateDraftSnapshotRef.current = null;
+    setAndroidDateField(null);
+    setDateModalVisible(false);
+    emitChange({ dateStart, dateEnd, timeStart, timeEnd });
+  };
+
+  const runTimeSearch = () => {
+    if (isSearchDisabled) return;
+    console.log("[FilterSheet] search", { type: "time" });
+    lockSheetTransition();
+    timeDraftSnapshotRef.current = null;
+    setAndroidTimeField(null);
+    setTimeModalVisible(false);
+    emitChange({ dateStart, dateEnd, timeStart, timeEnd });
+  };
 
   // 날짜, 시간 초기화 버튼
   // const resetProcess = () => {
@@ -720,11 +721,16 @@ export default function DateTimeFilter({
             </Text>
             <TouchableOpacity
               onPress={() => {
-                bypassDebounceRef.current = true;
+                /* 2026.10.19 칩의 초기화 버튼은 시트 밖이라 Search가 없으므로 즉시 적용 —
+                   emitChange에 새 값을 직접 넘긴다(이전엔 state 갱신 전 값이 올라갔다) by Claude */
                 setDateStart(recent31DaysStart);
                 setDateEnd(today);
-                flushPendingChange();
-                setDateModalVisible(false);
+                emitChange({
+                  dateStart: recent31DaysStart,
+                  dateEnd: today,
+                  timeStart,
+                  timeEnd,
+                });
               }}
             >
               <ICON_RESET width={70} />
@@ -752,11 +758,15 @@ export default function DateTimeFilter({
             </Text>
             <TouchableOpacity
               onPress={() => {
-                bypassDebounceRef.current = true;
+                /* 2026.10.19 칩의 초기화 버튼은 즉시 적용 — 위 날짜 초기화와 동일 정책 by Claude */
                 setTimeStart(0);
                 setTimeEnd(1439);
-                flushPendingChange();
-                setTimeModalVisible(false);
+                emitChange({
+                  dateStart,
+                  dateEnd,
+                  timeStart: 0,
+                  timeEnd: 1439,
+                });
               }}
             >
               <ICON_RESET width={70} />
@@ -874,6 +884,36 @@ export default function DateTimeFilter({
                   </TouchableOpacity>
                 ))}
               </View>
+
+              {/* 2026.10.19 Search — 이 버튼만이 검색을 시작한다. 닫기(X/배경/백버튼)는 아무것도 적용하지 않음 by Claude */}
+              {isDateRangeInvalid ? (
+                <Text style={styles.searchHintTxt}>
+                  {t("invalidDateRange", "Start date is after the end date.")}
+                </Text>
+              ) : null}
+              <TouchableOpacity
+                activeOpacity={0.8}
+                disabled={isSearchDisabled || isDateRangeInvalid}
+                onPress={runDateSearch}
+                style={[styles.presetBtn, styles.presetBtnFull]}
+              >
+                <LinearGradient
+                  colors={
+                    isSearchDisabled || isDateRangeInvalid
+                      ? SEARCH_GRADIENT_DISABLED
+                      : SEARCH_GRADIENT
+                  }
+                  start={{ x: 0, y: 0 }}
+                  end={{ x: 1, y: 0 }}
+                  style={styles.rangeBtnGradient}
+                >
+                  <Text style={styles.presetTxt}>
+                    {searching
+                      ? t("searching", "Searching…")
+                      : t("search", "Search")}
+                  </Text>
+                </LinearGradient>
+              </TouchableOpacity>
             </ScrollView>
           </Pressable>
         </Pressable>
@@ -885,7 +925,7 @@ export default function DateTimeFilter({
         visible={timeModalVisible}
         transparent
         animationType="slide"
-        onRequestClose={() => closeTimeSheet("request", false)}
+        onRequestClose={() => closeTimeSheet("request")}
       >
         <Pressable
           style={styles.modalBackdrop}
@@ -1005,6 +1045,29 @@ export default function DateTimeFilter({
                   </Text>
                 </LinearGradient>
               </TouchableOpacity>
+
+              {/* 2026.10.19 Search — 이 버튼만이 검색을 시작한다. 닫기는 아무것도 적용하지 않음 by Claude */}
+              <TouchableOpacity
+                activeOpacity={0.8}
+                disabled={isSearchDisabled}
+                onPress={runTimeSearch}
+                style={[styles.presetBtn, styles.presetBtnFull]}
+              >
+                <LinearGradient
+                  colors={
+                    isSearchDisabled ? SEARCH_GRADIENT_DISABLED : SEARCH_GRADIENT
+                  }
+                  start={{ x: 0, y: 0 }}
+                  end={{ x: 1, y: 0 }}
+                  style={styles.rangeBtnGradient}
+                >
+                  <Text style={styles.presetTxt}>
+                    {searching
+                      ? t("searching", "Searching…")
+                      : t("search", "Search")}
+                  </Text>
+                </LinearGradient>
+              </TouchableOpacity>
             </ScrollView>
           </Pressable>
         </Pressable>
@@ -1023,6 +1086,8 @@ export default function DateTimeFilter({
           isPreparing={locationPreparing}
           preparingMessage={locationPreparingMessage}
           pendingCityCount={geocodePendingCount}
+          availablePlaces={availablePlaces}
+          searching={searching}
           onGate={onLocationGate}
         />
       }
@@ -1259,5 +1324,11 @@ const styles = StyleSheet.create({
     width: "100%",
     justifyContent: "center",
     alignItems: "center",
+  },
+  searchHintTxt: {
+    marginTop: 8,
+    textAlign: "center",
+    color: "#C0392B",
+    fontSize: 12,
   },
 });

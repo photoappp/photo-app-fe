@@ -296,6 +296,25 @@ export const setCountryDisplayLanguage = (language: string) => {
     : "en";
 };
 
+/* 2026.10.18 UI 필터는 표시명으로 선택되지만 DB에는 언어 중립적인 A3 코드를 저장하므로
+   표시명 → 코드 역변환이 필요. 현재 언어 기준으로 지연 구축하고 영어명도 함께 허용 by Claude */
+let reverseCache: { language: string; map: Map<string, string> } | null = null;
+
+export const countryCodeForDisplayName = (name: string): string | null => {
+  if (!name) return null;
+  if (!reverseCache || reverseCache.language !== activeLanguage) {
+    const map = new Map<string, string>();
+    for (const [code, entry] of Object.entries(COUNTRY_NAMES)) {
+      const localized = entry[activeLanguage] ?? entry.en;
+      if (localized) map.set(localized, code);
+      /* 과거 데이터/영문 표기 호환 */
+      if (entry.en) map.set(entry.en, code);
+    }
+    reverseCache = { language: activeLanguage, map };
+  }
+  return reverseCache.map.get(name) ?? null;
+};
+
 export const countryDisplayName = (code: string): string | null => {
   const entry = COUNTRY_NAMES[code];
   if (!entry) return null;

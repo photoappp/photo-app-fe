@@ -1,0 +1,5 @@
+{
+  "platforms": ["apple", "android"],
+  "apple": { "modules": ["PhotoSyncModule"] },
+  "android": { "modules": ["expo.modules.picqlyphotosync.PhotoSyncModule"] }
+}

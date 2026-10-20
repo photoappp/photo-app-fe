@@ -4,7 +4,13 @@ import * as MediaLibrary from "expo-media-library";
 import {
   PhotoMetadataRow,
   ensureTakenMinutesMatchTimeZone,
+  getNativeSyncCheckpoint,
   getPhotoMetadataCount,
+  markDeletedNotStaged,
+  markPhotoMetadataDeletedByAssetIds,
+  resetSyncStaging,
+  setNativeSyncCheckpoint,
+  stageSyncSeenIds,
   getPhotoSyncState,
   initPhotoMetadataDb,
   markPhotoMetadataDeletedBefore,
@@ -12,6 +18,10 @@ import {
   upsertPhotoMetadataRows,
 } from "@/lib/db/photoMetadataDb";
 import { recordPerfMetric } from "@/lib/services/perfMetrics";
+import {
+  librarySync,
+  type LibrarySyncAsset,
+} from "@/lib/services/librarySync";
 
 /* 2026.04.15 동기화 페이지 크기를 상수화해 앱 성능 이슈 시 운영값을 안전하게 조정하기 위해 추가 by June */
 const SYNC_PAGE_SIZE = 300;
@@ -95,6 +105,133 @@ export const upsertPhotoMetadataFromAssets = async (
   );
 };
 
+/* 2026.10.18 네이티브 모듈이 알려준 자산을 기존 row 형태로 변환 by Claude */
+const nativeAssetToRow = (asset: LibrarySyncAsset): PhotoMetadataRow => {
+  const now = Date.now();
+  const takenAt =
+    asset.creationTime && asset.creationTime > 0
+      ? Math.round(asset.creationTime)
+      : asset.modificationTime && asset.modificationTime > 0
+        ? Math.round(asset.modificationTime)
+        : null;
+  const latitude = Number(asset.latitude);
+  const longitude = Number(asset.longitude);
+  const hasCoords = Number.isFinite(latitude) && Number.isFinite(longitude);
+
+  return {
+    assetId: asset.id,
+    uri: asset.uri,
+    takenAt,
+    takenMinute: getTakenMinute(takenAt),
+    /* iOS는 bulk 응답에 좌표가 포함되므로 그대로 저장 — per-asset 조회가 줄어듦 */
+    latitude: hasCoords ? latitude : null,
+    longitude: hasCoords ? longitude : null,
+    createdAt: now,
+    updatedAt: now,
+    isDeleted: 0,
+  };
+};
+
+/* 2026.10.19 네이티브 모듈로 모든 모드(full/delta/audit/reconcile)를 처리한다.
+   delta가 아닌 패스에서는 본 id를 스테이징해 완주 시 삭제를 판별(PicQly-T의 sync_seen과 동일).
+   세션은 모듈 스코프에 유지해, 폴라이트 루프가 호출할 때마다 정해진 페이지 수만 처리하고 양보한다 by Claude */
+let nativeSession:
+  | { handle: string; mode: string; staging: boolean }
+  | null = null;
+
+const closeNativeSession = async () => {
+  if (nativeSession && librarySync) {
+    try {
+      await librarySync.close(nativeSession.handle);
+    } catch {}
+  }
+  nativeSession = null;
+};
+
+const runNativeSync = async (
+  maxPages: number
+): Promise<"done" | "progress" | "unavailable"> => {
+  if (!librarySync) return "unavailable";
+
+  const startedAt = Date.now();
+  try {
+    if (!nativeSession) {
+      const saved = await getNativeSyncCheckpoint();
+      const plan = await librarySync.begin(saved, false);
+      nativeSession = {
+        handle: plan.handle,
+        mode: plan.mode,
+        staging: plan.mode !== "delta",
+      };
+      if (nativeSession.staging) await resetSyncStaging();
+      /* 진행 중에는 인덱스를 미완료로 표시해 드레인 루프가 계속 호출하도록 함 */
+      await updatePhotoSyncState({
+        nextCursor: null,
+        hasNextPage: true,
+        lastSyncedAt: Date.now(),
+        passStartedAt: null,
+      });
+      console.log("[NativeSync] begin", { mode: plan.mode, total: plan.total });
+    }
+
+    let pages = 0;
+    let upserted = 0;
+    let deleted = 0;
+
+    while (pages < maxPages) {
+      const page = await librarySync.read(nativeSession.handle, SYNC_PAGE_SIZE);
+      pages += 1;
+
+      if (page.assets.length > 0) {
+        await upsertPhotoMetadataRows(page.assets.map(nativeAssetToRow));
+        upserted += page.assets.length;
+      }
+      if (page.deleted.length > 0) {
+        deleted += await markPhotoMetadataDeletedByAssetIds(page.deleted);
+      }
+      if (nativeSession.staging && page.ids.length > 0) {
+        await stageSyncSeenIds(page.ids);
+      }
+
+      if (page.done) {
+        const checkpoint = await librarySync.finish(nativeSession.handle);
+        if (nativeSession.staging) {
+          deleted += await markDeletedNotStaged();
+        }
+        if (checkpoint) await setNativeSyncCheckpoint(checkpoint);
+        const mode = nativeSession.mode;
+        await closeNativeSession();
+        await updatePhotoSyncState({
+          nextCursor: null,
+          hasNextPage: false,
+          lastSyncedAt: Date.now(),
+          passStartedAt: null,
+        });
+        recordPerfMetric("metadata.native_sync.ms", Date.now() - startedAt, {
+          context: { mode, upserted, deleted },
+          logEvery: 1,
+        });
+        console.log("[NativeSync] applied", { mode, upserted, deleted });
+        return "done";
+      }
+
+      if (
+        page.assets.length === 0 &&
+        page.deleted.length === 0 &&
+        page.ids.length === 0
+      ) {
+        throw new Error("native sync pagination stalled");
+      }
+    }
+
+    return "progress";
+  } catch (err) {
+    console.log("native sync error:", err);
+    await closeNativeSession();
+    return "unavailable";
+  }
+};
+
 /* 2026.04.15 증분 동기화를 백그라운드에서 일정 페이지씩 진행해 UI 블로킹 없이 인덱싱을 누적하기 위해 추가 by June */
 export const syncPhotoMetadataInBackground = async (params?: {
   maxPages?: number;
@@ -133,6 +270,11 @@ export const syncPhotoMetadataInBackground = async (params?: {
     } catch (err) {
       console.log("timezone recompute check error:", err);
     }
+
+    /* 2026.10.19 네이티브 모듈이 있으면 최초 전수 패스부터 증분까지 모두 네이티브로 처리.
+       모듈이 없거나 실패한 경우에만 아래 JS 경로로 폴백 by Claude */
+    const nativeResult = await runNativeSync(params?.maxPages ?? 1);
+    if (nativeResult !== "unavailable") return;
 
     const maxPages = params?.maxPages ?? 3;
     const enrichLocation = params?.enrichLocation ?? true;

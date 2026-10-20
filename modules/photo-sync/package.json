@@ -1,0 +1,7 @@
+{
+  "name": "picqly-photo-sync",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Local photo library change tracking for PicQly",
+  "license": "UNLICENSED"
+}
