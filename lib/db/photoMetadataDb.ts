@@ -129,17 +129,16 @@ export const initPhotoMetadataDb = async () => {
       CREATE INDEX IF NOT EXISTS idx_photo_metadata_taken_at
         ON photo_metadata (taken_at ASC);
       
-      CREATE INDEX IF NOT EXISTS idx_photo_metadata_taken_at_minute
-        ON photo_metadata (taken_at ASC, taken_minute ASC);
+      /* 2026.10.19 taken_minute 인덱스도 같은 이유로 여기서 만들지 않는다(컬럼이 ALTER로 추가되는 구버전 DB 대비).
+         마이그레이션 구간에서 ALTER 직후 생성됨 by Claude */
 
       CREATE INDEX IF NOT EXISTS idx_photo_metadata_uri
         ON photo_metadata (uri);
 
-      /* 2026.10.18 국가/도시 + 날짜 복합 필터를 인덱스로 처리하기 위해 추가 by Claude */
-      CREATE INDEX IF NOT EXISTS idx_photo_metadata_country_taken
-        ON photo_metadata (is_deleted, country_code, taken_at DESC);
-      CREATE INDEX IF NOT EXISTS idx_photo_metadata_place_backlog
-        ON photo_metadata (is_deleted, country_code, latitude);
+      /* 2026.10.19 country_code 인덱스는 여기서 만들지 않는다.
+         기존 설치본에서는 CREATE TABLE IF NOT EXISTS가 no-op이라 컬럼이 없는 상태인데,
+         같은 execAsync 안에서 그 컬럼으로 인덱스를 만들면 'no such column: country_code'로
+         초기화 전체가 실패하고 무한 재시도에 빠진다. ALTER 이후(마이그레이션 구간)에서 생성 by Claude */
 
       CREATE TABLE IF NOT EXISTS photo_sync_state (
         id INTEGER PRIMARY KEY NOT NULL CHECK (id = 1),
