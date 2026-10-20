@@ -151,6 +151,10 @@ const SEARCH_ESTIMATE_MAX_S = 300;
 /* 2026.10.19 예상 시간 프롬프트(Start/Later)는 더 이상 노출하지 않음 — 검색이 즉시 시작되고,
    진행 모달은 실제로 오래 걸릴 때만(아래 지연 이후) 표시 by Claude */
 const SEARCH_PROGRESS_MODAL_DELAY_MS = 1500;
+/* 2026.10.19 'preparing' 상태가 이 시간을 넘기면 강제로 해제한다.
+   준비 루틴은 runToken 불일치 시 곧바로 return하는 분기가 여러 곳 있는데(광고 전후의 앱 상태
+   전환 등으로 발생), 그 경로들이 status를 'preparing'으로 남겨 화면이 멈춘 것처럼 보였다 by Claude */
+const SEARCH_PREPARING_MAX_MS = 15000;
 /* 콜드 스캔의 장당 예상 비용(페이지 fetch+hydrate 기준) — 콜드 예상 시간 표기를 정직하게 만들기 위한 계수 by Claude */
 const SEARCH_ESTIMATE_COLD_S_PER_PHOTO = 0.005;
 
@@ -695,6 +699,8 @@ export default function HomeScreen() {
   const lastPreparedLocationSearchSignatureRef = useRef<string | null>(null);
   /* 2026.10.18 적응형 자동 시작이 같은 필터에서 반복 실행되지 않도록 하는 가드 by Claude */
   const autoStartedSearchSignatureRef = useRef<string | null>(null);
+  /* 2026.10.19 준비 루틴이 실제로 실행 중인지 추적 by Claude */
+  const searchRunInFlightRef = useRef(false);
   const locationSearchResumeSignatureRef = useRef<string | null>(null);
   /* 2026.06.23 해금 상태를 공용 리워드 게이트로 통합 — 광고 시청 시 모든 기능이 2시간 해금되고 위치 검색 게이트도 같은 해금을 공유 by yen */
   const {
@@ -2577,6 +2583,9 @@ export default function HomeScreen() {
     locationSearchRunTokenRef.current = runToken;
     const deferredEntryPoint = deferredLocationFeatureOpen;
 
+    /* 2026.10.19 실제 준비 작업이 돌고 있는지 표시 — 'preparing'인데 아무도 일하지 않는
+       고착 상태(광고 전후 상태 전환으로 early-return된 경우)를 즉시 구분하기 위함 by Claude */
+    searchRunInFlightRef.current = true;
     setLocationSearchWorkflowStatus("preparing");
     setLocationSearchEstimatedSeconds(currentEstimatedLocationSearchSeconds);
 
@@ -2600,6 +2609,9 @@ export default function HomeScreen() {
       resetLocationSearchProgress();
       setDeferredLocationFeatureOpen(null);
       setLocationSearchEntryPoint(null);
+    } finally {
+      /* early-return 경로를 포함해 이 실행이 끝났음을 항상 표시 by Claude */
+      searchRunInFlightRef.current = false;
     }
   }, [
     currentDateTimeFilterSignature,
@@ -2645,6 +2657,48 @@ export default function HomeScreen() {
     );
     return () => clearTimeout(timer);
   }, [locationSearchWorkflowStatus]);
+
+  /* 2026.10.19 광고 종료 등으로 앱이 다시 활성화됐을 때, 준비 작업이 돌고 있지 않은데도
+     'preparing'으로 남아 화면이 잠겨 있으면 즉시 해제 — 워치독(15초)을 기다리지 않도록 by Claude */
+  useEffect(() => {
+    if (appStateStatus !== "active") return;
+    if (locationSearchWorkflowStatus !== "preparing") return;
+    if (searchRunInFlightRef.current) return;
+    console.log("[LocationSearch] stale preparing on resume — releasing UI");
+    locationSearchRunTokenRef.current += 1;
+    clearLocationSearchProgressTimer();
+    clearLocationSearchCompletionTimer();
+    setLocationSearchWorkflowStatus("idle");
+    resetLocationSearchProgress();
+  }, [
+    appStateStatus,
+    locationSearchWorkflowStatus,
+    clearLocationSearchProgressTimer,
+    clearLocationSearchCompletionTimer,
+    resetLocationSearchProgress,
+  ]);
+
+  /* 2026.10.19 preparing 고착 방지 워치독 — 광고 시청 후 화면이 멈춘 것처럼 보이던 문제의 안전망.
+     준비 루틴의 runToken 불일치 early-return들이 status를 되돌리지 않아도 여기서 복구된다 by Claude */
+  useEffect(() => {
+    if (locationSearchWorkflowStatus !== "preparing") return;
+    const timer = setTimeout(() => {
+      console.log("[LocationSearch] preparing timed out — releasing UI");
+      locationSearchRunTokenRef.current += 1;
+      clearLocationSearchProgressTimer();
+      clearLocationSearchCompletionTimer();
+      setLocationSearchWorkflowStatus("idle");
+      resetLocationSearchProgress();
+      setDeferredLocationFeatureOpen(null);
+      setLocationSearchEntryPoint(null);
+    }, SEARCH_PREPARING_MAX_MS);
+    return () => clearTimeout(timer);
+  }, [
+    locationSearchWorkflowStatus,
+    clearLocationSearchProgressTimer,
+    clearLocationSearchCompletionTimer,
+    resetLocationSearchProgress,
+  ]);
 
   const handleLocationSearchDecline = useCallback(async () => {
     locationSearchResumeSignatureRef.current = null;
