@@ -14,6 +14,7 @@ import {
   Text,
   TouchableOpacity,
   View,
+  useWindowDimensions,
 } from "react-native";
 import { useI18n } from "@/components/context/useI18n";
 /* 2026.06.23 [포인트3] 메뉴 내부 버튼 게이트 팝업을 이 Modal 안에서 직접 렌더하기 위해 추가 by yen */
@@ -47,6 +48,8 @@ type Props = {
   pendingCityCount?: number;
   /* 2026.10.19 DB 전체(DISTINCT)에서 만든 장소 목록 — 로드된 사진에만 의존하지 않도록 by Claude */
   availablePlaces?: { country: string; city: string | null }[];
+  /* 2026.10.19 검색 진행 중이면 Search 버튼을 비활성화하고 'Searching…'으로 표시 by Claude */
+  searching?: boolean;
   onSelectionChange?: (selected: {
     countries: string[];
     cities: string[];
@@ -67,6 +70,7 @@ const LocationSelector = forwardRef<LocationSelectorHandle, Props>(
       preparingMessage,
       pendingCityCount,
       availablePlaces,
+      searching = false,
       onSelectionChange,
       onGate,
     },
@@ -84,6 +88,11 @@ const LocationSelector = forwardRef<LocationSelectorHandle, Props>(
     const hasCommittedSelectionRef = useRef(false);
     /* 2026.04.22 TRANSLATIONS 직접 접근을 제거하고 공용 i18n 훅을 사용해 번역 처리 방식을 통일하기 위해 변경 by June */
     const { language, t } = useI18n();
+    /* 2026.10.19 국가/도시 목록이 길어지면 시트 높이를 넘겨 하단 버튼(All Locations·Search)이
+       화면 밖으로 밀려 보이지 않았다. 목록 높이에 상한을 두어 목록만 스크롤되게 하고
+       버튼은 항상 보이도록 한다 by Claude */
+    const { height: windowHeight } = useWindowDimensions();
+    const placeListMaxHeight = Math.max(160, Math.round(windowHeight * 0.3));
     /* 2026.06.23 [포인트3] 게이트 팝업 상태/콜백 — placeSearch일 때만 이 Modal 안에서 오버레이로 렌더 by yen */
     const {
       popupVisible: gatePopupVisible,
@@ -382,6 +391,14 @@ const LocationSelector = forwardRef<LocationSelectorHandle, Props>(
       handleReset,
     }));
 
+    /* 2026.10.19 'All Locations' 버튼용 — 초안(temp)만 전체 선택으로 바꾼다.
+       applyCurrentSelection이 '전체 선택'을 필터 해제(빈 배열)로 환산하므로,
+       이 상태에서 Search를 누르면 기존 리셋과 같은 결과가 된다 by Claude */
+    const selectAllPlacesDraft = () => {
+      setTempCountries(allCountries);
+      setTempCities(allCities);
+    };
+
     const applyCurrentSelection = () => {
       hasCommittedSelectionRef.current = true;
       const appliedCountries = [...tempCountries].sort();
@@ -481,9 +498,9 @@ const LocationSelector = forwardRef<LocationSelectorHandle, Props>(
                     gap: 10,
                   }}
                 >
-                  <TouchableOpacity
-                    onPress={() => runGated(applyCurrentSelection)}
-                  >
+                  {/* 2026.10.19 닫기는 아무것도 적용하지 않는다 — 이전에는 이 X가 선택을 확정하고
+                      검색까지 시작했다. 적용은 하단 Search 버튼에서만 (PicQly-T와 동일) by Claude */}
+                  <TouchableOpacity onPress={onClose}>
                     {/* 2026-03-04 change to close icon by yen */}
                     <ICON_CLOSE width={20} height={20} />
                   </TouchableOpacity>
@@ -493,6 +510,9 @@ const LocationSelector = forwardRef<LocationSelectorHandle, Props>(
             <View
               style={{
                 flexDirection: "row",
+                /* 2026.10.19 시트 높이를 넘길 때 이 영역이 줄어들어야 하단 버튼이 살아남는다 by Claude */
+                flexShrink: 1,
+                minHeight: 0,
               }}
             >
               <View
@@ -500,7 +520,7 @@ const LocationSelector = forwardRef<LocationSelectorHandle, Props>(
                   borderRightWidth: 1.18,
                   borderColor: "#DBEAFE",
                   flex: 1,
-                  justifyContent: "center",
+                  minHeight: 0,
                 }}
               >
                 <Text style={styles.tableTitle}>
@@ -543,11 +563,13 @@ const LocationSelector = forwardRef<LocationSelectorHandle, Props>(
                     );
                   }}
                   keyExtractor={(item) => item}
+                  style={{ maxHeight: placeListMaxHeight }}
                 />
               </View>
               <View
                 style={{
                   flex: 1,
+                  minHeight: 0,
                 }}
               >
                 <Text style={styles.tableTitle}>
@@ -585,19 +607,15 @@ const LocationSelector = forwardRef<LocationSelectorHandle, Props>(
                       );
                     }}
                     keyExtractor={(item) => item}
+                    style={{ maxHeight: placeListMaxHeight }}
                   />
                 )}
               </View>
             </View>
             <View style={styles.buttonContainer}>
-              <TouchableOpacity
-                onPress={() =>
-                  runGated(() => {
-                    handleReset();
-                    onClose();
-                  })
-                }
-              >
+              {/* 2026.10.19 'All Locations'는 선택만 전체로 바꾼다 — 적용/검색/닫기를 하지 않는다.
+                  날짜·시간 시트의 'All Dates'/'All Times' 프리셋과 같은 성격 by Claude */}
+              <TouchableOpacity onPress={selectAllPlacesDraft}>
                 <LinearGradient
                   colors={["#2B7FFF", "#AD46FF"]}
                   start={{ x: 0, y: 0 }}
@@ -606,6 +624,31 @@ const LocationSelector = forwardRef<LocationSelectorHandle, Props>(
                 >
 									
 									<Text style={styles.primaryButtonText}>{t("allLocations")}</Text>
+                </LinearGradient>
+              </TouchableOpacity>
+              {/* 2026.10.19 Search — 이 버튼만이 선택을 확정하고 검색을 시작한다.
+                  리워드 게이트도 여기로 옮겼다(이전에는 X/전체선택 버튼에 걸려 있었다) by Claude */}
+              <TouchableOpacity
+                activeOpacity={0.8}
+                disabled={searching}
+                onPress={() => runGated(applyCurrentSelection)}
+                style={styles.searchButtonWrap}
+              >
+                <LinearGradient
+                  colors={
+                    searching
+                      ? ["#A9C4EC", "#CBB6E8"]
+                      : ["#2B7FFF", "#AD46FF"]
+                  }
+                  start={{ x: 0, y: 0 }}
+                  end={{ x: 1, y: 0 }}
+                  style={styles.primaryButton}
+                >
+                  <Text style={styles.primaryButtonText}>
+                    {searching
+                      ? t("searching", "Searching…")
+                      : t("search", "Search")}
+                  </Text>
                 </LinearGradient>
               </TouchableOpacity>
             </View>
@@ -631,7 +674,9 @@ const styles = StyleSheet.create({
     position: "relative",
     paddingTop: 20,
     paddingBottom: 40, // 아이폰 홈 바 영역 고려
-    maxHeight: "40%",
+    /* 2026.10.19 40%로는 목록 + 하단 버튼 2개가 들어가지 않아 Search가 화면 밖으로 밀렸다.
+       maxHeight는 상한일 뿐이라 목록이 짧으면 시트도 그만큼 낮게 유지된다 by Claude */
+    maxHeight: "80%",
     shadowColor: "#000",
     shadowOffset: {
       width: 0,
@@ -698,6 +743,10 @@ const styles = StyleSheet.create({
     borderTopWidth: 1,
     borderColor: "#ccc",
     backgroundColor: Colors.light.background,
+  },
+  /* 2026.10.19 하단 Search 버튼 — 'All Locations'와 동일한 그라데이션 디자인 by Claude */
+  searchButtonWrap: {
+    marginTop: 8,
   },
   tableTitle: {
     paddingTop: 8,

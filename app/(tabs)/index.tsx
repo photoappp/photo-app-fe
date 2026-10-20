@@ -692,6 +692,9 @@ export default function HomeScreen() {
     isUnlocked: isLocationFeatureUnlockActive,
     requestAccess: requestRewardAccess,
   } = useRewardGate();
+  /* 2026.10.19 재무장마다 증가하는 nonce — 상태값이 그대로(예: 이미 search-prompt)면
+     자동 시작 effect가 다시 돌지 않아 Search가 아무 일도 하지 않는 경우가 생긴다 by Claude */
+  const [locationSearchArmNonce, setLocationSearchArmNonce] = useState(0);
   const [locationSearchWorkflowStatus, setLocationSearchWorkflowStatus] =
     useState<LocationSearchWorkflowStatus>("idle");
   const [locationSearchEntryPoint, setLocationSearchEntryPoint] =
@@ -840,6 +843,14 @@ export default function HomeScreen() {
   );
   const markLoadedBaseRange = useCallback(
     (currentFilter: FilterState, fullyLoaded: boolean) => {
+      /* 2026.10.19 장소 필터가 걸린 결과는 그 날짜 범위의 '전부'가 아니다. 그대로 커버리지로
+         기록하면 이후 같은 날짜 범위를 메모리에서 재사용할 때(인덱스 미완성 구간에서만 쓰는 경로)
+         장소로 걸러진 일부가 전체인 것처럼 쓰인다 by Claude */
+      if (currentFilter.countries.length > 0 || currentFilter.cities.length > 0) {
+        lastLoadedBaseFilterRef.current = null;
+        lastLoadedBaseFullyLoadedRef.current = false;
+        return;
+      }
       lastLoadedBaseFilterRef.current = cloneBaseFilterState(currentFilter);
       lastLoadedBaseFullyLoadedRef.current = fullyLoaded;
       if (fullyLoaded) {
@@ -1229,6 +1240,8 @@ export default function HomeScreen() {
           ? "ad-required"
           : "search-prompt",
       );
+      /* 상태가 같은 값으로 재설정돼도 자동 시작 effect가 반드시 한 번 더 돌게 한다 by Claude */
+      setLocationSearchArmNonce((nonce) => nonce + 1);
     },
     [
       locationFeatureUnlockedUntil,
@@ -2574,6 +2587,8 @@ export default function HomeScreen() {
   }, [
     locationSearchWorkflowStatus,
     currentDateTimeFilterSignature,
+    /* 2026.10.19 재무장 nonce — 위 주석 참고 by Claude */
+    locationSearchArmNonce,
     handleLocationSearchConfirm,
   ]);
 
@@ -4524,8 +4539,11 @@ export default function HomeScreen() {
     setEmptyMessage(null);
 
     try {
+      /* 2026.10.19 장소 조건을 떼지 않고 그대로 넘긴다 — tryLoadPhotosFromDbForDateTime이
+         국가/도시를 SQL(buildPlaceClause)로 내리므로, 여기서 비우면 DB가 장소를 무시한 채
+         날짜/시간만으로 답하게 된다 by Claude */
       const initialDbResult = await tryLoadPhotosFromDbForDateTime(
-        buildBaseDateTimeFilter(initialFilterForLoad),
+        initialFilterForLoad,
         INITIAL_TARGET_COUNT,
         null,
       );
@@ -4751,8 +4769,11 @@ export default function HomeScreen() {
         return;
       }
 
+      /* 2026.10.19 buildBaseDateTimeFilter는 countries/cities를 []로 비운다. 그대로 넘기면
+         목록 조회만 장소 조건 없이 돌아, 개수는 4인데 그리드에는 날짜 범위의 사진이 전부
+         그려지는 상태가 됐다. 전체 필터를 그대로 넘겨 DB가 장소까지 처리하게 한다 by Claude */
       const dbResult = await tryLoadPhotosFromDbForDateTime(
-        buildBaseDateTimeFilter(currentFilter),
+        currentFilter,
         FILTER_RESET_TARGET_COUNT,
         null,
       );
@@ -4767,12 +4788,15 @@ export default function HomeScreen() {
         setCurrentDataSource("db");
         sortedBase = dbResult.photos.slice(0, FILTER_RESET_TARGET_COUNT);
         await showLocationSearchPhaseText(locationSearchPhaseLabels.sort);
-        sorted = deriveVisiblePhotos(sortedBase, currentFilter);
         nextHasPage = dbResult.dbHasMore || !dbResult.isIndexComplete;
+        /* 2026.10.19 deriveVisiblePhotos보다 먼저 세운다 — 이 플래그가 false인 동안에는
+           JS 위치 필터가 한 번 더 돌아, SQL이 이미 통과시킨 행을 표시명(photo.country) 불일치로
+           다시 떨어뜨릴 수 있다. SQL이 장소를 처리했으면 JS는 손대지 않아야 한다 by Claude */
         dbDateTimePagingRef.current = {
           enabled: true,
           after: dbResult.nextAfter,
         };
+        sorted = deriveVisiblePhotos(sortedBase, currentFilter);
         setLocationSearchTargetTotalCount(
           dbResult.totalCount > 0 ? dbResult.totalCount : null,
         );
@@ -4930,8 +4954,10 @@ export default function HomeScreen() {
         let sourceLabel: "db" | "medialibrary" = "medialibrary";
 
         if (dbDateTimePagingRef.current.enabled) {
+          /* 2026.10.19 이어 읽기도 같은 장소 조건으로 — 비우면 스크롤할 때 다른 나라 사진이
+             다시 섞여 들어온다. 키셋 커서는 (taken_at, asset_id) 기준이라 조건이 같으면 안전 by Claude */
           const dbResult = await tryLoadPhotosFromDbForDateTime(
-            buildBaseDateTimeFilter(currentFilter),
+            currentFilter,
             APPEND_TARGET_COUNT,
             dbDateTimePagingRef.current.after,
           );
@@ -6186,6 +6212,17 @@ export default function HomeScreen() {
         return;
       }
 
+      /* 2026.10.19 장소 조건은 SQL(buildPlaceClause)에서 걸리므로, 이미 메모리에 올라온 사진만
+         다시 거르는 것으로는 결과가 바뀌지 않는다 — SQL 페이징이 켜져 있으면 deriveVisiblePhotos는
+         입력을 그대로 돌려준다. 그래서 '위치만 바꾸면 사진이 그대로'인 문제가 있었다.
+         날짜/시간 변경(handleDateTimeChange)과 똑같이 워크플로를 재무장해 실제 재조회를 돌린다 by Claude */
+      if (dbDateTimePagingRef.current.enabled) {
+        void prefetchLocationSearchTargetTotalCount(nextFilter);
+        armLocationSearchWorkflowForFilter(nextFilter);
+        return;
+      }
+
+      /* SQL 페이징이 꺼진 폴백 경로(MediaLibrary 스캔)에서는 메모리 필터가 실제 필터다 */
       const nextVisible = deriveVisiblePhotos(photosAllRef.current, nextFilter);
       setPhotos(nextVisible);
       void refreshFilterProgress(nextFilter, nextVisible.length);
@@ -6196,8 +6233,10 @@ export default function HomeScreen() {
     [
       EMPTY_DEFAULT_MESSAGE,
       areSelectionListsEqual,
+      armLocationSearchWorkflowForFilter,
       deriveVisiblePhotos,
       normalizeEffectiveLocationSelection,
+      prefetchLocationSearchTargetTotalCount,
       refreshFilterProgress,
     ],
   );
@@ -6767,6 +6806,8 @@ export default function HomeScreen() {
               locationOpenToken={locationFilterOpenToken}
               interactionBlocked={isMainInteractionBlocked}
               interactionBlockedReason={mainInteractionBlockReason}
+              /* 2026.10.19 검색 진행 중에는 시트의 Search 버튼을 비활성화 by Claude */
+              searching={filterLoading || initialLoading}
             />
           </View>
         </View>
