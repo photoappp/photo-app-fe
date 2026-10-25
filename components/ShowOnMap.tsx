@@ -1,6 +1,8 @@
 import { useLanguage } from "@/components/context/LanguageContext";
 import { useSlideshowTime } from "@/components/context/SlideshowTimeContext";
 import { TRANSLATIONS } from "@/constants/Translations";
+/* 2026.10.25 CARTO 베이스맵 키 — 키가 없으면 타일이 'API KEY REQUIRED' 이미지로 온다 by Claude */
+import { CARTO_API_KEY } from "@/constants/env";
 import PhotoDetailViewer from "@/components/PhotoDetailViewer";
 import * as amplitude from "@amplitude/analytics-react-native";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -22,6 +24,15 @@ import * as MediaLibrary from "expo-media-library";
 import { manipulateAsync, SaveFormat } from "expo-image-manipulator";
 import Share from "react-native-share";
 import type { WebView as WebViewType } from "react-native-webview";
+
+/* 2026.10.25 키가 비어 있으면 지도 전체가 'API KEY REQUIRED' 타일로 덮이는데 원인이 보이지 않아
+   한참 헤매게 된다. 번들에 키가 들어갔는지 즉시 확인할 수 있도록 1회 경고 by Claude */
+if (!CARTO_API_KEY) {
+  console.warn(
+    "[ShowOnMap] EXPO_PUBLIC_CARTO_API_KEY is not set — CARTO will serve 'API KEY REQUIRED' placeholder tiles. " +
+      "Add it to .env and restart the Metro bundler (EXPO_PUBLIC_* values are inlined at build time).",
+  );
+}
 
 type Photo = {
   uri: string;
@@ -912,10 +923,14 @@ export default function MapView({
           let hasInitialFit = false;
 
           // 2026-03-18 CartoDB Voyager tiles (more colorful, works on both iOS and Android)
-          L.tileLayer('https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png', {
-            maxZoom: 19,
-            attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors &copy; <a href="https://carto.com/attributions">CARTO</a>',
-            subdomains: 'abcd'
+          /* 2026.10.25 CARTO가 2025년부터 키를 요구한다. 키 없이 요청하면 'API KEY REQUIRED'가
+             적힌 플레이스홀더 PNG를 HTTP 200으로 돌려줘서 지도 전체가 그 이미지로 덮였다.
+             - 파라미터 이름은 api_key가 아니라 key
+             - 키를 쓸 때는 서브도메인(a~d) 없이 basemaps.cartocdn.com 단일 호스트
+             - 래스터 타일은 zoom 18까지만 허용(19 이상은 403) → maxZoom 19에서 18로 낮춤 by Claude */
+          L.tileLayer('https://basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}.png?key=${CARTO_API_KEY ?? ""}', {
+            maxZoom: 18,
+            attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors &copy; <a href="https://carto.com/attributions">CARTO</a>'
           }).addTo(map);
 
           const postViewportBounds = () => {
