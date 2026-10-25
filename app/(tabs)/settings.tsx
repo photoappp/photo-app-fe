@@ -81,9 +81,12 @@ export default function SimplifiedSettings() {
 
   // ===== Memoized Data =====
   // 설정 메뉴 데이터 (번역 적용)
+  /* 2026.10.25 테마(Dark/Light) 행은 화면에 노출하지 않는다 — 목록에서만 걸러내고
+     렌더러(case "theme")와 ThemeContext는 그대로 둔다. 다시 보여주려면 이 filter만 제거.
+     isDarkTheme은 다른 행들의 색상 계산에 계속 쓰이므로 영향 없음 by Claude */
   const data = useMemo(
     () =>
-      SETTINGS_CONFIG.map((opt) => ({
+      SETTINGS_CONFIG.filter((opt) => opt.type !== "theme").map((opt) => ({
         ...opt,
         title: t[opt.translKey as keyof typeof t],
       })),
