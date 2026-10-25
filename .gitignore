@@ -43,6 +43,14 @@ app-example
 # 로컬 네이티브 모듈 소스(modules/*/android)까지 제외해버려 빌드에서 누락됨 by Claude
 /android/
 
+# 2026.10.25 위에서 'android/'를 '/android/'로 한정한 대가로, 로컬 네이티브 모듈
+# (modules/*/android) 아래의 Gradle 빌드 산출물이 추적 대상이 됐다. 소스는 남기고
+# 산출물만 제외한다 by Claude
+.gradle/
+modules/*/android/build/
+modules/*/android/.cxx/
+modules/*/android/local.properties
+
 # ================================
 # iOS (필수 보존 파일 제외)
 # ================================
