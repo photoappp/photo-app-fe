@@ -139,9 +139,18 @@ export const OPEN_SOURCE_ITEMS = [
 ];
 
 // 2026-05-12 add more apps by yen
+/* 2026.10.25 Sunny 앱 목록을 제공받은 순서 그대로 재구성 (총 15개).
+   Subway Master / Watermelon Checker / LED POP / decibella2 추가.
+   watermelon_checker만 jpg인데, png로 바꾸면 596KB로 거의 두 배가 되어 그대로 둔다
+   (아이콘은 borderRadius 없이 contain으로 그려서 알파가 필요 없음) by Claude */
 export const APPS_LIST = [
   {
-    name: "Sky Peacemaker - Finger Force",
+    name: "Subway Master",
+    image: require("@/assets/images/subway_master.png"),
+    url: "https://subwaymaster.onelink.me/UbwX/nvm85ss4",
+  },
+  {
+    name: "Sky Peacemaker",
     image: require("@/assets/images/sky_peacemaker.png"),
     url: "https://skypeacemaker.onelink.me/YQxG/8s9sx66i",
   },
@@ -159,6 +168,16 @@ export const APPS_LIST = [
     name: "Simply Multi Timer",
     image: require("@/assets/images/simply_multi_timer.png"),
     url: "https://simplymultitimer.onelink.me/6kU2/v7i9ke1m",
+  },
+  {
+    name: "Watermelon Checker",
+    image: require("@/assets/images/watermelon_checker.jpg"),
+    url: "https://watermelonchecker.onelink.me/zF1F/obulncrt",
+  },
+  {
+    name: "LED POP",
+    image: require("@/assets/images/led_pop.png"),
+    url: "https://ledpop.onelink.me/ZM1Z/2myfwcif",
   },
   {
     name: "Wisdom Qclock",
@@ -189,6 +208,11 @@ export const APPS_LIST = [
     name: "Find Four",
     image: require("@/assets/images/find_four.png"),
     url: "https://findfour.onelink.me/vurA/0tfteiuf",
+  },
+  {
+    name: "decibella2",
+    image: require("@/assets/images/decibella2.png"),
+    url: "https://decibella2.onelink.me/T5UV/x5q1f7vs",
   },
   {
     name: "decibella",
