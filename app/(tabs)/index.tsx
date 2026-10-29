@@ -7007,7 +7007,11 @@ export default function HomeScreen() {
           }}
           primaryButtonMode={slideshowOn ? "pause" : "play"}
           onPressPrimary={slideshowOn ? pauseSlideshowToDetail : handleViewerPlayPress}
-          showCloseButton={!slideshowOn}
+          /* 2026.10.25 슬라이드쇼 재생 중에는 일시정지 버튼을 감추고 닫기만 남긴다.
+             이전에는 반대로 일시정지만 있고 닫기가 없어 슬라이드쇼를 끝내려면
+             일시정지를 거쳐야 했다 by Claude */
+          showPrimaryButton={!slideshowOn}
+          showCloseButton
           dateText={
             currentViewerPhoto ? fmtDateTime(currentViewerPhoto.takenAt) : ""
           }

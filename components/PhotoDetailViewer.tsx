@@ -19,6 +19,8 @@ type Props = {
   onRequestClose: () => void;
   onPressPrimary?: () => void;
   primaryButtonMode?: "play" | "pause";
+  /* 2026.10.25 슬라이드쇼 재생 중에는 일시정지 버튼 없이 닫기만 노출하기 위해 추가 by Claude */
+  showPrimaryButton?: boolean;
   showCloseButton?: boolean;
   backgroundColor?: string;
   animationType?: "none" | "slide" | "fade";
@@ -37,6 +39,7 @@ export default function PhotoDetailViewer({
   onRequestClose,
   onPressPrimary,
   primaryButtonMode = "play",
+  showPrimaryButton = true,
   showCloseButton = true,
   backgroundColor = "rgba(0,0,0,0.98)",
   animationType = "fade",
@@ -58,24 +61,30 @@ export default function PhotoDetailViewer({
               { paddingTop: Math.max(insets.top, 12) },
             ]}
           >
-            <TouchableOpacity
-              onPress={onPressPrimary}
-              style={styles.primarySlot}
-              activeOpacity={0.9}
-            >
-              <LinearGradient
-                colors={primaryButtonMode === "pause" ? ["#AD46FF", "#2B7FFF"] : ["#2B7FFF", "#AD46FF"]}
-                start={{ x: 0, y: 0 }}
-                end={{ x: 1, y: 0 }}
-                style={styles.primaryBg}
+            {showPrimaryButton ? (
+              <TouchableOpacity
+                onPress={onPressPrimary}
+                style={styles.primarySlot}
+                activeOpacity={0.9}
               >
-                {primaryButtonMode === "pause" ? (
-                  <Text style={styles.pauseTxt}>Ⅱ</Text>
-                ) : (
-                  <IconPlay width={18} height={18} />
-                )}
-              </LinearGradient>
-            </TouchableOpacity>
+                <LinearGradient
+                  colors={primaryButtonMode === "pause" ? ["#AD46FF", "#2B7FFF"] : ["#2B7FFF", "#AD46FF"]}
+                  start={{ x: 0, y: 0 }}
+                  end={{ x: 1, y: 0 }}
+                  style={styles.primaryBg}
+                >
+                  {primaryButtonMode === "pause" ? (
+                    <Text style={styles.pauseTxt}>Ⅱ</Text>
+                  ) : (
+                    <IconPlay width={18} height={18} />
+                  )}
+                </LinearGradient>
+              </TouchableOpacity>
+            ) : (
+              /* 자리만 차지하는 placeholder — headerBar가 space-between이라
+                 이게 없으면 닫기 버튼이 왼쪽으로 끌려온다 by Claude */
+              <View style={styles.primarySlotPlaceholder} />
+            )}
             {showCloseButton ? (
               <TouchableOpacity onPress={onRequestClose} style={styles.closeBtn}>
                 <Text style={styles.closeTxt}>✕</Text>
@@ -89,7 +98,14 @@ export default function PhotoDetailViewer({
       PhotoDetailViewerHeader.displayName = "PhotoDetailViewerHeader";
       return PhotoDetailViewerHeader;
     },
-    [insets.top, onPressPrimary, onRequestClose, primaryButtonMode, showCloseButton]
+    [
+      insets.top,
+      onPressPrimary,
+      onRequestClose,
+      primaryButtonMode,
+      showPrimaryButton,
+      showCloseButton,
+    ]
   );
 
   const Footer = useMemo(
@@ -186,6 +202,11 @@ const styles = StyleSheet.create({
   },
   closeBtnPlaceholder: {
     width: 52,
+    height: 52,
+  },
+  /* 2026.10.25 primarySlot과 같은 크기의 빈 자리 by Claude */
+  primarySlotPlaceholder: {
+    width: 108,
     height: 52,
   },
   footer: {
