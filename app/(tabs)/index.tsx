@@ -3328,9 +3328,16 @@ export default function HomeScreen() {
     thumbnailReadyByUriRef.current = thumbnailReadyByUri;
   }, [thumbnailReadyByUri]);
 
+  /* 2026.11.04 전체 초기화 대신 목록에 남아 있는 사진의 ready는 유지 — 셀 키가 uri라 같은 사진은 셀/이미지가
+     그대로 재사용되어 onLoad가 다시 오지 않으므로, 비우면 세그먼트/필터 전환 시 플레이스홀더가 영구히 남았다 by yen */
   useEffect(() => {
-    thumbnailReadyByUriRef.current = {};
-    setThumbnailReadyByUri({});
+    const currentUris = new Set(photosRef.current.map((photo) => photo.uri));
+    const kept: Record<string, true> = {};
+    for (const uri of Object.keys(thumbnailReadyByUriRef.current)) {
+      if (currentUris.has(uri)) kept[uri] = true;
+    }
+    thumbnailReadyByUriRef.current = kept;
+    setThumbnailReadyByUri(kept);
   }, [thumbnailBlockingSignature]);
 
   /* 2026.10.12 '사진 세트 확정 → 첫 화면 썸네일 20장 페인트 완료'까지의 실제 시간을 계측 —
