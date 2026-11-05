@@ -138,6 +138,8 @@ type DateTimeFilterProps = {
   interactionBlockedReason?: string;
   /* 2026.10.19 검색 진행 중이면 시트의 Search 버튼을 비활성화하고 'Searching…'으로 표시 by Claude */
   searching?: boolean;
+  /* 2026.11.04 Screenshots 선택 중에는 위치 조건을 쓰지 않으므로 Location 행을 비활성(회색) 처리 by yen */
+  locationDisabled?: boolean;
   onLocationChange: (value: {
     countries: string[];
     cities: string[];
@@ -257,6 +259,8 @@ export default function DateTimeFilter({
   interactionBlocked = false,
   interactionBlockedReason,
   searching = false,
+  /* 2026.11.04 Location 행 비활성 여부 by yen */
+  locationDisabled = false,
   onLocationChange,
   onLocationGate,
 }: DateTimeFilterProps) {
@@ -776,7 +780,12 @@ export default function DateTimeFilter({
         {/* 하단 고정 필터 패널 END */}
 
         {/* Location row */}
-        <View style={styles.filterRow}>
+        {/* 2026.11.04 Screenshots 선택 중에는 회색 처리하고 탭을 막음(선택값은 유지) by yen */}
+        <View
+          style={styles.filterRow}
+          pointerEvents={locationDisabled ? "none" : "auto"}
+          accessibilityState={{ disabled: locationDisabled }}
+        >
           {/* 2026.03.03 아이콘 버튼 클릭 시에도 바텀시트 표출되도록 수정 June */}
           <TouchableOpacity
             style={styles.filterIcon}
@@ -785,11 +794,16 @@ export default function DateTimeFilter({
             hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
           >
             <ICON_LOCATION width={50} height={50} />
+            {/* 2026.11.04 반투명 opacity 대신 회색 레이어로 아이콘 전체를 덮어 비활성 표시 by yen */}
+            {locationDisabled ? (
+              <View style={[styles.disabledOverlay, styles.disabledIconOverlay]} />
+            ) : null}
           </TouchableOpacity>
           <TouchableOpacity
             onPress={openLocationSheet}
             activeOpacity={0.8}
-            style={styles.filterCard}
+            /* 2026.11.04 비활성 시 그림자 제거 — Android에서 그림자 있는 뷰가 회색 박스 테두리로 보이던 문제 by yen */
+            style={[styles.filterCard, locationDisabled && styles.filterCardNoShadow]}
           >
             <View style={styles.filterValueArea}>
               <Text style={styles.filterValue} numberOfLines={1}>
@@ -808,6 +822,10 @@ export default function DateTimeFilter({
                 </View>
               </TouchableOpacity>
             </View>
+            {/* 2026.11.04 입력 박스(라벨/Reset 포함) 전체를 회색 레이어로 덮어 비활성 표시 by yen */}
+            {locationDisabled ? (
+              <View style={[styles.disabledOverlay, styles.disabledCardOverlay]} />
+            ) : null}
           </TouchableOpacity>
         </View>
       </View>
@@ -1184,6 +1202,21 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "space-between",
     marginBottom: 12,
+  },
+  /* 2026.11.04 Location 행 비활성 표시 — 아이콘/입력 박스 위에 회색 레이어를 덮음 by yen */
+  disabledOverlay: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: "rgba(229, 231, 235, 0.85)",
+  },
+  disabledIconOverlay: {
+    borderRadius: 13,
+  },
+  disabledCardOverlay: {
+    borderRadius: 12,
+  },
+  filterCardNoShadow: {
+    elevation: 0,
+    shadowOpacity: 0,
   },
   filterTitle: {
     fontSize: 12,

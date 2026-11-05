@@ -1,4 +1,6 @@
 import * as MediaLibrary from "expo-media-library";
+/* 2026.11.04 스크린샷 판별 플랫폼 분기 by yen */
+import { Platform } from "react-native";
 /* 2026.04.15 MediaLibrary 자산을 SQLite 메타데이터로 동기화하는 서비스 레이어를 신규 추가 by June */
 
 import {
@@ -61,6 +63,17 @@ const readLocation = (location: any) => {
   return { latitude, longitude };
 };
 
+/* 2026.11.04 MediaLibrary 자산의 스크린샷 여부 — iOS는 mediaSubtypes, Android는 공식 플래그가 없어
+   Screenshots 폴더/파일명으로 판별(네이티브 모듈과 같은 기준) by yen */
+const SCREENSHOT_NAME_PATTERN = /^screenshot/i;
+export const isScreenshotAsset = (asset: MediaLibrary.Asset) => {
+  if (Platform.OS === "ios") {
+    return asset.mediaSubtypes?.includes("screenshot") ?? false;
+  }
+  if (SCREENSHOT_NAME_PATTERN.test(asset.filename ?? "")) return true;
+  return /\/screenshots\//i.test(decodeURIComponent(asset.uri ?? ""));
+};
+
 /* 2026.04.15 Asset 기본 메타를 DB row로 정규화해 동기화/업서트 입력 구조를 고정하기 위해 추가 by June */
 const toMetadataRow = (
   asset: MediaLibrary.Asset,
@@ -80,6 +93,8 @@ const toMetadataRow = (
     createdAt: now,
     updatedAt: now,
     isDeleted: 0,
+    /* 2026.11.04 스크린샷 여부 저장 by yen */
+    isScreenshot: isScreenshotAsset(asset) ? 1 : 0,
   };
 };
 
@@ -129,6 +144,9 @@ const nativeAssetToRow = (asset: LibrarySyncAsset): PhotoMetadataRow => {
     createdAt: now,
     updatedAt: now,
     isDeleted: 0,
+    /* 2026.11.04 구 바이너리는 값을 주지 않으므로 null(기존 값 유지) by yen */
+    isScreenshot:
+      typeof asset.isScreenshot === "boolean" ? (asset.isScreenshot ? 1 : 0) : null,
   };
 };
 

@@ -53,6 +53,18 @@ class PhotoSyncModule : Module() {
     return JSONObject().put("schema", 1).put("platform", "android").put("access", access).put("volumes", volumes).toString()
   }
 
+  // 2026.11.04 Android에는 스크린샷 플래그가 없어 Screenshots 폴더/파일명으로 판별 (JS isScreenshotAsset과 동일 기준) by yen
+  private fun isScreenshot(cursor: Cursor): Boolean {
+    fun text(column: String): String {
+      val index = cursor.getColumnIndex(column)
+      return if (index < 0 || cursor.isNull(index)) "" else cursor.getString(index)
+    }
+    if (text("_display_name").startsWith("screenshot", ignoreCase = true)) return true
+    if (text("bucket_display_name").equals("screenshots", ignoreCase = true)) return true
+    val path = if (Build.VERSION.SDK_INT >= 29) text("relative_path") else text("_data")
+    return path.contains("/screenshots/", ignoreCase = true) || path.startsWith("screenshots/", ignoreCase = true)
+  }
+
   private fun session(handle: String): Session = sessions[handle] ?: error("Unknown photo synchronization session")
 
   override fun definition() = ModuleDefinition {
@@ -83,6 +95,8 @@ class PhotoSyncModule : Module() {
       }
       val columns = mutableListOf("_id", "datetaken", "date_modified")
       if (Build.VERSION.SDK_INT >= 30) columns.addAll(listOf("volume_name", "generation_added", "generation_modified"))
+      // 2026.11.04 스크린샷 판별용 파일명/폴더 컬럼 — 기존 위치 인덱스(3~5)가 밀리지 않도록 끝에 추가 by yen
+      columns.addAll(listOf("_display_name", "bucket_display_name", if (Build.VERSION.SDK_INT >= 29) "relative_path" else "_data"))
       val visible = mutableListOf<String>()
       if (Build.VERSION.SDK_INT >= 29) visible.add("is_pending=0")
       if (Build.VERSION.SDK_INT >= 30) visible.add("is_trashed=0")
@@ -130,7 +144,8 @@ class PhotoSyncModule : Module() {
           "${volume}:${state.stamps.getValue(volume).first}:${cursor.getLong(4)}:${cursor.getLong(5)}"
         } else modified.toString()
         assets.add(mapOf("id" to id.toString(), "uri" to ContentUris.withAppendedId(uri, id).toString(),
-          "creationTime" to created, "modificationTime" to modified, "revision" to revision))
+          "creationTime" to created, "modificationTime" to modified, "revision" to revision,
+          "isScreenshot" to isScreenshot(cursor)))
         if (state.ids == null) ids.add(id.toString())
         consumed++
       }

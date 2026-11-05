@@ -4,7 +4,8 @@ import * as SQLite from "expo-sqlite";
 /* 2026.04.15 메타데이터 전용 DB 파일명/버전을 고정해 추후 마이그레이션 기준점을 만들기 위해 추가 by June */
 const DB_NAME = "picqly_metadata.db";
 /* 2026.04.15 스키마 변경 시 버전 증가를 통해 구조 변경을 안전하게 적용하기 위해 추가 by June */
-const DB_SCHEMA_VERSION = 8;
+/* 2026.11.04 is_screenshot 컬럼 추가로 9로 올림 by yen */
+const DB_SCHEMA_VERSION = 9;
 
 /* 2026.04.15 DB 핸들을 싱글톤으로 재사용해 중복 open 비용과 상태 불일치를 줄이기 위해 추가 by June */
 let dbPromise: Promise<SQLite.SQLiteDatabase> | null = null;
@@ -29,6 +30,8 @@ export type PhotoMetadataRow = {
   createdAt: number;
   updatedAt: number;
   isDeleted: number;
+  /* 2026.11.04 스크린샷 여부 (1/0, 판별 불가 시 null) by yen */
+  isScreenshot: number | null;
 };
 
 /* 2026.04.15 쿼리 결과를 화면용 최소 Photo 형태로 변환하기 위한 타입을 명확히 분리하기 위해 추가 by June */
@@ -42,7 +45,12 @@ export type PhotoSummaryRow = {
   countryCode: string | null;
   city: string | null;
   cityApprox: string | null;
+  /* 2026.11.04 사진/스크린샷 구분 by yen */
+  isScreenshot: number | null;
 };
+
+/* 2026.11.04 사진/스크린샷 세그먼트 필터 by yen */
+export type MediaKind = "all" | "photos" | "screenshots";
 
 /* 2026.10.18 위치 필터를 SQL WHERE로 내리기 위한 선택 조건 by Claude */
 export type PlaceFilter = {
@@ -133,7 +141,9 @@ export const initPhotoMetadataDb = async () => {
            국가는 언어가 바뀌어도 유효하도록 A3 코드로 저장하고 표시명은 읽을 때 변환 by Claude */
         country_code TEXT,
         city TEXT,
-        city_approx TEXT
+        city_approx TEXT,
+        /* 2026.11.04 스크린샷 여부 (NULL = 아직 판별 안 됨, 사진으로 취급) by yen */
+        is_screenshot INTEGER
       );
 
       CREATE INDEX IF NOT EXISTS idx_photo_metadata_taken_at
@@ -322,6 +332,16 @@ export const initPhotoMetadataDb = async () => {
         `ALTER TABLE photo_metadata ADD COLUMN city_approx TEXT;`
       );
     }
+    /* 2026.11.04 기존 설치본에 is_screenshot 컬럼 추가 — 기존 row는 값이 없으므로 네이티브 체크포인트를 비워
+       다음 동기화가 전수 패스로 돌며 채우도록 함 by yen */
+    if (!hasColumn("is_screenshot")) {
+      await db.execAsync(
+        `ALTER TABLE photo_metadata ADD COLUMN is_screenshot INTEGER;`
+      );
+      await db.runAsync(
+        `UPDATE photo_sync_state SET native_checkpoint = NULL WHERE id = 1`
+      );
+    }
     await db.execAsync(`
       CREATE INDEX IF NOT EXISTS idx_photo_metadata_country_taken
         ON photo_metadata (is_deleted, country_code, taken_at DESC);
@@ -360,7 +380,8 @@ export const upsertPhotoMetadataRows = async (rows: PhotoMetadataRow[]) => {
         longitude,
         created_at,
         updated_at,
-        is_deleted
+        is_deleted,
+        is_screenshot
       )
       SELECT
         json_extract(value, '$.assetId'),
@@ -371,7 +392,8 @@ export const upsertPhotoMetadataRows = async (rows: PhotoMetadataRow[]) => {
         json_extract(value, '$.longitude'),
         json_extract(value, '$.createdAt'),
         json_extract(value, '$.updatedAt'),
-        json_extract(value, '$.isDeleted')
+        json_extract(value, '$.isDeleted'),
+        json_extract(value, '$.isScreenshot')
       FROM json_each(?)
       WHERE true
       ON CONFLICT(asset_id) DO UPDATE SET
@@ -382,7 +404,9 @@ export const upsertPhotoMetadataRows = async (rows: PhotoMetadataRow[]) => {
         latitude = COALESCE(excluded.latitude, photo_metadata.latitude),
         longitude = COALESCE(excluded.longitude, photo_metadata.longitude),
         updated_at = excluded.updated_at,
-        is_deleted = excluded.is_deleted
+        is_deleted = excluded.is_deleted,
+        /* 2026.11.04 판별값이 없는 경로(구 바이너리 등)에서 기존 값을 덮어쓰지 않도록 COALESCE by yen */
+        is_screenshot = COALESCE(excluded.is_screenshot, photo_metadata.is_screenshot)
       `,
       JSON.stringify(rows)
     );
@@ -1048,6 +1072,13 @@ const buildPlaceClause = (place?: PlaceFilter) => {
   return { sql: clauses.join("\n      "), args };
 };
 
+/* 2026.11.04 사진/스크린샷 조건 — 판별 전(NULL) 사진은 일반 사진으로 취급 by yen */
+const buildMediaKindClause = (mediaKind?: MediaKind) => {
+  if (mediaKind === "screenshots") return "AND is_screenshot = 1";
+  if (mediaKind === "photos") return "AND COALESCE(is_screenshot, 0) = 0";
+  return "";
+};
+
 /* 2026.10.18 장소 판별이 아직 안 된(좌표는 있고 country가 비어있는) 사진을 백그라운드 보강 대상으로 조회 by Claude */
 export const getPhotosMissingPlace = async (limit: number) => {
   await initPhotoMetadataDb();
@@ -1208,6 +1239,8 @@ export const queryPhotoMetadataByDateTime = async (params: {
   after?: PhotoPageCursor | null;
   /* 2026.10.18 국가/도시 조건을 SQL로 처리 by Claude */
   place?: PlaceFilter;
+  /* 2026.11.04 사진/스크린샷 조건 by yen */
+  mediaKind?: MediaKind;
 }) => {
   /* 2026.04.15 taken_minute 컬럼 추가 전 쿼리 실행으로 no such column 에러가 나는 문제를 막기 위해 조회 전 초기화를 강제 by June */
   await initPhotoMetadataDb();
@@ -1226,7 +1259,8 @@ export const queryPhotoMetadataByDateTime = async (params: {
   const rows = await db.getAllAsync<PhotoSummaryRow>(
     `
     SELECT asset_id as assetId, uri, taken_at as takenAt, latitude, longitude,
-           country_code as countryCode, city, city_approx as cityApprox
+           country_code as countryCode, city, city_approx as cityApprox,
+           is_screenshot as isScreenshot
     FROM photo_metadata
     WHERE is_deleted = 0
       /* 2026.04.22 날짜 검색 정확도 우선 정책으로 unknown timestamp row를 제외해 잘못된 연도 노출을 방지하기 위해 조건 수정 by June */
@@ -1239,6 +1273,7 @@ export const queryPhotoMetadataByDateTime = async (params: {
         OR (? < ? AND taken_minute >= ? AND taken_minute <= ?)
       )
       ${placeFilter.sql}
+      ${buildMediaKindClause(params.mediaKind)}
       ${keysetClause}
     ORDER BY
       /* 2026.05.28 홈 썸네일 정책과 동일하게 최신 사진이 먼저 나오도록 DB 조회 정렬을 최신순으로 변경 by June */
@@ -1464,6 +1499,8 @@ export const countPhotoMetadataByDateTime = async (params: {
   timeEnd: number;
   /* 2026.10.18 위치 필터가 걸린 범위의 건수도 SQL로 계산 by Claude */
   place?: PlaceFilter;
+  /* 2026.11.04 사진/스크린샷 조건 by yen */
+  mediaKind?: MediaKind;
 }) => {
   /* 2026.04.22 카운트 조회도 스키마 초기화 이후에 실행되도록 보장해 구버전 DB에서 컬럼 누락 오류를 방지하기 위해 초기화 선행 by June */
   await initPhotoMetadataDb();
@@ -1487,6 +1524,7 @@ export const countPhotoMetadataByDateTime = async (params: {
         OR (? < ? AND taken_minute >= ? AND taken_minute <= ?)
       )
       ${placeFilter.sql}
+      ${buildMediaKindClause(params.mediaKind)}
     `,
     params.dateStartMs,
     params.dateEndNextMs,

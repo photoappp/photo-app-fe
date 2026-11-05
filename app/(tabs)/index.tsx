@@ -1,4 +1,6 @@
 import DateTimeFilter from "@/components/DateTimeFilter";
+/* 2026.11.04 사진/스크린샷 세그먼트 버튼 by yen */
+import MediaKindSegment from "@/components/MediaKindSegment";
 // import AsyncWorkDebugOverlay from "@/components/debug/AsyncWorkDebugOverlay";
 import PhotoDetailViewer from "@/components/PhotoDetailViewer";
 import ShowOnMap from "@/components/ShowOnMap";
@@ -63,6 +65,8 @@ import {
   getPhotoSyncState,
   getPhotosMissingCoords,
   initPhotoMetadataDb,
+  /* 2026.11.04 사진/스크린샷 세그먼트 필터 by yen */
+  type MediaKind,
   type PhotoPageCursor,
   queryPhotoMetadataByDateTime,
   updatePhotoCoordinatesByAssetIds,
@@ -70,6 +74,8 @@ import {
 } from "@/lib/db/photoMetadataDb";
 import { recordPerfMetric } from "@/lib/services/perfMetrics";
 import {
+  /* 2026.11.04 MediaLibrary 경로 스크린샷 판별 by yen */
+  isScreenshotAsset,
   syncPhotoMetadataInBackground,
   upsertPhotoMetadataFromAssets,
 } from "@/lib/services/photoMetadataSync";
@@ -216,7 +222,30 @@ type LocationFilterState = {
   cities: string[];
   locationLabel?: string;
 };
-type FilterState = DateTimeFilterState & LocationFilterState;
+/* 2026.11.04 사진/스크린샷 세그먼트 선택값 추가 by yen */
+type FilterState = DateTimeFilterState &
+  LocationFilterState & { mediaKind: MediaKind };
+/* 2026.11.04 세그먼트(All/Photos/Screenshots)별로 기억해 두는 DB 페이징 결과 by yen */
+type MediaKindCacheEntry = {
+  photos: Photo[];
+  after: PhotoPageCursor | null;
+  hasNextPage: boolean;
+  totalCount: number | null;
+};
+const MEDIA_KIND_ORDER: MediaKind[] = ["all", "photos", "screenshots"];
+/* 2026.11.04 현재 세그먼트 썸네일이 먼저 그려지도록 다른 세그먼트 미리 읽기는 잠시 뒤에 시작 by yen */
+const MEDIA_KIND_PREFETCH_DELAY_MS = 800;
+
+/* 2026.11.04 중복 판별 키 — Android는 같은 사진이 네이티브 동기화(content://)와 MediaLibrary(file://)에서
+   서로 다른 uri로 들어와 uri 기준으로는 두 번 표시됐다. 두 경로 모두 같은 자산 id를 주므로 id 우선 by yen */
+const photoIdentityKey = (photo: Photo) => photo.assetId || photo.uri;
+
+/* 2026.11.04 스크린샷은 위치 정보가 없다고 보고 Screenshots 선택 중에는 위치 조건을 무시.
+   상태의 선택값은 그대로 두어 All/Photos로 돌아가면 다시 적용된다 by yen */
+const withLocationIgnoredForScreenshots = (filter: FilterState): FilterState =>
+  filter.mediaKind === "screenshots"
+    ? { ...filter, countries: [], cities: [] }
+    : filter;
 type PhotoDataSource =
   | "idle"
   | "db"
@@ -659,6 +688,8 @@ export default function HomeScreen() {
     timeEnd: 1439,
     countries: [],
     cities: [],
+    /* 2026.11.04 기본 선택은 All by yen */
+    mediaKind: "all",
   });
   /* 2026.04.15 필터 기본값 대비 변경 여부를 안정적으로 판정해 카운트/재조회 루프를 방지하기 위해 초기 필터 스냅샷을 보관 by June */
   const initialFilterRef = useRef<FilterState>({
@@ -669,8 +700,17 @@ export default function HomeScreen() {
     timeEnd: 1439,
     countries: [],
     cities: [],
+    /* 2026.11.04 기본 선택은 All by yen */
+    mediaKind: "all",
   });
   const filterRef = useRef<FilterState>(filter);
+  /* 2026.11.04 세그먼트 캐시 — 날짜/시간/위치 조건 시그니처가 같을 때만 유효 by yen */
+  const mediaKindCacheRef = useRef<{
+    signature: string;
+    entries: Partial<Record<MediaKind, MediaKindCacheEntry>>;
+  } | null>(null);
+  /* 2026.11.04 빠르게 연속 전환할 때 늦게 도착한 이전 결과를 버리기 위한 토큰 by yen */
+  const mediaKindSwitchTokenRef = useRef(0);
   useEffect(() => {
     filterRef.current = filter;
   }, [filter]);
@@ -778,6 +818,8 @@ export default function HomeScreen() {
       timeEnd: currentFilter.timeEnd,
       countries: [],
       cities: [],
+      /* 2026.11.04 기준 범위는 사진/스크린샷 구분 없이 적재하고 표시 단계에서 거름 by yen */
+      mediaKind: "all",
     }),
     [],
   );
@@ -2047,6 +2089,8 @@ export default function HomeScreen() {
           assetId: asset.id,
           takenAt,
           location,
+          /* 2026.11.04 사진/스크린샷 세그먼트 필터용 by yen */
+          isScreenshot: isScreenshotAsset(asset),
         };
       }),
     );
@@ -2057,7 +2101,9 @@ export default function HomeScreen() {
   /** 위치 필터 */
   const applyLocationFilter = useCallback(
     (items: Photo[], currentFilter: FilterState) => {
-      const { countries, cities } = currentFilter;
+      /* 2026.11.04 Screenshots 선택 중에는 위치 조건 무시 by yen */
+      const { countries, cities } =
+        withLocationIgnoredForScreenshots(currentFilter);
 
       if (countries.length === 0 && cities.length === 0) {
         return items;
@@ -2107,7 +2153,16 @@ export default function HomeScreen() {
       const items = filteredBySql
         ? baseItems
         : applyLocationFilter(baseItems, currentFilter);
-      return sortPhotosForDisplay(dedupePhotosByUri(items));
+      /* 2026.11.04 사진/스크린샷 조건은 항상 메모리에서도 거름 — SQL로 이미 걸렀으면 결과가 같고,
+         기준 범위(mediaKind "all")로 적재한 경로에서는 이 단계가 실제 필터가 된다 by yen */
+      const mediaKind = currentFilter.mediaKind;
+      const byKind =
+        mediaKind === "all"
+          ? items
+          : items.filter(
+              (photo) => !!photo.isScreenshot === (mediaKind === "screenshots"),
+            );
+      return sortPhotosForDisplay(dedupePhotosByUri(byKind));
     },
     [applyLocationFilter, dedupePhotosByUri, sortPhotosForDisplay],
   );
@@ -2288,6 +2343,8 @@ export default function HomeScreen() {
                 : undefined,
               city: row.city ?? undefined,
               cityApprox: row.cityApprox ?? undefined,
+              /* 2026.11.04 사진/스크린샷 세그먼트 필터용 by yen */
+              isScreenshot: row.isScreenshot === 1,
             }));
             /* keyset은 taken_at DESC 순서로 반환되므로 전체 재정렬 없이 이어붙임(중복만 제거) */
             streamed = dedupePhotosByUri([...streamed, ...chunkPhotos]);
@@ -2393,11 +2450,13 @@ export default function HomeScreen() {
 
         if (runToken !== locationSearchRunTokenRef.current) return;
 
-        const seenUris = new Set<string>();
+        /* 2026.11.04 uri 대신 자산 id 기준으로 중복 제거 by yen */
+        const seenKeys = new Set<string>();
         const mergedBase = [...photosAllRef.current, ...photosChunk]
           .filter((photo) => {
-            if (seenUris.has(photo.uri)) return false;
-            seenUris.add(photo.uri);
+            const key = photoIdentityKey(photo);
+            if (seenKeys.has(key)) return false;
+            seenKeys.add(key);
             return true;
           })
           .sort((a, b) => {
@@ -2784,8 +2843,10 @@ export default function HomeScreen() {
     currentFilter: FilterState,
     _mode: "initial" | "background" | "append" | "filter-reset",
   ) => {
+    /* 2026.11.04 Screenshots 선택 중에는 위치 조건 무시 by yen */
+    const effectiveFilter = withLocationIgnoredForScreenshots(currentFilter);
     const hasLocationFilter =
-      currentFilter.countries.length > 0 || currentFilter.cities.length > 0;
+      effectiveFilter.countries.length > 0 || effectiveFilter.cities.length > 0;
     /* 2026.04.22 위치 필터가 실제로 사용될 때만 geocoding을 수행해 append/background에서 불필요한 메모리/CPU 사용을 줄이기 위해 정책을 단순화 by June */
     return hasLocationFilter;
   };
@@ -3180,8 +3241,10 @@ export default function HomeScreen() {
     const out: Photo[] = [];
 
     for (const item of items) {
-      if (seen.has(item.uri)) continue;
-      seen.add(item.uri);
+      /* 2026.11.04 uri 대신 자산 id 기준으로 중복 제거 by yen */
+      const key = photoIdentityKey(item);
+      if (seen.has(key)) continue;
+      seen.add(key);
       out.push(item);
     }
 
@@ -3291,9 +3354,16 @@ export default function HomeScreen() {
     thumbnailReadyByUriRef.current = thumbnailReadyByUri;
   }, [thumbnailReadyByUri]);
 
+  /* 2026.11.04 전체 초기화 대신 목록에 남아 있는 사진의 ready는 유지 — 셀 키가 uri라 같은 사진은 셀/이미지가
+     그대로 재사용되어 onLoad가 다시 오지 않으므로, 비우면 세그먼트/필터 전환 시 플레이스홀더가 영구히 남았다 by yen */
   useEffect(() => {
-    thumbnailReadyByUriRef.current = {};
-    setThumbnailReadyByUri({});
+    const currentUris = new Set(photosRef.current.map((photo) => photo.uri));
+    const kept: Record<string, true> = {};
+    for (const uri of Object.keys(thumbnailReadyByUriRef.current)) {
+      if (currentUris.has(uri)) kept[uri] = true;
+    }
+    thumbnailReadyByUriRef.current = kept;
+    setThumbnailReadyByUri(kept);
   }, [thumbnailBlockingSignature]);
 
   /* 2026.10.12 '사진 세트 확정 → 첫 화면 썸네일 20장 페인트 완료'까지의 실제 시간을 계측 —
@@ -3541,6 +3611,8 @@ export default function HomeScreen() {
         countryCode?: string | null;
         city?: string | null;
         cityApprox?: string | null;
+        /* 2026.11.04 사진/스크린샷 구분 by yen */
+        isScreenshot?: number | null;
       }[],
     ): Photo[] => {
       return rows.map((row) => ({
@@ -3556,6 +3628,8 @@ export default function HomeScreen() {
           : undefined,
         city: row.city ?? undefined,
         cityApprox: row.cityApprox ?? undefined,
+        /* 2026.11.04 사진/스크린샷 세그먼트 필터용 by yen */
+        isScreenshot: row.isScreenshot === 1,
       }));
     },
     [],
@@ -3570,6 +3644,8 @@ export default function HomeScreen() {
     ) => {
       /* 2026.04.22 DB 날짜/시간 조회 지연을 계측해 MediaLibrary fallback 대비 성능 차이를 수치화하기 위해 타이머를 추가 by June */
       const dbLoadStartedAt = Date.now();
+      /* 2026.11.04 Screenshots 선택 중에는 장소 SQL 조건을 걸지 않음 by yen */
+      currentFilter = withLocationIgnoredForScreenshots(currentFilter);
       await showLocationSearchPhaseText(locationSearchPhaseLabels.db);
       const hasLocationFilter =
         currentFilter.countries.length > 0 || currentFilter.cities.length > 0;
@@ -3660,6 +3736,8 @@ export default function HomeScreen() {
         timeStart: currentFilter.timeStart,
         timeEnd: currentFilter.timeEnd,
         place: placeFilter,
+        /* 2026.11.04 사진/스크린샷 조건도 SQL로 by yen */
+        mediaKind: currentFilter.mediaKind,
       });
 
       console.log("[PhotoLoad] db query range", {
@@ -3683,6 +3761,8 @@ export default function HomeScreen() {
         /* 2026.09.02 append 이어읽기를 OFFSET 대신 keyset 커서로 수행해 백그라운드 인덱싱 중 페이지 밀림을 방지 by Claude */
         after,
         place: placeFilter,
+        /* 2026.11.04 사진/스크린샷 조건도 SQL로 by yen */
+        mediaKind: currentFilter.mediaKind,
       });
 
       /* 2026.04.22 limit+1 조회 결과에서 초과 1건 존재 여부를 hasMore로 변환해 스크롤 추가 로딩 가능 여부를 계산하기 위해 추가 by June */
@@ -3885,6 +3965,8 @@ export default function HomeScreen() {
 
   const loadPhotosForDateTimeSegment = useCallback(
     async (currentFilter: FilterState, mode: "initial" | "filter-reset" | "append") => {
+      /* 2026.11.04 Screenshots 선택 중에는 위치 조건 무시 by yen */
+      currentFilter = withLocationIgnoredForScreenshots(currentFilter);
       const hasLocationFilter =
         currentFilter.countries.length > 0 || currentFilter.cities.length > 0;
       if (!hasLocationFilter) {
@@ -4514,6 +4596,8 @@ export default function HomeScreen() {
       timeEnd: 1439,
       countries: [],
       cities: [],
+      /* 2026.11.04 첫 로드 중에 세그먼트를 바꿔도 반영되도록 현재 선택값 사용 by yen */
+      mediaKind: filterRef.current.mediaKind,
     };
     const requestId = beginPhotoLoad("idle", initialFilterForLoad);
 
@@ -4616,6 +4700,8 @@ export default function HomeScreen() {
           timeEnd: 1439,
           countries: [],
           cities: [],
+          /* 2026.11.04 FilterState 필수 필드 by yen */
+          mediaKind: filterRef.current.mediaKind,
         },
         initial.length,
       );
@@ -4673,6 +4759,8 @@ export default function HomeScreen() {
 
   /** 날짜 필터 변경 처리 - 유저가 날짜 변경 시 해당 날짜 조건에 맞는 결과를 찾을 때까지 다시 탐색 */
   const reloadPhotosForFilter = useCallback(async () => {
+    /* 2026.11.04 전체 재조회(필터 변경/새로고침)가 일어나면 세그먼트 캐시는 낡은 것이므로 비움 by yen */
+    mediaKindCacheRef.current = null;
     const currentFilter = filterRef.current;
     const requestId = beginPhotoLoad("idle", currentFilter);
 
@@ -6246,6 +6334,227 @@ export default function HomeScreen() {
     ],
   );
 
+  /* 2026.11.04 세그먼트 캐시 키 — 세그먼트 자체는 제외한 날짜/시간/위치 조건 by yen */
+  const mediaKindCacheSignature = useCallback(
+    (f: FilterState) =>
+      [
+        dayStartMs(f.dateStart),
+        dayEndNextMs(f.dateEnd),
+        f.timeStart,
+        f.timeEnd,
+        f.countries.join(","),
+        f.cities.join(","),
+      ].join("|"),
+    [dayEndNextMs, dayStartMs],
+  );
+
+  /* 2026.11.04 시그니처가 바뀌었으면 캐시를 새로 시작 by yen */
+  const getMediaKindCacheEntries = useCallback((signature: string) => {
+    if (mediaKindCacheRef.current?.signature !== signature) {
+      mediaKindCacheRef.current = { signature, entries: {} };
+    }
+    return mediaKindCacheRef.current.entries;
+  }, []);
+
+  /* 2026.11.04 캐시/조회 결과를 화면에 반영 — 전체 재조회 없이 목록과 페이징 상태만 교체 by yen */
+  const applyMediaKindEntry = useCallback(
+    (currentFilter: FilterState, entry: MediaKindCacheEntry) => {
+      dbDateTimePagingRef.current = { enabled: true, after: entry.after };
+      const visible = deriveVisiblePhotos(entry.photos, currentFilter);
+      photosAllRef.current = entry.photos;
+      photosRef.current = visible;
+      setPhotosAll(entry.photos);
+      setPhotos(visible);
+      setEndCursor(null);
+      setHasNextPage(entry.hasNextPage);
+      setLocationSearchTargetTotalCount(entry.totalCount);
+      void refreshFilterProgress(currentFilter, visible.length);
+      setEmptyMessage(visible.length === 0 ? EMPTY_DEFAULT_MESSAGE : null);
+      void hydratePersistedDisplayUriCache(entry.photos, "media-kind-switch");
+      photoGridListRef.current?.scrollToOffset({ offset: 0, animated: false });
+    },
+    [
+      EMPTY_DEFAULT_MESSAGE,
+      deriveVisiblePhotos,
+      hydratePersistedDisplayUriCache,
+      refreshFilterProgress,
+    ],
+  );
+
+  /* 2026.11.04 DB 페이징 중 세그먼트 전환 — 캐시가 있으면 즉시 표시, 없으면 해당 세그먼트 첫 페이지만 조회.
+     전체 재조회(reloadPhotosForFilter)의 권한 확인/상태 초기화/로딩 표시를 거치지 않고,
+     새 결과가 올 때까지 현재 목록을 그대로 보여준다 by yen */
+  const switchMediaKindFromDb = useCallback(
+    async (prevFilter: FilterState, nextFilter: FilterState) => {
+      const signature = mediaKindCacheSignature(nextFilter);
+      const entries = getMediaKindCacheEntries(signature);
+      /* 떠나는 세그먼트의 현재 상태(스크롤로 더 읽은 분량 포함)를 저장 */
+      entries[prevFilter.mediaKind] = {
+        photos: photosAllRef.current,
+        after: dbDateTimePagingRef.current.after,
+        hasNextPage,
+        totalCount: locationSearchTargetTotalCount,
+      };
+
+      const token = ++mediaKindSwitchTokenRef.current;
+      const cached = entries[nextFilter.mediaKind];
+      if (cached) {
+        console.log("[MediaKind] switch from cache", { kind: nextFilter.mediaKind });
+        applyMediaKindEntry(nextFilter, cached);
+        return;
+      }
+
+      /* 다른 조회가 진행 중이면 커서가 엇갈리지 않도록 기존 전체 재조회 경로(대기열 지원)로 양보 */
+      if (requestInFlightRef.current) {
+        void reloadPhotosForFilterRef.current();
+        return;
+      }
+
+      const startedAt = Date.now();
+      let fallback = false;
+      requestInFlightRef.current = true;
+      try {
+        const dbResult = await tryLoadPhotosFromDbForDateTime(
+          nextFilter,
+          FILTER_RESET_TARGET_COUNT,
+          null,
+        );
+        if (token !== mediaKindSwitchTokenRef.current) return;
+        if (!dbResult.usedDb) {
+          fallback = true;
+        } else {
+          const entry: MediaKindCacheEntry = {
+            photos: dbResult.photos,
+            after: dbResult.nextAfter,
+            hasNextPage: dbResult.dbHasMore || !dbResult.isIndexComplete,
+            totalCount: dbResult.totalCount > 0 ? dbResult.totalCount : null,
+          };
+          /* 인덱스가 완성된 결과만 캐시(인덱싱 중 결과는 곧 낡음) */
+          if (dbResult.isIndexComplete) entries[nextFilter.mediaKind] = entry;
+          applyMediaKindEntry(nextFilter, entry);
+          console.log("[MediaKind] switch from db", {
+            kind: nextFilter.mediaKind,
+            ms: Date.now() - startedAt,
+          });
+        }
+      } catch (error) {
+        console.log("[MediaKind] switch query failed", error);
+        fallback = true;
+      } finally {
+        requestInFlightRef.current = false;
+      }
+
+      if (fallback && token === mediaKindSwitchTokenRef.current) {
+        void reloadPhotosForFilterRef.current();
+      }
+    },
+    [
+      FILTER_RESET_TARGET_COUNT,
+      applyMediaKindEntry,
+      getMediaKindCacheEntries,
+      hasNextPage,
+      locationSearchTargetTotalCount,
+      mediaKindCacheSignature,
+      tryLoadPhotosFromDbForDateTime,
+    ],
+  );
+
+  /* 2026.11.04 사진/스크린샷 세그먼트 — Search/광고 게이트 없이 즉시 적용.
+     SQL 페이징 중이면 캐시/첫 페이지 조회로 빠르게 전환, 메모리 경로면 이미 올라온 사진만 다시 거름 by yen */
+  const handleMediaKindChange = useCallback(
+    (mediaKind: MediaKind) => {
+      const prev = filterRef.current;
+      if (prev.mediaKind === mediaKind) return;
+
+      const nextFilter = { ...prev, mediaKind };
+      filterRef.current = nextFilter;
+      setFilter(nextFilter);
+
+      /* 2026.11.04 DB 페이징 중이면 가벼운 전환 경로 사용(Screenshots의 위치 무시도 DB 조회가 처리) by yen */
+      if (dbDateTimePagingRef.current.enabled) {
+        void switchMediaKindFromDb(prev, nextFilter);
+        return;
+      }
+
+      /* 2026.11.04 위치 조건이 있는 상태에서 Screenshots로 들어가거나 나오면 위치 적용 여부가 바뀌므로
+         메모리 재필터 대신 재조회(메모리 사진은 위치 보강이 안 됐을 수 있음) by yen */
+      const hasLocationSelection =
+        prev.countries.length > 0 || prev.cities.length > 0;
+      const locationApplicabilityChanged =
+        hasLocationSelection &&
+        (prev.mediaKind === "screenshots") !== (mediaKind === "screenshots");
+
+      if (locationApplicabilityChanged) {
+        void reloadPhotosForFilterRef.current();
+        return;
+      }
+
+      const nextVisible = deriveVisiblePhotos(photosAllRef.current, nextFilter);
+      setPhotos(nextVisible);
+      void refreshFilterProgress(nextFilter, nextVisible.length);
+      setEmptyMessage(nextVisible.length === 0 ? EMPTY_DEFAULT_MESSAGE : null);
+    },
+    [
+      EMPTY_DEFAULT_MESSAGE,
+      deriveVisiblePhotos,
+      refreshFilterProgress,
+      switchMediaKindFromDb,
+    ],
+  );
+
+  /* 2026.11.04 현재 세그먼트가 표시된 뒤, 나머지 세그먼트의 첫 페이지를 조용히 미리 읽어 첫 전환도 즉시 되도록 함.
+     다른 조회가 시작되거나 조건이 바뀌면 중단 by yen */
+  useEffect(() => {
+    if (initialLoading || filterLoading) return;
+    if (!dbDateTimePagingRef.current.enabled) return;
+    const baseFilter = filter;
+    const signature = mediaKindCacheSignature(baseFilter);
+    let cancelled = false;
+    const timer = setTimeout(() => {
+      void (async () => {
+        const entries = getMediaKindCacheEntries(signature);
+        for (const kind of MEDIA_KIND_ORDER) {
+          if (cancelled) return;
+          if (kind === filterRef.current.mediaKind || entries[kind]) continue;
+          if (mediaKindCacheSignature(filterRef.current) !== signature) return;
+          if (requestInFlightRef.current) return;
+          try {
+            const result = await tryLoadPhotosFromDbForDateTime(
+              { ...baseFilter, mediaKind: kind },
+              FILTER_RESET_TARGET_COUNT,
+              null,
+            );
+            if (!result.usedDb || !result.isIndexComplete) return;
+            if (mediaKindCacheRef.current?.signature !== signature) return;
+            if (entries[kind]) continue;
+            entries[kind] = {
+              photos: result.photos,
+              after: result.nextAfter,
+              hasNextPage: result.dbHasMore,
+              totalCount: result.totalCount > 0 ? result.totalCount : null,
+            };
+            console.log("[MediaKind] prefetched", { kind, count: result.photos.length });
+          } catch (error) {
+            console.log("[MediaKind] prefetch failed", error);
+            return;
+          }
+        }
+      })();
+    }, MEDIA_KIND_PREFETCH_DELAY_MS);
+    return () => {
+      cancelled = true;
+      clearTimeout(timer);
+    };
+  }, [
+    FILTER_RESET_TARGET_COUNT,
+    filter,
+    filterLoading,
+    getMediaKindCacheEntries,
+    initialLoading,
+    mediaKindCacheSignature,
+    tryLoadPhotosFromDbForDateTime,
+  ]);
+
   const handleDateTimeChange = useCallback(
     (selections: Partial<DateTimeFilterState>) => {
       console.log("[Filter] date-time received", {
@@ -6786,6 +7095,12 @@ export default function HomeScreen() {
             </View>
           </View>
           <View style={styles.bottomArea}>
+            {/* 2026.11.04 사진 영역과 날짜 필터 사이 All | Photos | Screenshots 세그먼트 by yen */}
+            <MediaKindSegment
+              value={filter.mediaKind}
+              onChange={handleMediaKindChange}
+              disabled={isMainInteractionBlocked}
+            />
             <DateTimeFilter
               /* 2026.06.09 상위 필터 상태가 강제 보정돼도 바텀 필터 UI가 즉시 같은 값을 표시하도록 controlled value를 연결 by June */
               value={{
@@ -6813,6 +7128,8 @@ export default function HomeScreen() {
               interactionBlockedReason={mainInteractionBlockReason}
               /* 2026.10.19 검색 진행 중에는 시트의 Search 버튼을 비활성화 by Claude */
               searching={filterLoading || initialLoading}
+              /* 2026.11.04 Screenshots 선택 중에는 Location 행 비활성 by yen */
+              locationDisabled={filter.mediaKind === "screenshots"}
             />
           </View>
         </View>

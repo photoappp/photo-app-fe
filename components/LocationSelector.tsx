@@ -98,6 +98,8 @@ const LocationSelector = forwardRef<LocationSelectorHandle, Props>(
       popupVisible: gatePopupVisible,
       activeFeature: gateActiveFeature,
       adLoading: gateAdLoading,
+      /* 2026.11.04 광고 표시 중에는 이 Modal을 숨김 by yen */
+      adShowing: gateAdShowing,
       watchAd: gateWatchAd,
       closePopup: gateClosePopup,
     } = useRewardGate();
@@ -482,7 +484,10 @@ const LocationSelector = forwardRef<LocationSelectorHandle, Props>(
     return (
       <Modal
         transparent
-        visible={visible}
+        /* 2026.11.04 전면 광고 동안 Modal 창을 내렸다가 광고가 끝나면 다시 표시 — 열린 채로 광고가 뜨면
+           Android에서 복귀 후 이 창이 터치를 받지 못해 화면 전체가 먹통이 됐다.
+           닫기(onClose)가 아니라 숨김이라 선택 중이던 초안 상태는 그대로 유지된다 by yen */
+        visible={visible && !gateAdShowing}
         animationType="slide"
         onRequestClose={onClose}
       >

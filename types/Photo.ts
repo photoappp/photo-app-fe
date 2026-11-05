@@ -8,6 +8,8 @@ export type Photo = {
   /* 2026.10.12 좌표 조회가 이미 끝난 사진(= DB에 좌표 또는 'GPS 없음' 표시가 있음) — 무의미한 재조회 방지 by Claude */
   coordsChecked?: boolean;
   country?: string;
+  /* 2026.11.04 사진/스크린샷 세그먼트 필터용 by yen */
+  isScreenshot?: boolean;
   location?: {
     latitude: string | number;
     longitude: string | number;

@@ -146,6 +146,8 @@ public class PhotoSyncModule: Module {
           payload["latitude"] = location.coordinate.latitude
           payload["longitude"] = location.coordinate.longitude
         }
+        // 2026.11.04 사진/스크린샷 세그먼트 필터용 스크린샷 여부 by yen
+        payload["isScreenshot"] = asset.mediaSubtypes.contains(.photoScreenshot)
         assets.append(payload)
         if state.includeIds { ids.append(id) }
         state.assetIndex += 1

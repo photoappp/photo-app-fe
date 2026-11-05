@@ -22,6 +22,8 @@ export type LibrarySyncAsset = {
   /* iOS는 bulk 조회 시점에 좌표를 함께 내려줌(Android는 없음) */
   latitude?: number;
   longitude?: number;
+  /* 2026.11.04 iOS는 mediaSubtypes, Android는 폴더/파일명으로 판별 by yen */
+  isScreenshot?: boolean;
 };
 
 export type LibrarySyncPage = {
