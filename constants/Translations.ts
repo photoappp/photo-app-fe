@@ -2,6 +2,10 @@
 /* 2026.04.22 번역 키/언어 타입을 코드에서 재사용 가능하게 만들기 위해 객체 리터럴 기반 상수로 구조를 고정 by June */
 export const TRANSLATIONS = {
 		en: {
+		/* 2026.11.04 사진/스크린샷 세그먼트 버튼 by yen */
+		mediaKindAll: 'All',
+		mediaKindPhotos: 'Photos',
+		mediaKindScreenshots: 'Screenshots',
 		settings: 'Settings',
 		userData: 'User Data',
 		startDate: 'Start Date',
@@ -120,6 +124,10 @@ export const TRANSLATIONS = {
 			noRecent3YearsPhotos: "No photos in the last 3 years."
 		},
 	ko: {
+		/* 2026.11.04 사진/스크린샷 세그먼트 버튼 by yen */
+		mediaKindAll: '전체',
+		mediaKindPhotos: '사진',
+		mediaKindScreenshots: '스크린샷',
 		settings: '설정',
 		userData: '사용자 데이터',
 		startDate: '시작일',
@@ -205,6 +213,10 @@ export const TRANSLATIONS = {
 			"연월, 시간, 장소 조건을 좁혀 보세요. 검색 범위가 줄어 정리 시간을 줄일 수 있습니다."
 	},
 	ja: {
+		/* 2026.11.04 사진/스크린샷 세그먼트 버튼 by yen */
+		mediaKindAll: 'すべて',
+		mediaKindPhotos: '写真',
+		mediaKindScreenshots: 'スクリーンショット',
 		settings: '設定',
 		userData: 'ユーザーデータ',
 		startDate: '開始日',
@@ -454,6 +466,10 @@ export const TRANSLATIONS = {
 			"请尝试缩小年月、时间和地点条件。这样可以减少搜索范围，缩短整理时间。"
 	},
 	fr: {
+		/* 2026.11.04 사진/스크린샷 세그먼트 버튼 by yen */
+		mediaKindAll: 'Tout',
+		mediaKindPhotos: 'Photos',
+		mediaKindScreenshots: 'Captures',
 		settings: 'Settings',
 		userData: 'User Data',
 		startDate: 'Start Date',
@@ -537,6 +553,10 @@ export const TRANSLATIONS = {
 			"Essayez de réduire les filtres par année/mois, heure et lieu. Cela réduit la plage de recherche et peut raccourcir le temps de tri."
 	},
 	es: {
+		/* 2026.11.04 사진/스크린샷 세그먼트 버튼 by yen */
+		mediaKindAll: 'Todo',
+		mediaKindPhotos: 'Fotos',
+		mediaKindScreenshots: 'Capturas',
 		settings: 'Settings',
 		userData: 'Données utilisateur',
 		startDate: 'Date de début',

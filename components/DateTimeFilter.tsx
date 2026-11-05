@@ -138,6 +138,8 @@ type DateTimeFilterProps = {
   interactionBlockedReason?: string;
   /* 2026.10.19 검색 진행 중이면 시트의 Search 버튼을 비활성화하고 'Searching…'으로 표시 by Claude */
   searching?: boolean;
+  /* 2026.11.04 Screenshots 선택 중에는 위치 조건을 쓰지 않으므로 Location 행을 비활성(회색) 처리 by yen */
+  locationDisabled?: boolean;
   onLocationChange: (value: {
     countries: string[];
     cities: string[];
@@ -257,6 +259,8 @@ export default function DateTimeFilter({
   interactionBlocked = false,
   interactionBlockedReason,
   searching = false,
+  /* 2026.11.04 Location 행 비활성 여부 by yen */
+  locationDisabled = false,
   onLocationChange,
   onLocationGate,
 }: DateTimeFilterProps) {
@@ -776,7 +780,12 @@ export default function DateTimeFilter({
         {/* 하단 고정 필터 패널 END */}
 
         {/* Location row */}
-        <View style={styles.filterRow}>
+        {/* 2026.11.04 Screenshots 선택 중에는 회색 처리하고 탭을 막음(선택값은 유지) by yen */}
+        <View
+          style={[styles.filterRow, locationDisabled && styles.filterRowDisabled]}
+          pointerEvents={locationDisabled ? "none" : "auto"}
+          accessibilityState={{ disabled: locationDisabled }}
+        >
           {/* 2026.03.03 아이콘 버튼 클릭 시에도 바텀시트 표출되도록 수정 June */}
           <TouchableOpacity
             style={styles.filterIcon}
@@ -1184,6 +1193,10 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "space-between",
     marginBottom: 12,
+  },
+  /* 2026.11.04 Location 행 비활성 표시 by yen */
+  filterRowDisabled: {
+    opacity: 0.4,
   },
   filterTitle: {
     fontSize: 12,
