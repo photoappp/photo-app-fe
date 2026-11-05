@@ -225,6 +225,10 @@ type LocationFilterState = {
 /* 2026.11.04 사진/스크린샷 세그먼트 선택값 추가 by yen */
 type FilterState = DateTimeFilterState &
   LocationFilterState & { mediaKind: MediaKind };
+/* 2026.11.04 중복 판별 키 — Android는 같은 사진이 네이티브 동기화(content://)와 MediaLibrary(file://)에서
+   서로 다른 uri로 들어와 uri 기준으로는 두 번 표시됐다. 두 경로 모두 같은 자산 id를 주므로 id 우선 by yen */
+const photoIdentityKey = (photo: Photo) => photo.assetId || photo.uri;
+
 /* 2026.11.04 스크린샷은 위치 정보가 없다고 보고 Screenshots 선택 중에는 위치 조건을 무시.
    상태의 선택값은 그대로 두어 All/Photos로 돌아가면 다시 적용된다 by yen */
 const withLocationIgnoredForScreenshots = (filter: FilterState): FilterState =>
@@ -2428,11 +2432,13 @@ export default function HomeScreen() {
 
         if (runToken !== locationSearchRunTokenRef.current) return;
 
-        const seenUris = new Set<string>();
+        /* 2026.11.04 uri 대신 자산 id 기준으로 중복 제거 by yen */
+        const seenKeys = new Set<string>();
         const mergedBase = [...photosAllRef.current, ...photosChunk]
           .filter((photo) => {
-            if (seenUris.has(photo.uri)) return false;
-            seenUris.add(photo.uri);
+            const key = photoIdentityKey(photo);
+            if (seenKeys.has(key)) return false;
+            seenKeys.add(key);
             return true;
           })
           .sort((a, b) => {
@@ -3217,8 +3223,10 @@ export default function HomeScreen() {
     const out: Photo[] = [];
 
     for (const item of items) {
-      if (seen.has(item.uri)) continue;
-      seen.add(item.uri);
+      /* 2026.11.04 uri 대신 자산 id 기준으로 중복 제거 by yen */
+      const key = photoIdentityKey(item);
+      if (seen.has(key)) continue;
+      seen.add(key);
       out.push(item);
     }
 

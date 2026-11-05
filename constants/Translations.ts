@@ -300,6 +300,10 @@ export const TRANSLATIONS = {
 			"年月、時間、場所の条件を絞ってみてください。検索範囲が狭まり、整理時間を短縮できます。"
 	},
 	'zh-Hant': { // 기존 ChineseTraditional
+		/* 2026.11.04 사진/스크린샷 세그먼트 버튼 by yen */
+		mediaKindAll: '全部',
+		mediaKindPhotos: '照片',
+		mediaKindScreenshots: '螢幕截圖',
 		settings: '設定',
 		userData: '用戶資訊',
 		startDate: '開始日期',
@@ -383,6 +387,10 @@ export const TRANSLATIONS = {
 			"請嘗試縮小年月、時間和地點條件。這樣可以減少搜尋範圍，縮短整理時間。"
 	},
 	'zh-Hans': { // 기존 ChineseSimplified
+		/* 2026.11.04 사진/스크린샷 세그먼트 버튼 by yen */
+		mediaKindAll: '全部',
+		mediaKindPhotos: '照片',
+		mediaKindScreenshots: '截图',
 		settings: '设置',
 		userData: '用户数据',
 		startDate: '开始日期',
