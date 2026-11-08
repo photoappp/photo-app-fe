@@ -52,6 +52,44 @@ const DatePickersResponsive = ({
   // 폭이 좁으면 세로 스택, 넓으면 좌우 배치
   const stack = true;
   const maxDate = new Date();
+  /* 2026.11.08 Android 날짜 휠 UI 개선(시작/종료 라벨, 연한 카드, 선택 줄 하이라이트) — 선택 로직은 그대로 by yen */
+  const { t } = useI18n();
+
+  if (Platform.OS === "android") {
+    return (
+      <View style={styles.androidDateWrap}>
+        {[
+          {
+            key: "start",
+            label: t("dateRangeStart", "Start"),
+            value: dateStart,
+            onChange: onChangeStart,
+          },
+          {
+            key: "end",
+            label: t("dateRangeEnd", "End"),
+            value: dateEnd,
+            onChange: onChangeEnd,
+          },
+        ].map((item) => (
+          <View key={item.key}>
+            <Text style={styles.androidDateLabel}>{item.label}</Text>
+            <View style={styles.androidDateCard}>
+              <DateTimePicker
+                mode="date"
+                value={item.value}
+                onChange={item.onChange}
+                maximumDate={maxDate}
+                dividerColor="transparent"
+              />
+              {/* 선택 줄 하이라이트 — 터치는 휠로 통과 */}
+              <View pointerEvents="none" style={styles.androidDateBand} />
+            </View>
+          </View>
+        ))}
+      </View>
+    );
+  }
 
   return (
     <>
@@ -95,6 +133,9 @@ const WHEEL_SCALE = 0.95; // 0.88~0.95 사이 조절 가능
 const RENDERED_HEIGHT = IOS_WHEEL_NATIVE_HEIGHT * WHEEL_SCALE;
 // 위/아래 덮을 마스크 높이
 const COVER_HEIGHT = Math.max(0, (RENDERED_HEIGHT - VISIBLE_HEIGHT) / 2);
+
+/* 2026.11.08 Android 날짜 휠 선택 줄 하이라이트 높이(휠 한 줄 높이 근사) by yen */
+const ANDROID_DATE_BAND_HEIGHT = 40;
 
 const pad = (n: number) => `${n}`.padStart(2, "0");
 const fmtDate = (d: Date) =>
@@ -1305,6 +1346,34 @@ const styles = StyleSheet.create({
     zIndex: 10,
   },
   pickerBoxStack: { width: "100%", marginTop: 5 },
+  /* 2026.11.08 Android 날짜 휠 카드/라벨/선택 줄 하이라이트 by yen */
+  androidDateWrap: { marginTop: 8, gap: 10 },
+  androidDateLabel: {
+    fontSize: 13,
+    fontWeight: "600",
+    color: "#314158",
+    marginBottom: 6,
+    marginLeft: 2,
+  },
+  androidDateCard: {
+    height: 130,
+    borderWidth: 1,
+    borderColor: "#E5E7EB",
+    borderRadius: 14,
+    backgroundColor: "#fff",
+    overflow: "hidden",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  androidDateBand: {
+    position: "absolute",
+    left: 8,
+    right: 8,
+    top: (130 - 2 - ANDROID_DATE_BAND_HEIGHT) / 2,
+    height: ANDROID_DATE_BAND_HEIGHT,
+    borderRadius: 10,
+    backgroundColor: "rgba(43, 127, 255, 0.10)",
+  },
   favs: { flexDirection: "row", flexWrap: "wrap", gap: 4, marginTop: 12 },
   favBtn: {
     backgroundColor: "#F3F4F6",

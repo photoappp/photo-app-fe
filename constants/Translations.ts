@@ -2,6 +2,9 @@
 /* 2026.04.22 번역 키/언어 타입을 코드에서 재사용 가능하게 만들기 위해 객체 리터럴 기반 상수로 구조를 고정 by June */
 export const TRANSLATIONS = {
 		en: {
+		/* 2026.11.08 Android 날짜 시트 시작/종료 라벨 by yen */
+		dateRangeStart: 'Start',
+		dateRangeEnd: 'End',
 		/* 2026.11.04 사진/스크린샷 세그먼트 버튼 by yen */
 		mediaKindAll: 'All',
 		mediaKindPhotos: 'Photos',
@@ -127,6 +130,9 @@ export const TRANSLATIONS = {
 			noRecent3YearsPhotos: "No photos in the last 3 years."
 		},
 	ko: {
+		/* 2026.11.08 Android 날짜 시트 시작/종료 라벨 by yen */
+		dateRangeStart: '시작',
+		dateRangeEnd: '종료',
 		/* 2026.11.04 사진/스크린샷 세그먼트 버튼 by yen */
 		mediaKindAll: '전체',
 		mediaKindPhotos: '사진',
@@ -219,6 +225,9 @@ export const TRANSLATIONS = {
 			"연월, 시간, 장소 조건을 좁혀 보세요. 검색 범위가 줄어 정리 시간을 줄일 수 있습니다."
 	},
 	ja: {
+		/* 2026.11.08 Android 날짜 시트 시작/종료 라벨 by yen */
+		dateRangeStart: '開始',
+		dateRangeEnd: '終了',
 		/* 2026.11.04 사진/스크린샷 세그먼트 버튼 by yen */
 		mediaKindAll: 'すべて',
 		mediaKindPhotos: '写真',
@@ -309,6 +318,9 @@ export const TRANSLATIONS = {
 			"年月、時間、場所の条件を絞ってみてください。検索範囲が狭まり、整理時間を短縮できます。"
 	},
 	'zh-Hant': { // 기존 ChineseTraditional
+		/* 2026.11.08 Android 날짜 시트 시작/종료 라벨 by yen */
+		dateRangeStart: '開始',
+		dateRangeEnd: '結束',
 		/* 2026.11.04 사진/스크린샷 세그먼트 버튼 by yen */
 		mediaKindAll: '全部',
 		mediaKindPhotos: '照片',
@@ -399,6 +411,9 @@ export const TRANSLATIONS = {
 			"請嘗試縮小年月、時間和地點條件。這樣可以減少搜尋範圍，縮短整理時間。"
 	},
 	'zh-Hans': { // 기존 ChineseSimplified
+		/* 2026.11.08 Android 날짜 시트 시작/종료 라벨 by yen */
+		dateRangeStart: '开始',
+		dateRangeEnd: '结束',
 		/* 2026.11.04 사진/스크린샷 세그먼트 버튼 by yen */
 		mediaKindAll: '全部',
 		mediaKindPhotos: '照片',
@@ -489,6 +504,9 @@ export const TRANSLATIONS = {
 			"请尝试缩小年月、时间和地点条件。这样可以减少搜索范围，缩短整理时间。"
 	},
 	fr: {
+		/* 2026.11.08 Android 날짜 시트 시작/종료 라벨 by yen */
+		dateRangeStart: 'Début',
+		dateRangeEnd: 'Fin',
 		/* 2026.11.04 사진/스크린샷 세그먼트 버튼 by yen */
 		mediaKindAll: 'Tout',
 		mediaKindPhotos: 'Photos',
@@ -579,6 +597,9 @@ export const TRANSLATIONS = {
 			"Essayez de réduire les filtres par année/mois, heure et lieu. Cela réduit la plage de recherche et peut raccourcir le temps de tri."
 	},
 	es: {
+		/* 2026.11.08 Android 날짜 시트 시작/종료 라벨 by yen */
+		dateRangeStart: 'Inicio',
+		dateRangeEnd: 'Fin',
 		/* 2026.11.04 사진/스크린샷 세그먼트 버튼 by yen */
 		mediaKindAll: 'Todo',
 		mediaKindPhotos: 'Fotos',
