@@ -768,11 +768,18 @@ export default function DateTimeFilter({
               onPress={() => {
                 /* 2026.10.19 칩의 초기화 버튼은 시트 밖이라 Search가 없으므로 즉시 적용 —
                    emitChange에 새 값을 직접 넘긴다(이전엔 state 갱신 전 값이 올라갔다) by Claude */
-                setDateStart(recent31DaysStart);
-                setDateEnd(today);
+                /* 2026.11.08 앱 시작 시점의 오늘을 쓰면 자정을 넘긴 뒤 초기화 시 어제까지로 설정됐음 — 누른 시점 기준으로 계산 by yen */
+                const resetEnd = new Date();
+                const resetStart = new Date(
+                  resetEnd.getFullYear(),
+                  resetEnd.getMonth(),
+                  resetEnd.getDate() - 30,
+                );
+                setDateStart(resetStart);
+                setDateEnd(resetEnd);
                 emitChange({
-                  dateStart: recent31DaysStart,
-                  dateEnd: today,
+                  dateStart: resetStart,
+                  dateEnd: resetEnd,
                   timeStart,
                   timeEnd,
                 });

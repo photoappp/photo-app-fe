@@ -6527,6 +6527,14 @@ export default function HomeScreen() {
         fallback = true;
       } finally {
         requestInFlightRef.current = false;
+        /* 2026.11.08 전환 조회 중에 들어온 필터 변경(Search/초기화)은 대기열에 쌓이는데, 다른 경로와 달리
+           여기서 꺼내 실행하지 않아 검색이 사라졌다. 최신 필터로 재조회하므로 폴백 재조회는 생략 by yen */
+        if (pendingReloadRef.current) {
+          pendingReloadRef.current = false;
+          setPendingReloadVisible(false);
+          fallback = false;
+          void reloadPhotosForFilterRef.current();
+        }
       }
 
       if (fallback && token === mediaKindSwitchTokenRef.current) {
