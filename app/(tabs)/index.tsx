@@ -907,7 +907,12 @@ export default function HomeScreen() {
       /* 2026.10.19 장소 필터가 걸린 결과는 그 날짜 범위의 '전부'가 아니다. 그대로 커버리지로
          기록하면 이후 같은 날짜 범위를 메모리에서 재사용할 때(인덱스 미완성 구간에서만 쓰는 경로)
          장소로 걸러진 일부가 전체인 것처럼 쓰인다 by Claude */
-      if (currentFilter.countries.length > 0 || currentFilter.cities.length > 0) {
+      /* 2026.11.08 Photos/Screenshots만 읽은 결과도 그 범위의 '전부'가 아니므로 같은 이유로 기록하지 않음 by yen */
+      if (
+        currentFilter.countries.length > 0 ||
+        currentFilter.cities.length > 0 ||
+        currentFilter.mediaKind !== "all"
+      ) {
         lastLoadedBaseFilterRef.current = null;
         lastLoadedBaseFullyLoadedRef.current = false;
         return;
@@ -2408,10 +2413,10 @@ export default function HomeScreen() {
 
           if (runToken !== locationSearchRunTokenRef.current) return;
           setHasNextPage(false);
-          dbDateTimePagingRef.current = {
-            enabled: true,
-            after: oldestCursorOfPhotos(streamed),
-          };
+          /* 2026.11.08 이 스트리밍은 장소 조건 없이 날짜 범위 전체를 읽으므로 'SQL이 이미 걸렀다'(enabled: true)로
+             표시하면 이후 재계산(ensureVisiblePhotosLocationReady 등)에서 위치 필터가 빠져
+             어느 나라를 고르든 범위 전체 사진이 보였다. 범위 전체가 메모리에 있으므로 메모리 필터로 유지 by yen */
+          dbDateTimePagingRef.current = { enabled: false, after: null };
           pruneDisplayUriCacheForPhotos(streamed);
 
           await ensureVisiblePhotosLocationReady();
@@ -4712,6 +4717,8 @@ export default function HomeScreen() {
       void hydratePersistedDisplayUriCache(initialBase, "initial-medialibrary");
       setPhotos(initial);
       setPhotosAll(initialBase);
+      /* 2026.11.08 바로 아래 markLoadedBaseRange가 ref를 읽으므로 즉시 동기화(effect 반영 전엔 이전 목록이 기록됐음) by yen */
+      photosAllRef.current = initialBase;
       /* 2026.04.22 초기 MediaLibrary 경로에서도 현재 표출 건수를 progress에 반영해 사용자에게 로드 상태를 보여주기 위해 추가 by June */
       void refreshFilterProgress(
         {
@@ -4968,6 +4975,8 @@ export default function HomeScreen() {
       await showLocationSearchPhaseText(locationSearchPhaseLabels.apply);
       setPhotos(sorted);
       setPhotosAll(sortedBase);
+      /* 2026.11.08 바로 아래 markLoadedBaseRange가 ref를 읽으므로 즉시 동기화(effect 반영 전엔 이전 목록이 기록됐음) by yen */
+      photosAllRef.current = sortedBase;
       pruneDisplayUriCacheForPhotos(sortedBase);
       /* 2026.04.22 MediaLibrary 경로에서도 현재 필터의 표출/전체 건수를 동기화해 append 전 진행률 기준을 맞추기 위해 추가 by June */
       void refreshFilterProgress(currentFilter, sorted.length);
@@ -5165,6 +5174,8 @@ export default function HomeScreen() {
         void hydratePersistedDisplayUriCache(sortedBase, `${mode}-medialibrary`);
         setPhotos(sorted);
         setPhotosAll(sortedBase);
+        /* 2026.11.08 바로 아래 markLoadedBaseRange가 ref를 읽으므로 즉시 동기화(effect 반영 전엔 이전 목록이 기록됐음) by yen */
+        photosAllRef.current = sortedBase;
         pruneDisplayUriCacheForPhotos(sortedBase);
         /* 2026.04.22 MediaLibrary append에서도 누적 표출 건수를 프로그레스바에 반영해 사용자 체감 진행률을 맞추기 위해 추가 by June */
         void refreshFilterProgress(currentFilter, sorted.length);
