@@ -6,6 +6,8 @@ export const TRANSLATIONS = {
 		mediaKindAll: 'All',
 		mediaKindPhotos: 'Photos',
 		mediaKindScreenshots: 'Screenshots',
+		/* 2026.11.08 인덱싱 중 Screenshots 대기 문구 by yen */
+		mediaKindFindingScreenshots: 'Finding screenshots...',
 		settings: 'Settings',
 		userData: 'User Data',
 		startDate: 'Start Date',
@@ -128,6 +130,8 @@ export const TRANSLATIONS = {
 		mediaKindAll: '전체',
 		mediaKindPhotos: '사진',
 		mediaKindScreenshots: '스크린샷',
+		/* 2026.11.08 인덱싱 중 Screenshots 대기 문구 by yen */
+		mediaKindFindingScreenshots: '스크린샷을 찾는 중...',
 		settings: '설정',
 		userData: '사용자 데이터',
 		startDate: '시작일',
@@ -217,6 +221,8 @@ export const TRANSLATIONS = {
 		mediaKindAll: 'すべて',
 		mediaKindPhotos: '写真',
 		mediaKindScreenshots: 'スクリーンショット',
+		/* 2026.11.08 인덱싱 중 Screenshots 대기 문구 by yen */
+		mediaKindFindingScreenshots: 'スクリーンショットを検索中...',
 		settings: '設定',
 		userData: 'ユーザーデータ',
 		startDate: '開始日',
@@ -304,6 +310,8 @@ export const TRANSLATIONS = {
 		mediaKindAll: '全部',
 		mediaKindPhotos: '照片',
 		mediaKindScreenshots: '螢幕截圖',
+		/* 2026.11.08 인덱싱 중 Screenshots 대기 문구 by yen */
+		mediaKindFindingScreenshots: '正在尋找螢幕截圖...',
 		settings: '設定',
 		userData: '用戶資訊',
 		startDate: '開始日期',
@@ -391,6 +399,8 @@ export const TRANSLATIONS = {
 		mediaKindAll: '全部',
 		mediaKindPhotos: '照片',
 		mediaKindScreenshots: '截图',
+		/* 2026.11.08 인덱싱 중 Screenshots 대기 문구 by yen */
+		mediaKindFindingScreenshots: '正在查找截图...',
 		settings: '设置',
 		userData: '用户数据',
 		startDate: '开始日期',
@@ -478,6 +488,8 @@ export const TRANSLATIONS = {
 		mediaKindAll: 'Tout',
 		mediaKindPhotos: 'Photos',
 		mediaKindScreenshots: 'Captures',
+		/* 2026.11.08 인덱싱 중 Screenshots 대기 문구 by yen */
+		mediaKindFindingScreenshots: 'Recherche des captures...',
 		settings: 'Settings',
 		userData: 'User Data',
 		startDate: 'Start Date',
@@ -565,6 +577,8 @@ export const TRANSLATIONS = {
 		mediaKindAll: 'Todo',
 		mediaKindPhotos: 'Fotos',
 		mediaKindScreenshots: 'Capturas',
+		/* 2026.11.08 인덱싱 중 Screenshots 대기 문구 by yen */
+		mediaKindFindingScreenshots: 'Buscando capturas...',
 		settings: 'Settings',
 		userData: 'Données utilisateur',
 		startDate: 'Date de début',

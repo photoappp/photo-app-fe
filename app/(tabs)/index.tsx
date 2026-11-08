@@ -235,6 +235,8 @@ type MediaKindCacheEntry = {
 const MEDIA_KIND_ORDER: MediaKind[] = ["all", "photos", "screenshots"];
 /* 2026.11.04 현재 세그먼트 썸네일이 먼저 그려지도록 다른 세그먼트 미리 읽기는 잠시 뒤에 시작 by yen */
 const MEDIA_KIND_PREFETCH_DELAY_MS = 800;
+/* 2026.11.08 인덱싱 중 Screenshots가 비어 있을 때 DB를 다시 확인하는 간격 by yen */
+const SCREENSHOT_INDEX_POLL_MS = 2000;
 
 /* 2026.11.04 중복 판별 키 — Android는 같은 사진이 네이티브 동기화(content://)와 MediaLibrary(file://)에서
    서로 다른 uri로 들어와 uri 기준으로는 두 번 표시됐다. 두 경로 모두 같은 자산 id를 주므로 id 우선 by yen */
@@ -711,6 +713,20 @@ export default function HomeScreen() {
   } | null>(null);
   /* 2026.11.04 빠르게 연속 전환할 때 늦게 도착한 이전 결과를 버리기 위한 토큰 by yen */
   const mediaKindSwitchTokenRef = useRef(0);
+  /* 2026.11.08 인덱싱 중 Screenshots 결과가 비어 있으면 MediaLibrary 최근 30장만 거르는 폴백 대신
+     DB를 주기적으로 다시 확인(인덱싱은 최신순이라 최근 스크린샷은 금방 채워짐).
+     토큰은 대기 중단 시 증가해 늦게 도착한 확인 결과를 버린다 by yen */
+  const [screenshotIndexWaiting, setScreenshotIndexWaiting] = useState(false);
+  const screenshotIndexWaitTokenRef = useRef(0);
+  const startScreenshotIndexWait = useCallback(() => {
+    screenshotIndexWaitTokenRef.current += 1;
+    setEmptyMessage(null);
+    setScreenshotIndexWaiting(true);
+  }, []);
+  const stopScreenshotIndexWait = useCallback(() => {
+    screenshotIndexWaitTokenRef.current += 1;
+    setScreenshotIndexWaiting(false);
+  }, []);
   useEffect(() => {
     filterRef.current = filter;
   }, [filter]);
@@ -4761,6 +4777,8 @@ export default function HomeScreen() {
   const reloadPhotosForFilter = useCallback(async () => {
     /* 2026.11.04 전체 재조회(필터 변경/새로고침)가 일어나면 세그먼트 캐시는 낡은 것이므로 비움 by yen */
     mediaKindCacheRef.current = null;
+    /* 2026.11.08 새 조회가 시작되면 이전 Screenshots 대기는 중단(필요하면 이 조회 끝에서 다시 시작) by yen */
+    stopScreenshotIndexWait();
     const currentFilter = filterRef.current;
     const requestId = beginPhotoLoad("idle", currentFilter);
 
@@ -4837,9 +4855,17 @@ export default function HomeScreen() {
       if (reusedLoadedBase) {
         reloadPath = "db";
         await showLocationSearchPhaseText(locationSearchPhaseLabels.apply);
-        setEmptyMessage(
-          photosRef.current.length === 0 ? EMPTY_DEFAULT_MESSAGE : null,
-        );
+        /* 2026.11.08 인덱싱 중(이 경로는 인덱스 미완성일 때만 탐) Screenshots가 비면 빈 안내 대신 DB 재확인 대기 by yen */
+        if (
+          photosRef.current.length === 0 &&
+          currentFilter.mediaKind === "screenshots"
+        ) {
+          startScreenshotIndexWait();
+        } else {
+          setEmptyMessage(
+            photosRef.current.length === 0 ? EMPTY_DEFAULT_MESSAGE : null,
+          );
+        }
         return;
       }
 
@@ -4851,9 +4877,17 @@ export default function HomeScreen() {
         reloadPath = "db";
         setCurrentDataSource("db");
         await showLocationSearchPhaseText(locationSearchPhaseLabels.apply);
-        setEmptyMessage(
-          photosRef.current.length === 0 ? EMPTY_DEFAULT_MESSAGE : null,
-        );
+        /* 2026.11.08 인덱싱 중(이 경로는 인덱스 미완성일 때만 탐) Screenshots가 비면 빈 안내 대신 DB 재확인 대기 by yen */
+        if (
+          photosRef.current.length === 0 &&
+          currentFilter.mediaKind === "screenshots"
+        ) {
+          startScreenshotIndexWait();
+        } else {
+          setEmptyMessage(
+            photosRef.current.length === 0 ? EMPTY_DEFAULT_MESSAGE : null,
+          );
+        }
         return;
       }
 
@@ -4936,7 +4970,16 @@ export default function HomeScreen() {
       setHasNextPage(nextHasPage);
       markLoadedBaseRange(currentFilter, !nextHasPage);
 
-      if (sorted.length === 0 && !nextHasPage) {
+      /* 2026.11.08 인덱싱 중 Screenshots: MediaLibrary 최근 30장에는 스크린샷이 없을 수 있으므로
+         빈 화면으로 두지 않고 DB가 채워질 때까지 재확인 by yen */
+      if (
+        reloadPath === "medialibrary" &&
+        currentFilter.mediaKind === "screenshots" &&
+        sorted.length === 0 &&
+        !dbResult.isIndexComplete
+      ) {
+        startScreenshotIndexWait();
+      } else if (sorted.length === 0 && !nextHasPage) {
         setEmptyMessage(EMPTY_DEFAULT_MESSAGE);
       } else {
         setEmptyMessage(null);
@@ -4988,6 +5031,8 @@ export default function HomeScreen() {
       tryApplyIncrementalDateRangeReload,
       tryLoadPhotosFromDbForDateTime,
       showLocationSearchPhaseText,
+      startScreenshotIndexWait,
+      stopScreenshotIndexWait,
     ]);
 
   /** append/background 공용 로드 처리 */
@@ -6389,12 +6434,15 @@ export default function HomeScreen() {
       const signature = mediaKindCacheSignature(nextFilter);
       const entries = getMediaKindCacheEntries(signature);
       /* 떠나는 세그먼트의 현재 상태(스크롤로 더 읽은 분량 포함)를 저장 */
-      entries[prevFilter.mediaKind] = {
-        photos: photosAllRef.current,
-        after: dbDateTimePagingRef.current.after,
-        hasNextPage,
-        totalCount: locationSearchTargetTotalCount,
-      };
+      /* 2026.11.08 빈 Screenshots(인덱싱 대기 중일 수 있음)는 저장하지 않음 — 다시 들어오면 새로 확인 by yen */
+      if (!(prevFilter.mediaKind === "screenshots" && photosAllRef.current.length === 0)) {
+        entries[prevFilter.mediaKind] = {
+          photos: photosAllRef.current,
+          after: dbDateTimePagingRef.current.after,
+          hasNextPage,
+          totalCount: locationSearchTargetTotalCount,
+        };
+      }
 
       const token = ++mediaKindSwitchTokenRef.current;
       const cached = entries[nextFilter.mediaKind];
@@ -6420,7 +6468,20 @@ export default function HomeScreen() {
           null,
         );
         if (token !== mediaKindSwitchTokenRef.current) return;
-        if (!dbResult.usedDb) {
+        if (
+          !dbResult.usedDb &&
+          nextFilter.mediaKind === "screenshots" &&
+          !dbResult.isIndexComplete
+        ) {
+          /* 2026.11.08 인덱싱 중 Screenshots가 비면 MediaLibrary 폴백(최근 30장만 거름) 대신 빈 목록 + DB 재확인 대기 by yen */
+          applyMediaKindEntry(nextFilter, {
+            photos: [],
+            after: null,
+            hasNextPage: false,
+            totalCount: null,
+          });
+          startScreenshotIndexWait();
+        } else if (!dbResult.usedDb) {
           fallback = true;
         } else {
           const entry: MediaKindCacheEntry = {
@@ -6455,6 +6516,7 @@ export default function HomeScreen() {
       hasNextPage,
       locationSearchTargetTotalCount,
       mediaKindCacheSignature,
+      startScreenshotIndexWait,
       tryLoadPhotosFromDbForDateTime,
     ],
   );
@@ -6469,6 +6531,8 @@ export default function HomeScreen() {
       const nextFilter = { ...prev, mediaKind };
       filterRef.current = nextFilter;
       setFilter(nextFilter);
+      /* 2026.11.08 세그먼트를 바꾸면 이전 Screenshots 대기는 중단 by yen */
+      stopScreenshotIndexWait();
 
       /* 2026.11.04 DB 페이징 중이면 가벼운 전환 경로 사용(Screenshots의 위치 무시도 DB 조회가 처리) by yen */
       if (dbDateTimePagingRef.current.enabled) {
@@ -6492,15 +6556,88 @@ export default function HomeScreen() {
       const nextVisible = deriveVisiblePhotos(photosAllRef.current, nextFilter);
       setPhotos(nextVisible);
       void refreshFilterProgress(nextFilter, nextVisible.length);
+      /* 2026.11.08 메모리 경로(SQL 페이징 꺼짐 = 인덱싱 중)에서 Screenshots가 비면 DB 재확인 대기 by yen */
+      if (mediaKind === "screenshots" && nextVisible.length === 0) {
+        startScreenshotIndexWait();
+        return;
+      }
       setEmptyMessage(nextVisible.length === 0 ? EMPTY_DEFAULT_MESSAGE : null);
     },
     [
       EMPTY_DEFAULT_MESSAGE,
       deriveVisiblePhotos,
       refreshFilterProgress,
+      startScreenshotIndexWait,
+      stopScreenshotIndexWait,
       switchMediaKindFromDb,
     ],
   );
+
+  /* 2026.11.08 Screenshots 인덱싱 대기 — 2초마다 DB를 다시 확인해 결과가 생기면 바로 표시.
+     인덱싱이 끝났는데도 없으면 빈 안내(No photos found)를 띄우고 대기 종료 by yen */
+  useEffect(() => {
+    if (!screenshotIndexWaiting) return;
+    const waitToken = screenshotIndexWaitTokenRef.current;
+    let checking = false;
+    const check = async () => {
+      if (checking || requestInFlightRef.current) return;
+      if (waitToken !== screenshotIndexWaitTokenRef.current) return;
+      const currentFilter = filterRef.current;
+      if (currentFilter.mediaKind !== "screenshots") {
+        stopScreenshotIndexWait();
+        return;
+      }
+      checking = true;
+      try {
+        const result = await tryLoadPhotosFromDbForDateTime(
+          currentFilter,
+          FILTER_RESET_TARGET_COUNT,
+          null,
+        );
+        if (waitToken !== screenshotIndexWaitTokenRef.current) return;
+        if (filterRef.current !== currentFilter || requestInFlightRef.current) {
+          return;
+        }
+        if (!result.usedDb || (result.photos.length === 0 && !result.isIndexComplete)) {
+          return;
+        }
+        const entry: MediaKindCacheEntry = {
+          photos: result.photos,
+          after: result.nextAfter,
+          hasNextPage: result.dbHasMore || !result.isIndexComplete,
+          totalCount: result.totalCount > 0 ? result.totalCount : null,
+        };
+        if (result.isIndexComplete) {
+          getMediaKindCacheEntries(mediaKindCacheSignature(currentFilter))[
+            "screenshots"
+          ] = entry;
+        }
+        stopScreenshotIndexWait();
+        /* 결과가 비어 있으면 applyMediaKindEntry가 빈 안내를 설정(C) */
+        applyMediaKindEntry(currentFilter, entry);
+        console.log("[MediaKind] screenshots ready after indexing wait", {
+          count: result.photos.length,
+          isIndexComplete: result.isIndexComplete,
+        });
+      } catch (error) {
+        console.log("[MediaKind] screenshots wait check failed", error);
+      } finally {
+        checking = false;
+      }
+    };
+    const timer = setInterval(() => {
+      void check();
+    }, SCREENSHOT_INDEX_POLL_MS);
+    return () => clearInterval(timer);
+  }, [
+    FILTER_RESET_TARGET_COUNT,
+    applyMediaKindEntry,
+    getMediaKindCacheEntries,
+    mediaKindCacheSignature,
+    screenshotIndexWaiting,
+    stopScreenshotIndexWait,
+    tryLoadPhotosFromDbForDateTime,
+  ]);
 
   /* 2026.11.04 현재 세그먼트가 표시된 뒤, 나머지 세그먼트의 첫 페이지를 조용히 미리 읽어 첫 전환도 즉시 되도록 함.
      다른 조회가 시작되거나 조건이 바뀌면 중단 by yen */
@@ -6994,7 +7131,18 @@ export default function HomeScreen() {
                   borderRadius: 10,
                 }}
                 ListEmptyComponent={
-                  !initialLoading &&
+                  /* 2026.11.08 인덱싱 중 Screenshots 대기 표시 — 빈 안내 대신 로딩 by yen */
+                  screenshotIndexWaiting ? (
+                    <View style={styles.emptyWrap}>
+                      <ActivityIndicator />
+                      <Text style={styles.loadingSubText}>
+                        {t(
+                          "mediaKindFindingScreenshots",
+                          "Finding screenshots...",
+                        )}
+                      </Text>
+                    </View>
+                  ) : !initialLoading &&
                   !filterLoading &&
                   !appendLoading &&
                   !isScanning &&
@@ -7017,7 +7165,8 @@ export default function HomeScreen() {
                   handleAutoLoadMoreOnScroll();
                 }}
                 ListFooterComponent={
-                  !initialLoading && !filterLoading ? (
+                  /* 2026.11.08 Screenshots 대기 중에는 '모두 로드됨' 문구를 숨김 by yen */
+                  !initialLoading && !filterLoading && !screenshotIndexWaiting ? (
                     <View style={{ paddingVertical: 12, alignItems: "center" }}>
                       {appendLoading || backgroundLoading ? (
                         <View style={{ alignItems: "center", gap: 8 }}>
