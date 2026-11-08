@@ -65,7 +65,8 @@ const readLocation = (location: any) => {
 
 /* 2026.11.04 MediaLibrary 자산의 스크린샷 여부 — iOS는 mediaSubtypes, Android는 공식 플래그가 없어
    Screenshots 폴더/파일명으로 판별(네이티브 모듈과 같은 기준) by yen */
-const SCREENSHOT_NAME_PATTERN = /^screenshot/i;
+/* 2026.11.08 screen_shot/screencapture 파일명 규칙 추가 (네이티브 SCREENSHOT_NAME_PREFIXES와 동일) by yen */
+const SCREENSHOT_NAME_PATTERN = /^(screenshot|screen_shot|screencapture)/i;
 export const isScreenshotAsset = (asset: MediaLibrary.Asset) => {
   if (Platform.OS === "ios") {
     return asset.mediaSubtypes?.includes("screenshot") ?? false;

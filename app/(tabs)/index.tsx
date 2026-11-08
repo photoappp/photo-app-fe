@@ -235,8 +235,8 @@ type MediaKindCacheEntry = {
 const MEDIA_KIND_ORDER: MediaKind[] = ["all", "photos", "screenshots"];
 /* 2026.11.04 현재 세그먼트 썸네일이 먼저 그려지도록 다른 세그먼트 미리 읽기는 잠시 뒤에 시작 by yen */
 const MEDIA_KIND_PREFETCH_DELAY_MS = 800;
-/* 2026.11.08 인덱싱 중 Screenshots가 비어 있을 때 DB를 다시 확인하는 간격 by yen */
-const SCREENSHOT_INDEX_POLL_MS = 2000;
+/* 2026.11.08 인덱싱 중 Photos/Screenshots가 비어 있을 때 DB를 다시 확인하는 간격 by yen */
+const MEDIA_KIND_INDEX_POLL_MS = 2000;
 
 /* 2026.11.04 중복 판별 키 — Android는 같은 사진이 네이티브 동기화(content://)와 MediaLibrary(file://)에서
    서로 다른 uri로 들어와 uri 기준으로는 두 번 표시됐다. 두 경로 모두 같은 자산 id를 주므로 id 우선 by yen */
@@ -713,19 +713,22 @@ export default function HomeScreen() {
   } | null>(null);
   /* 2026.11.04 빠르게 연속 전환할 때 늦게 도착한 이전 결과를 버리기 위한 토큰 by yen */
   const mediaKindSwitchTokenRef = useRef(0);
-  /* 2026.11.08 인덱싱 중 Screenshots 결과가 비어 있으면 MediaLibrary 최근 30장만 거르는 폴백 대신
-     DB를 주기적으로 다시 확인(인덱싱은 최신순이라 최근 스크린샷은 금방 채워짐).
+  /* 2026.11.08 인덱싱 중 Photos/Screenshots 결과가 비어 있으면 MediaLibrary 최근 30장만 거르는 폴백 대신
+     DB를 주기적으로 다시 확인(인덱싱은 최신순이라 최근 사진의 판별은 금방 채워짐).
      토큰은 대기 중단 시 증가해 늦게 도착한 확인 결과를 버린다 by yen */
-  const [screenshotIndexWaiting, setScreenshotIndexWaiting] = useState(false);
-  const screenshotIndexWaitTokenRef = useRef(0);
-  const startScreenshotIndexWait = useCallback(() => {
-    screenshotIndexWaitTokenRef.current += 1;
+  /* 2026.11.08 인덱싱 중에 그려진 Photos/Screenshots 목록은 인덱싱이 끝나면 한 번 새로 고치기 위한 표시 by yen */
+  const listLoadedWhileIndexingRef = useRef(false);
+  const refreshMediaKindAfterIndexRef = useRef<() => void>(() => {});
+  const [mediaKindIndexWaiting, setMediaKindIndexWaiting] = useState(false);
+  const mediaKindIndexWaitTokenRef = useRef(0);
+  const startMediaKindIndexWait = useCallback(() => {
+    mediaKindIndexWaitTokenRef.current += 1;
     setEmptyMessage(null);
-    setScreenshotIndexWaiting(true);
+    setMediaKindIndexWaiting(true);
   }, []);
-  const stopScreenshotIndexWait = useCallback(() => {
-    screenshotIndexWaitTokenRef.current += 1;
-    setScreenshotIndexWaiting(false);
+  const stopMediaKindIndexWait = useCallback(() => {
+    mediaKindIndexWaitTokenRef.current += 1;
+    setMediaKindIndexWaiting(false);
   }, []);
   useEffect(() => {
     filterRef.current = filter;
@@ -3693,6 +3696,8 @@ export default function HomeScreen() {
       const syncState = await getPhotoSyncState();
       const isIndexComplete = !syncState.hasNextPage;
       setDbIndexComplete(isIndexComplete);
+      /* 2026.11.08 인덱싱 중 조회한 결과는 판별이 덜 된 상태 — 인덱싱 완료 후 새로 고침 대상으로 표시 by yen */
+      if (!isIndexComplete) listLoadedWhileIndexingRef.current = true;
       const queryDateStartMs = dayStartMs(currentFilter.dateStart);
       const queryDateEndNextMs = dayEndNextMs(currentFilter.dateEnd);
       /* 2026.10.18 국가/도시 조건을 SQL로 내림 — UI는 표시명으로 선택하므로 A3 코드로 역변환 by Claude */
@@ -4777,8 +4782,8 @@ export default function HomeScreen() {
   const reloadPhotosForFilter = useCallback(async () => {
     /* 2026.11.04 전체 재조회(필터 변경/새로고침)가 일어나면 세그먼트 캐시는 낡은 것이므로 비움 by yen */
     mediaKindCacheRef.current = null;
-    /* 2026.11.08 새 조회가 시작되면 이전 Screenshots 대기는 중단(필요하면 이 조회 끝에서 다시 시작) by yen */
-    stopScreenshotIndexWait();
+    /* 2026.11.08 새 조회가 시작되면 이전 Photos/Screenshots 대기는 중단(필요하면 이 조회 끝에서 다시 시작) by yen */
+    stopMediaKindIndexWait();
     const currentFilter = filterRef.current;
     const requestId = beginPhotoLoad("idle", currentFilter);
 
@@ -4855,12 +4860,12 @@ export default function HomeScreen() {
       if (reusedLoadedBase) {
         reloadPath = "db";
         await showLocationSearchPhaseText(locationSearchPhaseLabels.apply);
-        /* 2026.11.08 인덱싱 중(이 경로는 인덱스 미완성일 때만 탐) Screenshots가 비면 빈 안내 대신 DB 재확인 대기 by yen */
+        /* 2026.11.08 인덱싱 중(이 경로는 인덱스 미완성일 때만 탐) Photos/Screenshots가 비면 빈 안내 대신 DB 재확인 대기 by yen */
         if (
           photosRef.current.length === 0 &&
-          currentFilter.mediaKind === "screenshots"
+          currentFilter.mediaKind !== "all"
         ) {
-          startScreenshotIndexWait();
+          startMediaKindIndexWait();
         } else {
           setEmptyMessage(
             photosRef.current.length === 0 ? EMPTY_DEFAULT_MESSAGE : null,
@@ -4877,12 +4882,12 @@ export default function HomeScreen() {
         reloadPath = "db";
         setCurrentDataSource("db");
         await showLocationSearchPhaseText(locationSearchPhaseLabels.apply);
-        /* 2026.11.08 인덱싱 중(이 경로는 인덱스 미완성일 때만 탐) Screenshots가 비면 빈 안내 대신 DB 재확인 대기 by yen */
+        /* 2026.11.08 인덱싱 중(이 경로는 인덱스 미완성일 때만 탐) Photos/Screenshots가 비면 빈 안내 대신 DB 재확인 대기 by yen */
         if (
           photosRef.current.length === 0 &&
-          currentFilter.mediaKind === "screenshots"
+          currentFilter.mediaKind !== "all"
         ) {
-          startScreenshotIndexWait();
+          startMediaKindIndexWait();
         } else {
           setEmptyMessage(
             photosRef.current.length === 0 ? EMPTY_DEFAULT_MESSAGE : null,
@@ -4970,15 +4975,15 @@ export default function HomeScreen() {
       setHasNextPage(nextHasPage);
       markLoadedBaseRange(currentFilter, !nextHasPage);
 
-      /* 2026.11.08 인덱싱 중 Screenshots: MediaLibrary 최근 30장에는 스크린샷이 없을 수 있으므로
+      /* 2026.11.08 인덱싱 중 Photos/Screenshots: MediaLibrary 최근 30장에는 해당 종류가 없을 수 있으므로
          빈 화면으로 두지 않고 DB가 채워질 때까지 재확인 by yen */
       if (
         reloadPath === "medialibrary" &&
-        currentFilter.mediaKind === "screenshots" &&
+        currentFilter.mediaKind !== "all" &&
         sorted.length === 0 &&
         !dbResult.isIndexComplete
       ) {
-        startScreenshotIndexWait();
+        startMediaKindIndexWait();
       } else if (sorted.length === 0 && !nextHasPage) {
         setEmptyMessage(EMPTY_DEFAULT_MESSAGE);
       } else {
@@ -5031,8 +5036,8 @@ export default function HomeScreen() {
       tryApplyIncrementalDateRangeReload,
       tryLoadPhotosFromDbForDateTime,
       showLocationSearchPhaseText,
-      startScreenshotIndexWait,
-      stopScreenshotIndexWait,
+      startMediaKindIndexWait,
+      stopMediaKindIndexWait,
     ]);
 
   /** append/background 공용 로드 처리 */
@@ -5846,6 +5851,8 @@ export default function HomeScreen() {
       try {
         await sleep(BACKGROUND_SYNC_INITIAL_DELAY_MS);
         let errorStreak = 0;
+        /* 2026.11.08 인덱싱이 실제로 끝났을 때만 목록 새로 고침 by yen */
+        let indexCompleted = false;
         while (!backgroundMetadataSyncCancelledRef.current) {
           /* 2026.09.02 사용자 요청이 진행 중이면 동기화를 양보해 6월 장애(초기 로드 경합) 재발을 방지 by Claude */
           /* 2026.10.18 썸네일이 그려지는 중에도 양보 — 사진 API 경합으로 첫 화면이 밀리는 것을 방지 by Claude */
@@ -5869,8 +5876,14 @@ export default function HomeScreen() {
             continue;
           }
           const syncState = await getPhotoSyncState();
-          if (!syncState.hasNextPage) break;
+          if (!syncState.hasNextPage) {
+            indexCompleted = true;
+            break;
+          }
           await sleep(BACKGROUND_SYNC_IDLE_DELAY_MS);
+        }
+        if (indexCompleted && !backgroundMetadataSyncCancelledRef.current) {
+          refreshMediaKindAfterIndexRef.current();
         }
       } finally {
         backgroundMetadataSyncActiveRef.current = false;
@@ -6434,8 +6447,8 @@ export default function HomeScreen() {
       const signature = mediaKindCacheSignature(nextFilter);
       const entries = getMediaKindCacheEntries(signature);
       /* 떠나는 세그먼트의 현재 상태(스크롤로 더 읽은 분량 포함)를 저장 */
-      /* 2026.11.08 빈 Screenshots(인덱싱 대기 중일 수 있음)는 저장하지 않음 — 다시 들어오면 새로 확인 by yen */
-      if (!(prevFilter.mediaKind === "screenshots" && photosAllRef.current.length === 0)) {
+      /* 2026.11.08 빈 Photos/Screenshots(인덱싱 대기 중일 수 있음)는 저장하지 않음 — 다시 들어오면 새로 확인 by yen */
+      if (!(prevFilter.mediaKind !== "all" && photosAllRef.current.length === 0)) {
         entries[prevFilter.mediaKind] = {
           photos: photosAllRef.current,
           after: dbDateTimePagingRef.current.after,
@@ -6470,17 +6483,17 @@ export default function HomeScreen() {
         if (token !== mediaKindSwitchTokenRef.current) return;
         if (
           !dbResult.usedDb &&
-          nextFilter.mediaKind === "screenshots" &&
+          nextFilter.mediaKind !== "all" &&
           !dbResult.isIndexComplete
         ) {
-          /* 2026.11.08 인덱싱 중 Screenshots가 비면 MediaLibrary 폴백(최근 30장만 거름) 대신 빈 목록 + DB 재확인 대기 by yen */
+          /* 2026.11.08 인덱싱 중 Photos/Screenshots가 비면 MediaLibrary 폴백(최근 30장만 거름) 대신 빈 목록 + DB 재확인 대기 by yen */
           applyMediaKindEntry(nextFilter, {
             photos: [],
             after: null,
             hasNextPage: false,
             totalCount: null,
           });
-          startScreenshotIndexWait();
+          startMediaKindIndexWait();
         } else if (!dbResult.usedDb) {
           fallback = true;
         } else {
@@ -6516,7 +6529,7 @@ export default function HomeScreen() {
       hasNextPage,
       locationSearchTargetTotalCount,
       mediaKindCacheSignature,
-      startScreenshotIndexWait,
+      startMediaKindIndexWait,
       tryLoadPhotosFromDbForDateTime,
     ],
   );
@@ -6531,8 +6544,8 @@ export default function HomeScreen() {
       const nextFilter = { ...prev, mediaKind };
       filterRef.current = nextFilter;
       setFilter(nextFilter);
-      /* 2026.11.08 세그먼트를 바꾸면 이전 Screenshots 대기는 중단 by yen */
-      stopScreenshotIndexWait();
+      /* 2026.11.08 세그먼트를 바꾸면 이전 대기는 중단 by yen */
+      stopMediaKindIndexWait();
 
       /* 2026.11.04 DB 페이징 중이면 가벼운 전환 경로 사용(Screenshots의 위치 무시도 DB 조회가 처리) by yen */
       if (dbDateTimePagingRef.current.enabled) {
@@ -6556,9 +6569,9 @@ export default function HomeScreen() {
       const nextVisible = deriveVisiblePhotos(photosAllRef.current, nextFilter);
       setPhotos(nextVisible);
       void refreshFilterProgress(nextFilter, nextVisible.length);
-      /* 2026.11.08 메모리 경로(SQL 페이징 꺼짐 = 인덱싱 중)에서 Screenshots가 비면 DB 재확인 대기 by yen */
-      if (mediaKind === "screenshots" && nextVisible.length === 0) {
-        startScreenshotIndexWait();
+      /* 2026.11.08 메모리 경로(SQL 페이징 꺼짐 = 인덱싱 중)에서 Photos/Screenshots가 비면 DB 재확인 대기 by yen */
+      if (mediaKind !== "all" && nextVisible.length === 0) {
+        startMediaKindIndexWait();
         return;
       }
       setEmptyMessage(nextVisible.length === 0 ? EMPTY_DEFAULT_MESSAGE : null);
@@ -6567,24 +6580,80 @@ export default function HomeScreen() {
       EMPTY_DEFAULT_MESSAGE,
       deriveVisiblePhotos,
       refreshFilterProgress,
-      startScreenshotIndexWait,
-      stopScreenshotIndexWait,
+      startMediaKindIndexWait,
+      stopMediaKindIndexWait,
       switchMediaKindFromDb,
     ],
   );
 
-  /* 2026.11.08 Screenshots 인덱싱 대기 — 2초마다 DB를 다시 확인해 결과가 생기면 바로 표시.
+  /* 2026.11.08 인덱싱이 끝나면, 인덱싱 중에 그려진 Photos/Screenshots 목록을 완성된 인덱스로 한 번 다시 조회.
+     (인덱싱 중에는 판별 안 된 사진이 빠져 있거나 순서가 덜 채워져 있음) All은 판별과 무관하므로 그대로 둠 by yen */
+  const refreshMediaKindAfterIndex = useCallback(async () => {
+    if (!listLoadedWhileIndexingRef.current) return;
+    listLoadedWhileIndexingRef.current = false;
+    const currentFilter = filterRef.current;
+    if (currentFilter.mediaKind === "all") return;
+    if (requestInFlightRef.current) return;
+    const switchToken = mediaKindSwitchTokenRef.current;
+    try {
+      const result = await tryLoadPhotosFromDbForDateTime(
+        currentFilter,
+        FILTER_RESET_TARGET_COUNT,
+        null,
+      );
+      if (
+        filterRef.current !== currentFilter ||
+        requestInFlightRef.current ||
+        switchToken !== mediaKindSwitchTokenRef.current
+      ) {
+        return;
+      }
+      if (!result.usedDb || !result.isIndexComplete) return;
+      const entry: MediaKindCacheEntry = {
+        photos: result.photos,
+        after: result.nextAfter,
+        hasNextPage: result.dbHasMore,
+        totalCount: result.totalCount > 0 ? result.totalCount : null,
+      };
+      getMediaKindCacheEntries(mediaKindCacheSignature(currentFilter))[
+        currentFilter.mediaKind
+      ] = entry;
+      /* 대기 중이었다면 여기서 끝내고 결과(없으면 빈 안내)를 표시 */
+      stopMediaKindIndexWait();
+      applyMediaKindEntry(currentFilter, entry);
+      console.log("[MediaKind] refreshed after indexing", {
+        kind: currentFilter.mediaKind,
+        count: result.photos.length,
+      });
+    } catch (error) {
+      console.log("[MediaKind] refresh after indexing failed", error);
+    }
+  }, [
+    FILTER_RESET_TARGET_COUNT,
+    applyMediaKindEntry,
+    getMediaKindCacheEntries,
+    mediaKindCacheSignature,
+    stopMediaKindIndexWait,
+    tryLoadPhotosFromDbForDateTime,
+  ]);
+  useEffect(() => {
+    refreshMediaKindAfterIndexRef.current = () => {
+      void refreshMediaKindAfterIndex();
+    };
+  }, [refreshMediaKindAfterIndex]);
+
+  /* 2026.11.08 Photos/Screenshots 인덱싱 대기 — 2초마다 DB를 다시 확인해 결과가 생기면 바로 표시.
      인덱싱이 끝났는데도 없으면 빈 안내(No photos found)를 띄우고 대기 종료 by yen */
   useEffect(() => {
-    if (!screenshotIndexWaiting) return;
-    const waitToken = screenshotIndexWaitTokenRef.current;
+    if (!mediaKindIndexWaiting) return;
+    const waitToken = mediaKindIndexWaitTokenRef.current;
     let checking = false;
     const check = async () => {
       if (checking || requestInFlightRef.current) return;
-      if (waitToken !== screenshotIndexWaitTokenRef.current) return;
+      if (waitToken !== mediaKindIndexWaitTokenRef.current) return;
       const currentFilter = filterRef.current;
-      if (currentFilter.mediaKind !== "screenshots") {
-        stopScreenshotIndexWait();
+      if (currentFilter.mediaKind === "all") {
+        stopMediaKindIndexWait();
         return;
       }
       checking = true;
@@ -6594,7 +6663,7 @@ export default function HomeScreen() {
           FILTER_RESET_TARGET_COUNT,
           null,
         );
-        if (waitToken !== screenshotIndexWaitTokenRef.current) return;
+        if (waitToken !== mediaKindIndexWaitTokenRef.current) return;
         if (filterRef.current !== currentFilter || requestInFlightRef.current) {
           return;
         }
@@ -6609,13 +6678,14 @@ export default function HomeScreen() {
         };
         if (result.isIndexComplete) {
           getMediaKindCacheEntries(mediaKindCacheSignature(currentFilter))[
-            "screenshots"
+            currentFilter.mediaKind
           ] = entry;
         }
-        stopScreenshotIndexWait();
+        stopMediaKindIndexWait();
         /* 결과가 비어 있으면 applyMediaKindEntry가 빈 안내를 설정(C) */
         applyMediaKindEntry(currentFilter, entry);
-        console.log("[MediaKind] screenshots ready after indexing wait", {
+        console.log("[MediaKind] ready after indexing wait", {
+          kind: currentFilter.mediaKind,
           count: result.photos.length,
           isIndexComplete: result.isIndexComplete,
         });
@@ -6627,15 +6697,15 @@ export default function HomeScreen() {
     };
     const timer = setInterval(() => {
       void check();
-    }, SCREENSHOT_INDEX_POLL_MS);
+    }, MEDIA_KIND_INDEX_POLL_MS);
     return () => clearInterval(timer);
   }, [
     FILTER_RESET_TARGET_COUNT,
     applyMediaKindEntry,
     getMediaKindCacheEntries,
     mediaKindCacheSignature,
-    screenshotIndexWaiting,
-    stopScreenshotIndexWait,
+    mediaKindIndexWaiting,
+    stopMediaKindIndexWait,
     tryLoadPhotosFromDbForDateTime,
   ]);
 
@@ -7131,15 +7201,17 @@ export default function HomeScreen() {
                   borderRadius: 10,
                 }}
                 ListEmptyComponent={
-                  /* 2026.11.08 인덱싱 중 Screenshots 대기 표시 — 빈 안내 대신 로딩 by yen */
-                  screenshotIndexWaiting ? (
+                  /* 2026.11.08 인덱싱 중 Photos/Screenshots 대기 표시 — 빈 안내 대신 로딩 by yen */
+                  mediaKindIndexWaiting ? (
                     <View style={styles.emptyWrap}>
                       <ActivityIndicator />
                       <Text style={styles.loadingSubText}>
-                        {t(
-                          "mediaKindFindingScreenshots",
-                          "Finding screenshots...",
-                        )}
+                        {filter.mediaKind === "photos"
+                          ? t("mediaKindFindingPhotos", "Finding photos...")
+                          : t(
+                              "mediaKindFindingScreenshots",
+                              "Finding screenshots...",
+                            )}
                       </Text>
                     </View>
                   ) : !initialLoading &&
@@ -7165,8 +7237,8 @@ export default function HomeScreen() {
                   handleAutoLoadMoreOnScroll();
                 }}
                 ListFooterComponent={
-                  /* 2026.11.08 Screenshots 대기 중에는 '모두 로드됨' 문구를 숨김 by yen */
-                  !initialLoading && !filterLoading && !screenshotIndexWaiting ? (
+                  /* 2026.11.08 Photos/Screenshots 대기 중에는 '모두 로드됨' 문구를 숨김 by yen */
+                  !initialLoading && !filterLoading && !mediaKindIndexWaiting ? (
                     <View style={{ paddingVertical: 12, alignItems: "center" }}>
                       {appendLoading || backgroundLoading ? (
                         <View style={{ alignItems: "center", gap: 8 }}>
