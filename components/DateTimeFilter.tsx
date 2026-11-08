@@ -80,7 +80,9 @@ const DatePickersResponsive = ({
                 value={item.value}
                 onChange={item.onChange}
                 maximumDate={maxDate}
-                dividerColor="transparent"
+                /* 2026.11.08 라이브러리가 "transparent"를 색으로 인식하지 못해 시트를 열 때 앱이 종료됨 —
+                   카드 배경과 같은 흰색으로 구분선을 숨김 by yen */
+                dividerColor="#ffffff"
               />
               {/* 선택 줄 하이라이트 — 터치는 휠로 통과 */}
               <View pointerEvents="none" style={styles.androidDateBand} />

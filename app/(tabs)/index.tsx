@@ -805,6 +805,11 @@ export default function HomeScreen() {
     () => buildDateTimeFilterSignature(filter),
     [buildDateTimeFilterSignature, filter],
   );
+  /* 2026.11.08 워치독 타이머를 다시 걸지 않고 최신 값을 읽기 위한 ref by yen */
+  const currentDateTimeFilterSignatureRef = useRef(currentDateTimeFilterSignature);
+  currentDateTimeFilterSignatureRef.current = currentDateTimeFilterSignature;
+  const deferredLocationFeatureOpenRef = useRef(deferredLocationFeatureOpen);
+  deferredLocationFeatureOpenRef.current = deferredLocationFeatureOpen;
 
   const getDateRangeDayCountInclusive = useCallback((currentFilter: FilterState) => {
     const start = new Date(
@@ -2636,6 +2641,8 @@ export default function HomeScreen() {
         currentDateTimeFilterSignature;
       setLocationSearchWorkflowStatus("idle");
       resetLocationSearchProgress();
+      /* 2026.11.08 준비가 실패해도 사용자가 연 시트(위치/지도)는 열어 줌 — 이전엔 아무 반응이 없었음 by yen */
+      openDeferredLocationFeature(deferredEntryPoint);
       setDeferredLocationFeatureOpen(null);
       setLocationSearchEntryPoint(null);
     } finally {
@@ -2648,6 +2655,7 @@ export default function HomeScreen() {
     deferredLocationFeatureOpen,
     ensureVisiblePhotosLocationReady,
     finalizeLocationSearchPreparation,
+    openDeferredLocationFeature,
     resetLocationSearchProgress,
     reloadPhotosForFilterRef,
     runLightweightLocationSearchPreparation,
@@ -2687,11 +2695,18 @@ export default function HomeScreen() {
     clearLocationSearchCompletionTimer();
     setLocationSearchWorkflowStatus("idle");
     resetLocationSearchProgress();
+    /* 2026.11.08 워치독과 같은 처리 — 기록 없이 풀면 다음 탭이 자동 시작 가드에 막혀 시트가 열리지 않음 by yen */
+    lastDeclinedLocationSearchSignatureRef.current =
+      currentDateTimeFilterSignatureRef.current;
+    openDeferredLocationFeature(deferredLocationFeatureOpenRef.current);
+    setDeferredLocationFeatureOpen(null);
+    setLocationSearchEntryPoint(null);
   }, [
     appStateStatus,
     locationSearchWorkflowStatus,
     clearLocationSearchProgressTimer,
     clearLocationSearchCompletionTimer,
+    openDeferredLocationFeature,
     resetLocationSearchProgress,
   ]);
 
@@ -2706,6 +2721,12 @@ export default function HomeScreen() {
       clearLocationSearchCompletionTimer();
       setLocationSearchWorkflowStatus("idle");
       resetLocationSearchProgress();
+      /* 2026.11.08 시간 초과 시 이 조건의 준비를 '건너뜀'으로 기록 — 기록이 없으면 다음 탭에서
+         자동 시작 가드(같은 조건 1회)에 막혀 search-prompt로 멈추고 위치 시트가 영영 열리지 않았음.
+         사용자가 연 시트는 열어 주고, 위치 라벨은 열린 뒤 백그라운드로 채움 by yen */
+      lastDeclinedLocationSearchSignatureRef.current =
+        currentDateTimeFilterSignatureRef.current;
+      openDeferredLocationFeature(deferredLocationFeatureOpenRef.current);
       setDeferredLocationFeatureOpen(null);
       setLocationSearchEntryPoint(null);
     }, SEARCH_PREPARING_MAX_MS);
@@ -2714,6 +2735,7 @@ export default function HomeScreen() {
     locationSearchWorkflowStatus,
     clearLocationSearchProgressTimer,
     clearLocationSearchCompletionTimer,
+    openDeferredLocationFeature,
     resetLocationSearchProgress,
   ]);
 
