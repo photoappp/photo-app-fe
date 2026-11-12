@@ -1026,7 +1026,13 @@ export default function DateTimeFilter({
 
               {/* 2개 피커 */}
               <View style={styles.row}>
-                <View style={styles.pickerBox}>
+                {/* 2026.11.11 Android 시간 휠도 날짜 시트와 같은 스타일(카드 테두리, 선택 줄 하이라이트) — 구조/동작은 그대로 by yen */}
+                <View
+                  style={[
+                    styles.pickerBox,
+                    Platform.OS === "android" && styles.androidTimeCard,
+                  ]}
+                >
                   <DateTimePicker
                     mode="time"
                     value={
@@ -1039,10 +1045,21 @@ export default function DateTimeFilter({
                       )
                     }
                     onChange={onChangeTimeStartSafe}
+                    /* 날짜 시트와 동일 — 구분선을 카드 배경색으로 숨기고 하이라이트로 대신 표시 */
+                    dividerColor="#ffffff"
                   />
+                  {Platform.OS === "android" ? (
+                    <View pointerEvents="none" style={styles.androidDateBand} />
+                  ) : null}
                 </View>
 
-                <View style={styles.pickerBox}>
+                {/* 2026.11.11 Android 시간 휠도 날짜 시트와 같은 스타일(카드 테두리, 선택 줄 하이라이트) — 구조/동작은 그대로 by yen */}
+                <View
+                  style={[
+                    styles.pickerBox,
+                    Platform.OS === "android" && styles.androidTimeCard,
+                  ]}
+                >
                   <DateTimePicker
                     mode="time"
                     value={
@@ -1055,7 +1072,12 @@ export default function DateTimeFilter({
                       )
                     }
                     onChange={onChangeTimeEndSafe}
+                    /* 날짜 시트와 동일 — 구분선을 카드 배경색으로 숨기고 하이라이트로 대신 표시 */
+                    dividerColor="#ffffff"
                   />
+                  {Platform.OS === "android" ? (
+                    <View pointerEvents="none" style={styles.androidDateBand} />
+                  ) : null}
                 </View>
               </View>
 
@@ -1382,6 +1404,11 @@ const styles = StyleSheet.create({
     height: ANDROID_DATE_BAND_HEIGHT,
     borderRadius: 10,
     backgroundColor: "rgba(43, 127, 255, 0.10)",
+  },
+  /* 2026.11.11 Android 시간 휠 카드 — 날짜 카드(androidDateCard)와 같은 테두리 by yen */
+  androidTimeCard: {
+    borderColor: "#E5E7EB",
+    borderRadius: 14,
   },
   favs: { flexDirection: "row", flexWrap: "wrap", gap: 4, marginTop: 12 },
   favBtn: {
