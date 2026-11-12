@@ -59,6 +59,8 @@ import {
   hasPhotosWithoutLocation,
   getPhotosMissingPlace,
   updatePhotoPlacesByAssetIds,
+  /* 2026.11.11 지도 마커 DB 조회 by yen */
+  queryPhotoMapPointsByDateTime,
   getDisplayUriCacheBySourceUris,
   getOldestPhotoTakenAt,
   getPhotoMetadataCount,
@@ -165,6 +167,8 @@ const FOREGROUND_BUSY_MAX_MS = 8000;
 /* 2026.10.18 배치 간 idle(1.5s)이 전체 시간을 지배하므로 배치를 키워 대기 횟수를 줄임 —
    동시 네이티브 호출 수(=경합 수준)는 CONCURRENCY가 결정하므로 그대로 유지 by Claude */
 const COORD_BACKFILL_BATCH = 60;
+/* 2026.11.11 지도 마커 DB 조회 상한(클러스터링으로 표시) by yen */
+const MAP_POINTS_LIMIT = 5000;
 /* 2026.10.18 동시 getAssetInfoAsync가 썸네일(PHImageManager/Glide)과 같은 사진 서브시스템을 두고
    경쟁하므로 동시성을 낮추고 배치 간 간격을 넓힘 — 백그라운드 총 시간보다 전경 반응성 우선 by Claude */
 /* 2026.11.11 PicQly-T와 동일하게 4개 동시, 배치 사이 대기 없이 연속 처리(렌더 양보만) by yen */
@@ -2477,7 +2481,8 @@ export default function HomeScreen() {
   const requestLocationFeatureOpen = useCallback(
     async (entryPoint: LocationSearchEntryPoint) => {
       refreshDbPlaceOptionsRef.current();
-      if (entryPoint === "location-filter" || entryPoint === "map") {
+      /* 2026.11.11 지도는 DB 조회(loadMapPhotos)로 마커를 받으므로 사진별 GPS 보강은 위치 시트에서만 by yen */
+      if (entryPoint === "location-filter") {
         void ensureVisiblePhotosLocationReady();
       }
       return true;
@@ -3308,6 +3313,40 @@ export default function HomeScreen() {
   );
 
   /* 2026.04.15 날짜/시간 전용 DB 조회 경로를 분리해 로케이션 필터 영역 영향 없이 성능 테스트 가능한 모듈 단위를 만들기 위해 추가 by June */
+  /* 2026.11.11 화면의 국가/도시 선택을 SQL 장소 조건으로 변환 — 사진 목록과 지도 마커가 같은 기준을 쓰도록 분리.
+     선택한 국가명 중 하나라도 코드로 변환되지 않으면 null by yen */
+  const buildDbPlaceFilter = useCallback(
+    (currentFilter: FilterState) => {
+      /* 2026.10.18 국가/도시 조건을 SQL로 내림 — UI는 표시명으로 선택하므로 A3 코드로 역변환 by Claude */
+      /* 2026.10.19 '위치 정보 없음' 항목은 국가 코드가 아니므로 분리해서 처리 by Claude */
+      const noLocationLabel = t("othersNoLocation", "Others (no location)");
+      const includeNoLocation =
+        currentFilter.countries.includes(noLocationLabel);
+      const selectedCountryNames = currentFilter.countries.filter(
+        (name) => name !== noLocationLabel,
+      );
+      const mappedCountryCodes = selectedCountryNames
+        .map((name) => countryCodeForDisplayName(name))
+        .filter((code): code is string => !!code);
+      if (mappedCountryCodes.length !== selectedCountryNames.length) return null;
+
+      /* 선택한 도시 라벨을 같은 장소의 모든 이름(정밀/근사)으로 확장 */
+      const expandedCities = Array.from(
+        new Set(
+          currentFilter.cities.flatMap(
+            (label) => cityAliasesRef.current[label] ?? [label],
+          ),
+        ),
+      );
+      return {
+        countryCodes: mappedCountryCodes,
+        cities: expandedCities,
+        includeNoLocation,
+      };
+    },
+    [t],
+  );
+
   const tryLoadPhotosFromDbForDateTime = useCallback(
     async (
       currentFilter: FilterState,
@@ -3353,21 +3392,12 @@ export default function HomeScreen() {
       if (!isIndexComplete) listLoadedWhileIndexingRef.current = true;
       const queryDateStartMs = dayStartMs(currentFilter.dateStart);
       const queryDateEndNextMs = dayEndNextMs(currentFilter.dateEnd);
-      /* 2026.10.18 국가/도시 조건을 SQL로 내림 — UI는 표시명으로 선택하므로 A3 코드로 역변환 by Claude */
-      /* 2026.10.19 '위치 정보 없음' 항목은 국가 코드가 아니므로 분리해서 처리 by Claude */
-      const noLocationLabel = t("othersNoLocation", "Others (no location)");
-      const includeNoLocation =
-        currentFilter.countries.includes(noLocationLabel);
-      const selectedCountryNames = currentFilter.countries.filter(
-        (name) => name !== noLocationLabel,
-      );
-      const mappedCountryCodes = selectedCountryNames
-        .map((name) => countryCodeForDisplayName(name))
-        .filter((code): code is string => !!code);
+      /* 2026.11.11 장소 조건 계산을 buildDbPlaceFilter로 분리(지도 마커 조회와 같은 기준 사용) by yen */
+      const placeFilter = buildDbPlaceFilter(currentFilter);
 
       /* 2026.10.18 선택한 국가명 중 하나라도 코드로 변환되지 않으면(지오코더 표기 등 카탈로그 외 값)
          SQL 조건이 과소/누락되어 결과가 틀어지므로 기존 경로로 양보 by Claude */
-      if (mappedCountryCodes.length !== selectedCountryNames.length) {
+      if (!placeFilter) {
         recordPerfMetric(
           "home.db_datetime_query.ms",
           Date.now() - dbLoadStartedAt,
@@ -3376,7 +3406,6 @@ export default function HomeScreen() {
               usedDb: false,
               reason: "country_code_unmapped",
               selected: currentFilter.countries.length,
-              mapped: mappedCountryCodes.length,
             },
             logEvery: 1,
           },
@@ -3391,19 +3420,6 @@ export default function HomeScreen() {
         };
       }
 
-      /* 선택한 도시 라벨을 같은 장소의 모든 이름(정밀/근사)으로 확장 */
-      const expandedCities = Array.from(
-        new Set(
-          currentFilter.cities.flatMap(
-            (label) => cityAliasesRef.current[label] ?? [label],
-          ),
-        ),
-      );
-      const placeFilter = {
-        countryCodes: mappedCountryCodes,
-        cities: expandedCities,
-        includeNoLocation,
-      };
       const totalCount = await countPhotoMetadataByDateTime({
         dateStartMs: queryDateStartMs,
         dateEndNextMs: queryDateEndNextMs,
@@ -3515,8 +3531,37 @@ export default function HomeScreen() {
       mapDbRowsToPhotos,
       sortPhotosForDisplay,
       showLocationSearchPhaseText,
+      buildDbPlaceFilter,
     ],
   );
+
+  /* 2026.11.11 지도 마커는 DB에서 현재 필터에 맞는 좌표 보유 사진 전체를 바로 조회(사진 파일별 GPS 읽기 없음) by yen */
+  const [mapPhotos, setMapPhotos] = useState<Photo[]>([]);
+  const loadMapPhotos = useCallback(async () => {
+    try {
+      /* Screenshots 선택 중에는 장소 조건을 걸지 않음(목록과 동일) */
+      const currentFilter = withLocationIgnoredForScreenshots(filterRef.current);
+      const place = buildDbPlaceFilter(currentFilter);
+      if (!place) {
+        /* 장소 조건을 SQL로 못 바꾸는 예외 경우에는 그리드에 로드된 사진으로 대체 */
+        setMapPhotos(photosAllRef.current);
+        return;
+      }
+      const rows = await queryPhotoMapPointsByDateTime({
+        dateStartMs: dayStartMs(currentFilter.dateStart),
+        dateEndNextMs: dayEndNextMs(currentFilter.dateEnd),
+        timeStart: currentFilter.timeStart,
+        timeEnd: currentFilter.timeEnd,
+        limit: MAP_POINTS_LIMIT,
+        place,
+        mediaKind: currentFilter.mediaKind,
+      });
+      setMapPhotos(mapDbRowsToPhotos(rows));
+    } catch (error) {
+      console.log("[Map] marker query failed", String(error));
+      setMapPhotos(photosAllRef.current);
+    }
+  }, [buildDbPlaceFilter, dayEndNextMs, dayStartMs, mapDbRowsToPhotos]);
 
   const loadAllPhotosFromDbForDateTime = useCallback(
     async (currentFilter: FilterState) => {
@@ -6858,16 +6903,19 @@ export default function HomeScreen() {
                   activeOpacity={0.9}
                 >
                   <ShowOnMap
-                    images={photosAll}
+                    /* 2026.11.11 그리드에 로드된 사진 대신 DB에서 조회한 현재 필터의 좌표 보유 사진 전체 by yen */
+                    images={mapPhotos}
                     /* 2026.06.23 [포인트2] 지도를 열기 전에 리워드 팝업(메인 화면 위)을 먼저 표시.
                        광고를 보면 지도 열기 진행, 닫으면 지도 미오픈(앱은 계속 정상 이용) — Modal 중첩 프리즈 방지 by yen */
                     onOpenRequest={async () => {
                       const granted = await requestRewardAccess("map");
                       if (!granted) return false;
+                      await loadMapPhotos();
                       return requestLocationFeatureOpen("map");
                     }}
                     openToken={mapOpenToken}
-                    preparingLocations={visibleLocationPreparing}
+                    /* 2026.11.11 마커는 DB 조회로 바로 준비되므로 사진별 보강 대기 문구를 띄우지 않음 by yen */
+                    preparingLocations={false}
                     preparingMessage="Preparing map markers. Please wait..."
                   />
                 </TouchableOpacity>

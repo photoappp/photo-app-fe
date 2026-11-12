@@ -1324,6 +1324,63 @@ export const queryPhotoMetadataByDateTime = async (params: {
   return rows;
 };
 
+/* 2026.11.11 지도 마커용 — 현재 필터(날짜/시간/장소/사진 종류)에 맞고 좌표가 있는 사진 전체를 한 번에 조회.
+   그리드에 로드된 사진(30장 단위)만 쓰던 방식은 스크롤하지 않은 사진의 마커가 빠지고,
+   좌표 없는 사진만 로드돼 있으면 마커가 하나도 없었음 by yen */
+export const queryPhotoMapPointsByDateTime = async (params: {
+  dateStartMs: number;
+  dateEndNextMs: number;
+  timeStart: number;
+  timeEnd: number;
+  limit: number;
+  place?: PlaceFilter;
+  mediaKind?: MediaKind;
+}) => {
+  await initPhotoMetadataDb();
+  const db = await getDb();
+  const placeFilter = buildPlaceClause(params.place);
+
+  return db.getAllAsync<PhotoSummaryRow>(
+    `
+    SELECT asset_id as assetId, uri, taken_at as takenAt, latitude, longitude,
+           country_code as countryCode, city, city_approx as cityApprox,
+           is_screenshot as isScreenshot
+    FROM photo_metadata
+    WHERE is_deleted = 0
+      AND taken_at IS NOT NULL
+      AND taken_at >= ?
+      AND taken_at < ?
+      AND (
+        (? = 1439 AND taken_minute >= ? AND taken_minute <= 1439)
+        OR (? >= ? AND taken_minute >= ? AND taken_minute <= ?)
+        OR (? < ? AND taken_minute >= ? AND taken_minute <= ?)
+      )
+      /* 0/0은 'GPS 없음 확인' 표시이므로 제외 */
+      AND latitude IS NOT NULL
+      AND longitude IS NOT NULL
+      AND NOT (latitude = 0 AND longitude = 0)
+      ${placeFilter.sql}
+      ${buildMediaKindClause(params.mediaKind)}
+    ORDER BY taken_at DESC, asset_id DESC
+    LIMIT ?
+    `,
+    params.dateStartMs,
+    params.dateEndNextMs,
+    params.timeEnd,
+    params.timeStart,
+    params.timeEnd,
+    params.timeStart,
+    params.timeStart,
+    params.timeEnd,
+    params.timeEnd,
+    params.timeStart,
+    params.timeStart,
+    params.timeEnd,
+    ...placeFilter.args,
+    params.limit
+  );
+};
+
 /* 2026.10.04 검색 예상 시간을 '남은 실제 작업량'으로 계산하기 위해 범위 내 좌표 미보유 사진 수를 조회 by Claude */
 /* 2026.10.19 전수 패스 스테이징 — 시작 시 비우고, 페이지마다 본 id를 쌓고, 완주 시 없는 것을 삭제 처리 by Claude */
 export const resetSyncStaging = async () => {
