@@ -53,13 +53,18 @@ class PhotoSyncModule : Module() {
     return JSONObject().put("schema", 1).put("platform", "android").put("access", access).put("volumes", volumes).toString()
   }
 
+  // 2026.11.08 스크린샷 파일명 접두어 (JS SCREENSHOT_NAME_PATTERN과 동일) by yen
+  private val SCREENSHOT_NAME_PREFIXES = listOf("screenshot", "screen_shot", "screencapture")
+
   // 2026.11.04 Android에는 스크린샷 플래그가 없어 Screenshots 폴더/파일명으로 판별 (JS isScreenshotAsset과 동일 기준) by yen
   private fun isScreenshot(cursor: Cursor): Boolean {
     fun text(column: String): String {
       val index = cursor.getColumnIndex(column)
       return if (index < 0 || cursor.isNull(index)) "" else cursor.getString(index)
     }
-    if (text("_display_name").startsWith("screenshot", ignoreCase = true)) return true
+    // 2026.11.08 screen_shot/screencapture 파일명 규칙 추가 by yen
+    val name = text("_display_name")
+    if (SCREENSHOT_NAME_PREFIXES.any { name.startsWith(it, ignoreCase = true) }) return true
     if (text("bucket_display_name").equals("screenshots", ignoreCase = true)) return true
     val path = if (Build.VERSION.SDK_INT >= 29) text("relative_path") else text("_data")
     return path.contains("/screenshots/", ignoreCase = true) || path.startsWith("screenshots/", ignoreCase = true)

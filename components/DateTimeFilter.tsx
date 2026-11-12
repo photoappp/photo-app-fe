@@ -52,6 +52,46 @@ const DatePickersResponsive = ({
   // 폭이 좁으면 세로 스택, 넓으면 좌우 배치
   const stack = true;
   const maxDate = new Date();
+  /* 2026.11.08 Android 날짜 휠 UI 개선(시작/종료 라벨, 연한 카드, 선택 줄 하이라이트) — 선택 로직은 그대로 by yen */
+  const { t } = useI18n();
+
+  if (Platform.OS === "android") {
+    return (
+      <View style={styles.androidDateWrap}>
+        {[
+          {
+            key: "start",
+            label: t("dateRangeStart", "Start"),
+            value: dateStart,
+            onChange: onChangeStart,
+          },
+          {
+            key: "end",
+            label: t("dateRangeEnd", "End"),
+            value: dateEnd,
+            onChange: onChangeEnd,
+          },
+        ].map((item) => (
+          <View key={item.key}>
+            <Text style={styles.androidDateLabel}>{item.label}</Text>
+            <View style={styles.androidDateCard}>
+              <DateTimePicker
+                mode="date"
+                value={item.value}
+                onChange={item.onChange}
+                maximumDate={maxDate}
+                /* 2026.11.08 라이브러리가 "transparent"를 색으로 인식하지 못해 시트를 열 때 앱이 종료됨 —
+                   카드 배경과 같은 흰색으로 구분선을 숨김 by yen */
+                dividerColor="#ffffff"
+              />
+              {/* 선택 줄 하이라이트 — 터치는 휠로 통과 */}
+              <View pointerEvents="none" style={styles.androidDateBand} />
+            </View>
+          </View>
+        ))}
+      </View>
+    );
+  }
 
   return (
     <>
@@ -95,6 +135,9 @@ const WHEEL_SCALE = 0.95; // 0.88~0.95 사이 조절 가능
 const RENDERED_HEIGHT = IOS_WHEEL_NATIVE_HEIGHT * WHEEL_SCALE;
 // 위/아래 덮을 마스크 높이
 const COVER_HEIGHT = Math.max(0, (RENDERED_HEIGHT - VISIBLE_HEIGHT) / 2);
+
+/* 2026.11.08 Android 날짜 휠 선택 줄 하이라이트 높이(휠 한 줄 높이 근사) by yen */
+const ANDROID_DATE_BAND_HEIGHT = 40;
 
 const pad = (n: number) => `${n}`.padStart(2, "0");
 const fmtDate = (d: Date) =>
@@ -727,11 +770,18 @@ export default function DateTimeFilter({
               onPress={() => {
                 /* 2026.10.19 칩의 초기화 버튼은 시트 밖이라 Search가 없으므로 즉시 적용 —
                    emitChange에 새 값을 직접 넘긴다(이전엔 state 갱신 전 값이 올라갔다) by Claude */
-                setDateStart(recent31DaysStart);
-                setDateEnd(today);
+                /* 2026.11.08 앱 시작 시점의 오늘을 쓰면 자정을 넘긴 뒤 초기화 시 어제까지로 설정됐음 — 누른 시점 기준으로 계산 by yen */
+                const resetEnd = new Date();
+                const resetStart = new Date(
+                  resetEnd.getFullYear(),
+                  resetEnd.getMonth(),
+                  resetEnd.getDate() - 30,
+                );
+                setDateStart(resetStart);
+                setDateEnd(resetEnd);
                 emitChange({
-                  dateStart: recent31DaysStart,
-                  dateEnd: today,
+                  dateStart: resetStart,
+                  dateEnd: resetEnd,
                   timeStart,
                   timeEnd,
                 });
@@ -976,7 +1026,13 @@ export default function DateTimeFilter({
 
               {/* 2개 피커 */}
               <View style={styles.row}>
-                <View style={styles.pickerBox}>
+                {/* 2026.11.11 Android 시간 휠도 날짜 시트와 같은 스타일(카드 테두리, 선택 줄 하이라이트) — 구조/동작은 그대로 by yen */}
+                <View
+                  style={[
+                    styles.pickerBox,
+                    Platform.OS === "android" && styles.androidTimeCard,
+                  ]}
+                >
                   <DateTimePicker
                     mode="time"
                     value={
@@ -989,10 +1045,21 @@ export default function DateTimeFilter({
                       )
                     }
                     onChange={onChangeTimeStartSafe}
+                    /* 날짜 시트와 동일 — 구분선을 카드 배경색으로 숨기고 하이라이트로 대신 표시 */
+                    dividerColor="#ffffff"
                   />
+                  {Platform.OS === "android" ? (
+                    <View pointerEvents="none" style={styles.androidDateBand} />
+                  ) : null}
                 </View>
 
-                <View style={styles.pickerBox}>
+                {/* 2026.11.11 Android 시간 휠도 날짜 시트와 같은 스타일(카드 테두리, 선택 줄 하이라이트) — 구조/동작은 그대로 by yen */}
+                <View
+                  style={[
+                    styles.pickerBox,
+                    Platform.OS === "android" && styles.androidTimeCard,
+                  ]}
+                >
                   <DateTimePicker
                     mode="time"
                     value={
@@ -1005,7 +1072,12 @@ export default function DateTimeFilter({
                       )
                     }
                     onChange={onChangeTimeEndSafe}
+                    /* 날짜 시트와 동일 — 구분선을 카드 배경색으로 숨기고 하이라이트로 대신 표시 */
+                    dividerColor="#ffffff"
                   />
+                  {Platform.OS === "android" ? (
+                    <View pointerEvents="none" style={styles.androidDateBand} />
+                  ) : null}
                 </View>
               </View>
 
@@ -1305,6 +1377,39 @@ const styles = StyleSheet.create({
     zIndex: 10,
   },
   pickerBoxStack: { width: "100%", marginTop: 5 },
+  /* 2026.11.08 Android 날짜 휠 카드/라벨/선택 줄 하이라이트 by yen */
+  androidDateWrap: { marginTop: 8, gap: 10 },
+  androidDateLabel: {
+    fontSize: 13,
+    fontWeight: "600",
+    color: "#314158",
+    marginBottom: 6,
+    marginLeft: 2,
+  },
+  androidDateCard: {
+    height: 130,
+    borderWidth: 1,
+    borderColor: "#E5E7EB",
+    borderRadius: 14,
+    backgroundColor: "#fff",
+    overflow: "hidden",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  androidDateBand: {
+    position: "absolute",
+    left: 8,
+    right: 8,
+    top: (130 - 2 - ANDROID_DATE_BAND_HEIGHT) / 2,
+    height: ANDROID_DATE_BAND_HEIGHT,
+    borderRadius: 10,
+    backgroundColor: "rgba(43, 127, 255, 0.10)",
+  },
+  /* 2026.11.11 Android 시간 휠 카드 — 날짜 카드(androidDateCard)와 같은 테두리 by yen */
+  androidTimeCard: {
+    borderColor: "#E5E7EB",
+    borderRadius: 14,
+  },
   favs: { flexDirection: "row", flexWrap: "wrap", gap: 4, marginTop: 12 },
   favBtn: {
     backgroundColor: "#F3F4F6",

@@ -11,9 +11,11 @@ type Props = {
   onChange: (d: Date) => void;
   minimumDate?: Date;
   maximumDate?: Date;
+  /* 2026.11.08 Android 휠 구분선 색 — 날짜 시트에서 선택 줄 하이라이트를 대신 쓰기 위해 추가 by yen */
+  dividerColor?: string;
 };
 
-export default function DateTimePicker({ mode, value, onChange, minimumDate, maximumDate }: Props) {
+export default function DateTimePicker({ mode, value, onChange, minimumDate, maximumDate, dividerColor }: Props) {
   const isAndroid = Platform.OS === 'android';
 
   if (isAndroid) {
@@ -24,6 +26,7 @@ export default function DateTimePicker({ mode, value, onChange, minimumDate, max
         date={value}
         onDateChange={onChange}
         theme="light"
+        dividerColor={dividerColor}
         //androidVariant="iosClone"
         //textColor="#000000"
         minimumDate={mode === "date" ? minimumDate : undefined}

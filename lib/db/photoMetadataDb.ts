@@ -1,11 +1,13 @@
 import * as SQLite from "expo-sqlite";
+import { Platform } from "react-native";
 /* 2026.04.15 사진 메타데이터를 앱 내부 SQLite로 관리하기 위한 DB 레이어 파일을 신규 추가 by June */
 
 /* 2026.04.15 메타데이터 전용 DB 파일명/버전을 고정해 추후 마이그레이션 기준점을 만들기 위해 추가 by June */
 const DB_NAME = "picqly_metadata.db";
 /* 2026.04.15 스키마 변경 시 버전 증가를 통해 구조 변경을 안전하게 적용하기 위해 추가 by June */
 /* 2026.11.04 is_screenshot 컬럼 추가로 9로 올림 by yen */
-const DB_SCHEMA_VERSION = 9;
+/* 2026.11.08 Android 스크린샷 파일명 규칙 추가에 따른 1회 재판별로 10으로 올림 by yen */
+const DB_SCHEMA_VERSION = 10;
 
 /* 2026.04.15 DB 핸들을 싱글톤으로 재사용해 중복 open 비용과 상태 불일치를 줄이기 위해 추가 by June */
 let dbPromise: Promise<SQLite.SQLiteDatabase> | null = null;
@@ -122,6 +124,13 @@ export const initPhotoMetadataDb = async () => {
   /* 2026.04.15 스키마 초기화도 write queue에 포함해 앱 시작 직후 동시 업서트와의 충돌을 방지하기 위해 수정 by June */
   initPromise = enqueueWrite(async () => {
     const db = await getDb();
+    /* 2026.11.08 버전별 1회성 처리를 위해 이전 스키마 버전을 먼저 읽음(신규 설치는 0) by yen */
+    const previousSchemaVersion =
+      (
+        await db.getFirstAsync<{ user_version: number }>(
+          `PRAGMA user_version`
+        )
+      )?.user_version ?? 0;
 
     await db.execAsync(`
       PRAGMA journal_mode = WAL;
@@ -338,6 +347,16 @@ export const initPhotoMetadataDb = async () => {
       await db.execAsync(
         `ALTER TABLE photo_metadata ADD COLUMN is_screenshot INTEGER;`
       );
+      await db.runAsync(
+        `UPDATE photo_sync_state SET native_checkpoint = NULL WHERE id = 1`
+      );
+    } else if (
+      Platform.OS === "android" &&
+      previousSchemaVersion > 0 &&
+      previousSchemaVersion < 10
+    ) {
+      /* 2026.11.08 Android 파일명 규칙(screen_shot/screencapture)이 추가돼 기존 판별값을 한 번 다시 계산 —
+         체크포인트를 비워 다음 동기화가 전수 패스로 돌게 함. 재판별 중에도 기존 값은 유지됨 by yen */
       await db.runAsync(
         `UPDATE photo_sync_state SET native_checkpoint = NULL WHERE id = 1`
       );
@@ -1072,10 +1091,12 @@ const buildPlaceClause = (place?: PlaceFilter) => {
   return { sql: clauses.join("\n      "), args };
 };
 
-/* 2026.11.04 사진/스크린샷 조건 — 판별 전(NULL) 사진은 일반 사진으로 취급 by yen */
+/* 2026.11.04 사진/스크린샷 조건 by yen */
+/* 2026.11.08 판별 전(NULL) 사진을 Photos로 취급하면 인덱싱 중 스크린샷이 Photos에 섞여 보여,
+   판별이 끝난 사진(0)만 Photos로 표시. All에는 판별 여부와 관계없이 모두 포함 by yen */
 const buildMediaKindClause = (mediaKind?: MediaKind) => {
   if (mediaKind === "screenshots") return "AND is_screenshot = 1";
-  if (mediaKind === "photos") return "AND COALESCE(is_screenshot, 0) = 0";
+  if (mediaKind === "photos") return "AND is_screenshot = 0";
   return "";
 };
 
@@ -1301,6 +1322,63 @@ export const queryPhotoMetadataByDateTime = async (params: {
 
   /* 2026.04.15 시간 필터를 SQL로 완전 이관해 긴 기간 검색 시 JS 후처리 비용을 제거하기 위해 반환 필터를 제거 by June */
   return rows;
+};
+
+/* 2026.11.11 지도 마커용 — 현재 필터(날짜/시간/장소/사진 종류)에 맞고 좌표가 있는 사진 전체를 한 번에 조회.
+   그리드에 로드된 사진(30장 단위)만 쓰던 방식은 스크롤하지 않은 사진의 마커가 빠지고,
+   좌표 없는 사진만 로드돼 있으면 마커가 하나도 없었음 by yen */
+export const queryPhotoMapPointsByDateTime = async (params: {
+  dateStartMs: number;
+  dateEndNextMs: number;
+  timeStart: number;
+  timeEnd: number;
+  limit: number;
+  place?: PlaceFilter;
+  mediaKind?: MediaKind;
+}) => {
+  await initPhotoMetadataDb();
+  const db = await getDb();
+  const placeFilter = buildPlaceClause(params.place);
+
+  return db.getAllAsync<PhotoSummaryRow>(
+    `
+    SELECT asset_id as assetId, uri, taken_at as takenAt, latitude, longitude,
+           country_code as countryCode, city, city_approx as cityApprox,
+           is_screenshot as isScreenshot
+    FROM photo_metadata
+    WHERE is_deleted = 0
+      AND taken_at IS NOT NULL
+      AND taken_at >= ?
+      AND taken_at < ?
+      AND (
+        (? = 1439 AND taken_minute >= ? AND taken_minute <= 1439)
+        OR (? >= ? AND taken_minute >= ? AND taken_minute <= ?)
+        OR (? < ? AND taken_minute >= ? AND taken_minute <= ?)
+      )
+      /* 0/0은 'GPS 없음 확인' 표시이므로 제외 */
+      AND latitude IS NOT NULL
+      AND longitude IS NOT NULL
+      AND NOT (latitude = 0 AND longitude = 0)
+      ${placeFilter.sql}
+      ${buildMediaKindClause(params.mediaKind)}
+    ORDER BY taken_at DESC, asset_id DESC
+    LIMIT ?
+    `,
+    params.dateStartMs,
+    params.dateEndNextMs,
+    params.timeEnd,
+    params.timeStart,
+    params.timeEnd,
+    params.timeStart,
+    params.timeStart,
+    params.timeEnd,
+    params.timeEnd,
+    params.timeStart,
+    params.timeStart,
+    params.timeEnd,
+    ...placeFilter.args,
+    params.limit
+  );
 };
 
 /* 2026.10.04 검색 예상 시간을 '남은 실제 작업량'으로 계산하기 위해 범위 내 좌표 미보유 사진 수를 조회 by Claude */

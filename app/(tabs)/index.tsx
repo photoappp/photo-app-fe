@@ -59,6 +59,8 @@ import {
   hasPhotosWithoutLocation,
   getPhotosMissingPlace,
   updatePhotoPlacesByAssetIds,
+  /* 2026.11.11 지도 마커 DB 조회 by yen */
+  queryPhotoMapPointsByDateTime,
   getDisplayUriCacheBySourceUris,
   getOldestPhotoTakenAt,
   getPhotoMetadataCount,
@@ -151,9 +153,7 @@ const SEARCH_PREPARING_MAX_MS = 15000;
 /* 콜드 스캔의 장당 예상 비용(페이지 fetch+hydrate 기준) — 콜드 예상 시간 표기를 정직하게 만들기 위한 계수 by Claude */
 const SEARCH_ESTIMATE_COLD_S_PER_PHOTO = 0.005;
 
-/* 2026.10.11 검색 스트리밍: 첫 청크는 즉시 그릴 만큼 작게, 이후는 큰 청크로 이어붙임 by Claude */
-const SEARCH_FIRST_PAINT_COUNT = 120;
-const SEARCH_STREAM_CHUNK_COUNT = 600;
+/* 2026.11.11 검색 스트리밍 청크 상수 제거(스트리밍 준비 패스 삭제) by yen */
 
 /* 2026.10.11 첫 페인트 직후 가시 영역(첫 페이지)의 도시를 즉시 해소할 사진 수 — 측정용으로 상한 없음 by Claude */
 const FIRST_PAGE_CITY_COUNT = 100;
@@ -167,17 +167,21 @@ const FOREGROUND_BUSY_MAX_MS = 8000;
 /* 2026.10.18 배치 간 idle(1.5s)이 전체 시간을 지배하므로 배치를 키워 대기 횟수를 줄임 —
    동시 네이티브 호출 수(=경합 수준)는 CONCURRENCY가 결정하므로 그대로 유지 by Claude */
 const COORD_BACKFILL_BATCH = 60;
+/* 2026.11.11 지도 마커 DB 조회 상한(클러스터링으로 표시) by yen */
+const MAP_POINTS_LIMIT = 5000;
 /* 2026.10.18 동시 getAssetInfoAsync가 썸네일(PHImageManager/Glide)과 같은 사진 서브시스템을 두고
    경쟁하므로 동시성을 낮추고 배치 간 간격을 넓힘 — 백그라운드 총 시간보다 전경 반응성 우선 by Claude */
-const COORD_BACKFILL_CONCURRENCY = 2;
-const COORD_BACKFILL_IDLE_DELAY_MS = 1500;
-const COORD_BACKFILL_BUSY_RETRY_MS = 1000;
+/* 2026.11.11 PicQly-T와 동일하게 4개 동시, 배치 사이 대기 없이 연속 처리(렌더 양보만) by yen */
+const COORD_BACKFILL_CONCURRENCY = 4;
+const COORD_BACKFILL_IDLE_DELAY_MS = 0;
+const COORD_BACKFILL_BUSY_RETRY_MS = 200;
 const COORD_BACKFILL_MAX_ERROR_STREAK = 3;
 
 /* 2026.10.18 장소 보강은 전부 로컬 연산이라 배치를 크게 잡아도 네이티브 경합이 없음 by Claude */
 const PLACE_BACKFILL_BATCH = 300;
-const PLACE_BACKFILL_IDLE_DELAY_MS = 300;
-const PLACE_BACKFILL_BUSY_RETRY_MS = 1000;
+/* 2026.11.11 PicQly-T와 동일하게 배치 사이 대기 없이 연속 처리 by yen */
+const PLACE_BACKFILL_IDLE_DELAY_MS = 0;
+const PLACE_BACKFILL_BUSY_RETRY_MS = 200;
 const PLACE_BACKFILL_MAX_ERROR_STREAK = 3;
 
 
@@ -235,6 +239,8 @@ type MediaKindCacheEntry = {
 const MEDIA_KIND_ORDER: MediaKind[] = ["all", "photos", "screenshots"];
 /* 2026.11.04 현재 세그먼트 썸네일이 먼저 그려지도록 다른 세그먼트 미리 읽기는 잠시 뒤에 시작 by yen */
 const MEDIA_KIND_PREFETCH_DELAY_MS = 800;
+/* 2026.11.08 인덱싱 중 Photos/Screenshots가 비어 있을 때 DB를 다시 확인하는 간격 by yen */
+const MEDIA_KIND_INDEX_POLL_MS = 2000;
 
 /* 2026.11.04 중복 판별 키 — Android는 같은 사진이 네이티브 동기화(content://)와 MediaLibrary(file://)에서
    서로 다른 uri로 들어와 uri 기준으로는 두 번 표시됐다. 두 경로 모두 같은 자산 id를 주므로 id 우선 by yen */
@@ -711,6 +717,23 @@ export default function HomeScreen() {
   } | null>(null);
   /* 2026.11.04 빠르게 연속 전환할 때 늦게 도착한 이전 결과를 버리기 위한 토큰 by yen */
   const mediaKindSwitchTokenRef = useRef(0);
+  /* 2026.11.08 인덱싱 중 Photos/Screenshots 결과가 비어 있으면 MediaLibrary 최근 30장만 거르는 폴백 대신
+     DB를 주기적으로 다시 확인(인덱싱은 최신순이라 최근 사진의 판별은 금방 채워짐).
+     토큰은 대기 중단 시 증가해 늦게 도착한 확인 결과를 버린다 by yen */
+  /* 2026.11.08 인덱싱 중에 그려진 Photos/Screenshots 목록은 인덱싱이 끝나면 한 번 새로 고치기 위한 표시 by yen */
+  const listLoadedWhileIndexingRef = useRef(false);
+  const refreshMediaKindAfterIndexRef = useRef<() => void>(() => {});
+  const [mediaKindIndexWaiting, setMediaKindIndexWaiting] = useState(false);
+  const mediaKindIndexWaitTokenRef = useRef(0);
+  const startMediaKindIndexWait = useCallback(() => {
+    mediaKindIndexWaitTokenRef.current += 1;
+    setEmptyMessage(null);
+    setMediaKindIndexWaiting(true);
+  }, []);
+  const stopMediaKindIndexWait = useCallback(() => {
+    mediaKindIndexWaitTokenRef.current += 1;
+    setMediaKindIndexWaiting(false);
+  }, []);
   useEffect(() => {
     filterRef.current = filter;
   }, [filter]);
@@ -786,6 +809,11 @@ export default function HomeScreen() {
     () => buildDateTimeFilterSignature(filter),
     [buildDateTimeFilterSignature, filter],
   );
+  /* 2026.11.08 워치독 타이머를 다시 걸지 않고 최신 값을 읽기 위한 ref by yen */
+  const currentDateTimeFilterSignatureRef = useRef(currentDateTimeFilterSignature);
+  currentDateTimeFilterSignatureRef.current = currentDateTimeFilterSignature;
+  const deferredLocationFeatureOpenRef = useRef(deferredLocationFeatureOpen);
+  deferredLocationFeatureOpenRef.current = deferredLocationFeatureOpen;
 
   const getDateRangeDayCountInclusive = useCallback((currentFilter: FilterState) => {
     const start = new Date(
@@ -888,7 +916,12 @@ export default function HomeScreen() {
       /* 2026.10.19 장소 필터가 걸린 결과는 그 날짜 범위의 '전부'가 아니다. 그대로 커버리지로
          기록하면 이후 같은 날짜 범위를 메모리에서 재사용할 때(인덱스 미완성 구간에서만 쓰는 경로)
          장소로 걸러진 일부가 전체인 것처럼 쓰인다 by Claude */
-      if (currentFilter.countries.length > 0 || currentFilter.cities.length > 0) {
+      /* 2026.11.08 Photos/Screenshots만 읽은 결과도 그 범위의 '전부'가 아니므로 같은 이유로 기록하지 않음 by yen */
+      if (
+        currentFilter.countries.length > 0 ||
+        currentFilter.cities.length > 0 ||
+        currentFilter.mediaKind !== "all"
+      ) {
         lastLoadedBaseFilterRef.current = null;
         lastLoadedBaseFullyLoadedRef.current = false;
         return;
@@ -1193,62 +1226,6 @@ export default function HomeScreen() {
     clearLocationSearchProgressTimer,
     locationSearchPhaseLabels.preparing,
   ]);
-
-  const animateLocationSearchProgressToComplete = useCallback(
-    async (runToken: number) => {
-      clearLocationSearchCompletionTimer();
-      clearLocationSearchProgressTimer();
-
-      const startPercent = Math.max(0, Math.min(99, locationSearchProgressPercent));
-      if (startPercent >= 100) return;
-
-      const durationMs = Math.max(280, Math.min(900, 180 + (100 - startPercent) * 14));
-      const startedAt = Date.now();
-
-      await new Promise<void>((resolve) => {
-        const tick = () => {
-          if (runToken !== locationSearchRunTokenRef.current) {
-            resolve();
-            return;
-          }
-
-          const elapsedMs = Date.now() - startedAt;
-          const progress = Math.min(1, elapsedMs / durationMs);
-          const eased = 1 - Math.pow(1 - progress, 3);
-          const nextPercent = Math.round(startPercent + (100 - startPercent) * eased);
-          setLocationSearchProgressPercent((prev) => Math.max(prev, nextPercent));
-
-          if (nextPercent >= 100 || progress >= 1) {
-            setLocationSearchProgressPercent(100);
-            resolve();
-            return;
-          }
-
-          locationSearchCompletionTimerRef.current = setTimeout(tick, 40);
-        };
-
-        tick();
-      });
-    },
-    [
-      clearLocationSearchCompletionTimer,
-      clearLocationSearchProgressTimer,
-      locationSearchProgressPercent,
-    ],
-  );
-
-  const getPsychologicalLocationSearchPercent = useCallback(
-    (elapsedSeconds: number, estimatedSeconds: number) => {
-      /* 2026.10.04 선형 elapsed/estimate는 추정치가 빗나가면 진행률이 바닥(1%)에 고정되어 멈춘 것처럼 보임.
-         지수 점근 곡선(초반 빠르게, 추정 시점 부근 ~95%, 이후에도 99%까지 계속 미세 전진)으로 교체 —
-         추정치가 틀려도 항상 움직이는 진행률을 보장 by Claude */
-      const safeEstimatedSeconds = Math.max(estimatedSeconds, 1);
-      const tau = Math.max(2, safeEstimatedSeconds / 3);
-      const eased = 1 - Math.exp(-Math.max(0, elapsedSeconds) / tau);
-      return Math.min(99, Math.max(1, Math.round(eased * 99)));
-    },
-    [],
-  );
 
   const openDeferredLocationFeature = useCallback((entryPoint: DeferredLocationFeatureOpen) => {
     if (!entryPoint) return;
@@ -2248,296 +2225,13 @@ export default function HomeScreen() {
     return work;
   }, [deriveVisiblePhotos, imagesWithLocation]);
 
-  const runLightweightLocationSearchPreparation = useCallback(
-    async (runToken: number) => {
-      const currentFilter = filterRef.current;
-      const estimatedSeconds = currentEstimatedLocationSearchSeconds;
-      const startedAt = Date.now();
-      const rangeStartMs = dayStartMs(currentFilter.dateStart);
-      const rangeEndNextMs = dayEndNextMs(currentFilter.dateEnd);
-
-      let total = Math.max(1, progress.total ?? currentSearchTargetCount);
-      let processedCount = Math.min(photosAllRef.current.length, total);
-      let cursor = endCursor;
-      let nextPage = hasNextPage;
-
-      setLocationSearchProgressTotal(total);
-      setLocationSearchEstimatedSeconds(estimatedSeconds);
-      setLocationSearchProgressChecked(processedCount);
-      setLocationSearchProgressPercent(0);
-      await showLocationSearchPhaseText(locationSearchPhaseLabels.db);
-
-      clearLocationSearchProgressTimer();
-      locationSearchProgressTimerRef.current = setInterval(() => {
-        if (runToken !== locationSearchRunTokenRef.current) return;
-        const elapsedSeconds = (Date.now() - startedAt) / 1000;
-        /* 2026.06.24 실제 처리 속도와는 무관하게 사용자 체감이 끊기지 않도록 진행률은 심리적 연출값으로 유지 by June
-        const timeRatio = elapsedSeconds / Math.max(estimatedSeconds, 1);
-        const checkedRatio = processedCount / Math.max(total, 1);
-        const blendedRatio = Math.min(
-          0.94,
-          Math.max(checkedRatio * 0.88, Math.min(timeRatio, checkedRatio + 0.14)),
-        );
-        const autoPercent = Math.round(blendedRatio * 100);
-        setLocationSearchProgressPercent((prev) => Math.max(prev, autoPercent));
-        */
-        const fakePercent = getPsychologicalLocationSearchPercent(
-          elapsedSeconds,
-          estimatedSeconds,
-        );
-        setLocationSearchProgressPercent((prev) => Math.max(prev, fakePercent));
-      }, 500);
-
-      /* 2026.10.11 전체 적재 후 일괄 표시(수 초 대기) 대신 keyset 청크 스트리밍으로 교체 —
-         첫 청크(120장)를 즉시 그려 1초급 첫 화면, 이후 청크를 이어붙이며 실제 진행률 표시.
-         인덱스 완성 시에만 DB 스트리밍, 미완성이면 기존 MediaLibrary 폴백 유지 by Claude */
-      const syncState = await getPhotoSyncState();
-      if (!syncState.hasNextPage) {
-        const baseFilter = buildBaseDateTimeFilter(currentFilter);
-        const queryParams = {
-          dateStartMs: dayStartMs(baseFilter.dateStart),
-          dateEndNextMs: dayEndNextMs(baseFilter.dateEnd),
-          timeStart: baseFilter.timeStart,
-          timeEnd: baseFilter.timeEnd,
-        };
-        const dbTotalCount = await countPhotoMetadataByDateTime(queryParams);
-        if (runToken !== locationSearchRunTokenRef.current) return;
-
-        if (dbTotalCount > 0) {
-          total = Math.max(total, dbTotalCount);
-          setLocationSearchTargetTotalCount(dbTotalCount);
-          setLocationSearchProgressTotal(total);
-          await showLocationSearchPhaseText(locationSearchPhaseLabels.sort);
-
-          let after: PhotoPageCursor | null = null;
-          let streamed: Photo[] = [];
-          let firstChunk = true;
-          let hasMoreRows = true;
-
-          while (hasMoreRows) {
-            if (runToken !== locationSearchRunTokenRef.current) return;
-            const limit = firstChunk
-              ? SEARCH_FIRST_PAINT_COUNT
-              : SEARCH_STREAM_CHUNK_COUNT;
-            const rows = await queryPhotoMetadataByDateTime({
-              ...queryParams,
-              limit: limit + 1,
-              after,
-            });
-            hasMoreRows = rows.length > limit;
-            const trimmed = hasMoreRows ? rows.slice(0, limit) : rows;
-            if (trimmed.length === 0) break;
-            const lastRow = trimmed[trimmed.length - 1];
-            if (typeof lastRow.takenAt === "number") {
-              after = { takenAt: lastRow.takenAt, assetId: lastRow.assetId };
-            }
-            /* mapDbRowsToPhotos는 이 지점보다 뒤에 선언되어(TDZ) 간단한 변환을 인라인으로 수행 */
-            const chunkPhotos: Photo[] = trimmed.map((row) => ({
-              uri: row.uri,
-              assetId: row.assetId,
-              takenAt: row.takenAt,
-              location: dbLocationOrNull(row.latitude, row.longitude),
-              coordsChecked: row.latitude !== null && row.longitude !== null,
-              country: row.countryCode
-                ? (countryDisplayName(row.countryCode) ?? undefined)
-                : undefined,
-              city: row.city ?? undefined,
-              cityApprox: row.cityApprox ?? undefined,
-              /* 2026.11.04 사진/스크린샷 세그먼트 필터용 by yen */
-              isScreenshot: row.isScreenshot === 1,
-            }));
-            /* keyset은 taken_at DESC 순서로 반환되므로 전체 재정렬 없이 이어붙임(중복만 제거) */
-            streamed = dedupePhotosByUri([...streamed, ...chunkPhotos]);
-            const nextVisible = deriveVisiblePhotos(streamed, filterRef.current);
-            photosAllRef.current = streamed;
-            photosRef.current = nextVisible;
-            setPhotosAll(streamed);
-            setPhotos(nextVisible);
-
-            if (firstChunk) {
-              setCurrentDataSource("db");
-              setEndCursor(null);
-              /* 첫 화면 썸네일은 캐시 하이드레이션을 기다렸다 그림(120장, ms 단위) */
-              /* 2026.10.18 그리드가 ph://를 직접 쓰므로 첫 페인트를 캐시 읽기로 막지 않음(뷰어 폴백용으로만 비동기 적재) by Claude */
-              void hydratePersistedDisplayUriCache(
-                chunkPhotos,
-                "location-search-db-first",
-              );
-              await showLocationSearchPhaseText(locationSearchPhaseLabels.apply);
-            } else {
-              void hydratePersistedDisplayUriCache(
-                chunkPhotos,
-                "location-search-db-stream",
-              );
-            }
-
-            processedCount = streamed.length;
-            setLocationSearchProgressChecked(processedCount);
-            /* 2026.10.11 청크 스트리밍으로 실제 진행 신호가 생겨, 심리적 연출값 위에 실측 비율을 우선 반영 by Claude */
-            setLocationSearchProgressPercent((prev) =>
-              Math.max(
-                prev,
-                Math.min(
-                  97,
-                  Math.round((processedCount / Math.max(total, 1)) * 100),
-                ),
-              ),
-            );
-            firstChunk = false;
-            await new Promise((resolve) => setTimeout(resolve, 0));
-          }
-
-          if (runToken !== locationSearchRunTokenRef.current) return;
-          setHasNextPage(false);
-          dbDateTimePagingRef.current = {
-            enabled: true,
-            after: oldestCursorOfPhotos(streamed),
-          };
-          pruneDisplayUriCacheForPhotos(streamed);
-
-          await ensureVisiblePhotosLocationReady();
-          if (runToken !== locationSearchRunTokenRef.current) return;
-
-          processedCount = Math.max(processedCount, photosAllRef.current.length);
-          setLocationSearchProgressChecked(processedCount);
-          setLocationSearchProgressTotal(
-            Math.max(total, photosAllRef.current.length),
-          );
-          markLoadedBaseRange(currentFilter, true);
-          return;
-        }
-      }
-
-      if (photosAllRef.current.length > 0) {
-        await showLocationSearchPhaseText(locationSearchPhaseLabels.enrich);
-        await ensureVisiblePhotosLocationReady();
-        if (runToken !== locationSearchRunTokenRef.current) return;
-        processedCount = Math.max(processedCount, photosAllRef.current.length);
-        setLocationSearchProgressChecked(processedCount);
-      }
-
-      while (nextPage) {
-        if (runToken !== locationSearchRunTokenRef.current) return;
-
-        await showLocationSearchPhaseText(locationSearchPhaseLabels.target);
-        const result = await fetchAssetsPage({
-          after: cursor,
-          first: FETCH_PAGE_SIZE,
-          createdAfter: rangeStartMs,
-          createdBefore: rangeEndNextMs,
-        });
-
-        total = Math.max(total, result.totalCount ?? 0, processedCount + (result.assets?.length ?? 0));
-        setLocationSearchProgressTotal(total);
-
-        const assets = (result.assets ?? []).filter((asset) =>
-          matchesDateTimeFilter(asset, currentFilter),
-        );
-
-        await showLocationSearchPhaseText(locationSearchPhaseLabels.enrich);
-        let photosChunk = await hydrateAssetsToPhotos(assets, {
-          enrichLocationOnAndroid: true,
-        });
-
-        await showLocationSearchPhaseText(locationSearchPhaseLabels.enrich);
-        photosChunk = await imagesWithLocation(photosChunk, {
-          /* 2026.10.11 lazy city: 도시 필터가 있을 때만 라이브 지오코딩 대기 by Claude */
-          maxLookups:
-            currentFilter.cities.length > 0 ? photosChunk.length : 0,
-          precision: 2,
-          delayMs: 80,
-        });
-
-        if (runToken !== locationSearchRunTokenRef.current) return;
-
-        /* 2026.11.04 uri 대신 자산 id 기준으로 중복 제거 by yen */
-        const seenKeys = new Set<string>();
-        const mergedBase = [...photosAllRef.current, ...photosChunk]
-          .filter((photo) => {
-            const key = photoIdentityKey(photo);
-            if (seenKeys.has(key)) return false;
-            seenKeys.add(key);
-            return true;
-          })
-          .sort((a, b) => {
-            const aTime =
-              typeof a.takenAt === "number" && Number.isFinite(a.takenAt)
-                ? a.takenAt
-                : Number.MIN_SAFE_INTEGER;
-            const bTime =
-              typeof b.takenAt === "number" && Number.isFinite(b.takenAt)
-                ? b.takenAt
-                : Number.MIN_SAFE_INTEGER;
-            return bTime - aTime;
-          });
-        await showLocationSearchPhaseText(locationSearchPhaseLabels.sort);
-        const nextVisible = deriveVisiblePhotos(mergedBase, filterRef.current);
-
-        await showLocationSearchPhaseText(locationSearchPhaseLabels.thumbnail);
-        void hydratePersistedDisplayUriCache(photosChunk, "location-search");
-        await showLocationSearchPhaseText(locationSearchPhaseLabels.apply);
-        setPhotosAll(mergedBase);
-        setPhotos(nextVisible);
-        photosAllRef.current = mergedBase;
-        photosRef.current = nextVisible;
-        pruneDisplayUriCacheForPhotos(mergedBase);
-        void refreshFilterProgress(filterRef.current, nextVisible.length);
-
-        cursor = result.endCursor ?? null;
-        nextPage = result.hasNextPage;
-        setEndCursor(cursor);
-        setHasNextPage(nextPage);
-        dbDateTimePagingRef.current = { enabled: false, after: null };
-
-        processedCount = Math.min(total, mergedBase.length);
-        setLocationSearchProgressChecked(processedCount);
-        /* 2026.06.24 실제 탐색 건수 비율은 내부 검증용으로만 남겨두고 화면에는 심리적 진행률만 반영 by June
-        const explicitPercent = Math.min(
-          94,
-          Math.round((processedCount / Math.max(total, 1)) * 100),
-        );
-        setLocationSearchProgressPercent((prev) => Math.max(prev, explicitPercent));
-        */
-      }
-
-      markLoadedBaseRange(currentFilter, true);
-    },
-    [
-      clearLocationSearchProgressTimer,
-      currentEstimatedLocationSearchSeconds,
-      currentSearchTargetCount,
-      dayEndNextMs,
-      dayStartMs,
-      deriveVisiblePhotos,
-      endCursor,
-      ensureVisiblePhotosLocationReady,
-      fetchAssetsPage,
-      hasNextPage,
-      hydrateAssetsToPhotos,
-      hydratePersistedDisplayUriCache,
-      imagesWithLocation,
-      buildBaseDateTimeFilter,
-      markLoadedBaseRange,
-      matchesDateTimeFilter,
-      getPsychologicalLocationSearchPercent,
-      locationSearchPhaseLabels.apply,
-      locationSearchPhaseLabels.db,
-      locationSearchPhaseLabels.enrich,
-      locationSearchPhaseLabels.sort,
-      locationSearchPhaseLabels.target,
-      locationSearchPhaseLabels.thumbnail,
-      progress.total,
-      pruneDisplayUriCacheForPhotos,
-      refreshFilterProgress,
-      showLocationSearchPhaseText,
-    ],
-  );
+  /* 2026.11.11 runLightweightLocationSearchPreparation(날짜 범위 전체 재적재 + 사진별 GPS 읽기) 제거 — PicQly-T처럼 DB 조회만 사용 by yen */
 
   const finalizeLocationSearchPreparation = useCallback(
     (entryPoint: DeferredLocationFeatureOpen | null) => {
       void (async () => {
         const runToken = locationSearchRunTokenRef.current;
-        await animateLocationSearchProgressToComplete(runToken);
+        /* 2026.11.11 진행 모달이 숨겨져 있어 100% 애니메이션(최대 0.9초)은 대기만 늘리므로 생략 by yen */
         if (runToken !== locationSearchRunTokenRef.current) return;
 
         setLocationSearchProgressChecked(
@@ -2559,7 +2253,6 @@ export default function HomeScreen() {
       })();
     },
     [
-      animateLocationSearchProgressToComplete,
       clearLocationSearchCompletionTimer,
       currentDateTimeFilterSignature,
       currentSearchTargetCount,
@@ -2590,15 +2283,11 @@ export default function HomeScreen() {
          이전에는 그 위에 전 범위를 메모리로 끌어올리는 준비 패스를 매번 추가로 돌려서,
          같은 필터를 다시 선택해도 전체를 다시 적재했다. 페이지 단위 조회만으로 충분하므로
          추가 패스를 생략해 반복 검색이 즉시 끝나게 함(나머지는 스크롤 시 이어서 로드) by Claude */
-      if (dbDateTimePagingRef.current.enabled) {
-        /* 라벨(도시/국가)은 화면을 막지 않고 캐시 기반으로 뒤따라 채움 */
-        void ensureVisiblePhotosLocationReady();
-        finalizeLocationSearchPreparation(deferredEntryPoint);
-        return;
-      }
-
-      await runLightweightLocationSearchPreparation(runToken);
-      if (runToken !== locationSearchRunTokenRef.current) return;
+      /* 2026.11.11 PicQly-T처럼 검색은 DB 조회 1회로 끝낸다 — 날짜 범위 전체를 다시 읽고 사진마다 GPS를 읽던
+         추가 준비 패스(runLightweightLocationSearchPreparation)를 제거. 그 패스가 최대 15초 동안
+         위치 시트와 하단 추가 로드를 막았음. 위치는 백그라운드 보강(좌표 → lib/geo)이 DB에 채움 by yen */
+      /* 라벨(도시/국가)은 화면을 막지 않고 캐시 기반으로 뒤따라 채움 */
+      void ensureVisiblePhotosLocationReady();
       finalizeLocationSearchPreparation(deferredEntryPoint);
     } catch (error) {
       if (runToken !== locationSearchRunTokenRef.current) return;
@@ -2612,6 +2301,8 @@ export default function HomeScreen() {
         currentDateTimeFilterSignature;
       setLocationSearchWorkflowStatus("idle");
       resetLocationSearchProgress();
+      /* 2026.11.08 준비가 실패해도 사용자가 연 시트(위치/지도)는 열어 줌 — 이전엔 아무 반응이 없었음 by yen */
+      openDeferredLocationFeature(deferredEntryPoint);
       setDeferredLocationFeatureOpen(null);
       setLocationSearchEntryPoint(null);
     } finally {
@@ -2624,9 +2315,9 @@ export default function HomeScreen() {
     deferredLocationFeatureOpen,
     ensureVisiblePhotosLocationReady,
     finalizeLocationSearchPreparation,
+    openDeferredLocationFeature,
     resetLocationSearchProgress,
     reloadPhotosForFilterRef,
-    runLightweightLocationSearchPreparation,
   ]);
 
   /* 2026.10.11 search-prompt 진입 시 적응형 스킵 — 조용히 즉시 시작.
@@ -2663,11 +2354,18 @@ export default function HomeScreen() {
     clearLocationSearchCompletionTimer();
     setLocationSearchWorkflowStatus("idle");
     resetLocationSearchProgress();
+    /* 2026.11.08 워치독과 같은 처리 — 기록 없이 풀면 다음 탭이 자동 시작 가드에 막혀 시트가 열리지 않음 by yen */
+    lastDeclinedLocationSearchSignatureRef.current =
+      currentDateTimeFilterSignatureRef.current;
+    openDeferredLocationFeature(deferredLocationFeatureOpenRef.current);
+    setDeferredLocationFeatureOpen(null);
+    setLocationSearchEntryPoint(null);
   }, [
     appStateStatus,
     locationSearchWorkflowStatus,
     clearLocationSearchProgressTimer,
     clearLocationSearchCompletionTimer,
+    openDeferredLocationFeature,
     resetLocationSearchProgress,
   ]);
 
@@ -2682,6 +2380,12 @@ export default function HomeScreen() {
       clearLocationSearchCompletionTimer();
       setLocationSearchWorkflowStatus("idle");
       resetLocationSearchProgress();
+      /* 2026.11.08 시간 초과 시 이 조건의 준비를 '건너뜀'으로 기록 — 기록이 없으면 다음 탭에서
+         자동 시작 가드(같은 조건 1회)에 막혀 search-prompt로 멈추고 위치 시트가 영영 열리지 않았음.
+         사용자가 연 시트는 열어 주고, 위치 라벨은 열린 뒤 백그라운드로 채움 by yen */
+      lastDeclinedLocationSearchSignatureRef.current =
+        currentDateTimeFilterSignatureRef.current;
+      openDeferredLocationFeature(deferredLocationFeatureOpenRef.current);
       setDeferredLocationFeatureOpen(null);
       setLocationSearchEntryPoint(null);
     }, SEARCH_PREPARING_MAX_MS);
@@ -2690,6 +2394,7 @@ export default function HomeScreen() {
     locationSearchWorkflowStatus,
     clearLocationSearchProgressTimer,
     clearLocationSearchCompletionTimer,
+    openDeferredLocationFeature,
     resetLocationSearchProgress,
   ]);
 
@@ -2770,47 +2475,19 @@ export default function HomeScreen() {
     handleExtendedFeatureDecline,
   ]);
 
+  /* 2026.11.11 PicQly-T처럼 위치 시트/지도는 탭하면 바로 연다 — 목록은 DB에서 바로 구성되고
+     좌표/국가는 백그라운드 보강이 채운다. 이전엔 준비 중(preparing)이면 탭을 버리고, 준비가 끝나도
+     시트를 열지 않아 '아무 반응 없음'으로 보였음 by yen */
   const requestLocationFeatureOpen = useCallback(
     async (entryPoint: LocationSearchEntryPoint) => {
-      if (locationSearchWorkflowStatus === "preparing") return false;
-
-      const alreadyPrepared =
-        lastPreparedLocationSearchSignatureRef.current ===
-        currentDateTimeFilterSignature;
-      const alreadyDeclined =
-        lastDeclinedLocationSearchSignatureRef.current ===
-        currentDateTimeFilterSignature;
-
-      if (alreadyPrepared) {
-        return true;
+      refreshDbPlaceOptionsRef.current();
+      /* 2026.11.11 지도는 DB 조회(loadMapPhotos)로 마커를 받으므로 사진별 GPS 보강은 위치 시트에서만 by yen */
+      if (entryPoint === "location-filter") {
+        void ensureVisiblePhotosLocationReady();
       }
-
-      if (alreadyDeclined) {
-        if (
-          entryPoint === "location-filter" ||
-          entryPoint === "map"
-        ) {
-          void ensureVisiblePhotosLocationReady();
-        }
-        return true;
-      }
-
-      setLocationSearchEntryPoint(entryPoint);
-      setDeferredLocationFeatureOpen(entryPoint);
-      setLocationSearchWorkflowStatus(
-        requiresExtendedLocationFeature && !isLocationFeatureUnlockActive
-          ? "ad-required"
-          : "search-prompt",
-      );
-      return false;
+      return true;
     },
-    [
-      currentDateTimeFilterSignature,
-      isLocationFeatureUnlockActive,
-      locationSearchWorkflowStatus,
-      requiresExtendedLocationFeature,
-      ensureVisiblePhotosLocationReady,
-    ],
+    [ensureVisiblePhotosLocationReady],
   );
 
   useEffect(() => {
@@ -3636,6 +3313,40 @@ export default function HomeScreen() {
   );
 
   /* 2026.04.15 날짜/시간 전용 DB 조회 경로를 분리해 로케이션 필터 영역 영향 없이 성능 테스트 가능한 모듈 단위를 만들기 위해 추가 by June */
+  /* 2026.11.11 화면의 국가/도시 선택을 SQL 장소 조건으로 변환 — 사진 목록과 지도 마커가 같은 기준을 쓰도록 분리.
+     선택한 국가명 중 하나라도 코드로 변환되지 않으면 null by yen */
+  const buildDbPlaceFilter = useCallback(
+    (currentFilter: FilterState) => {
+      /* 2026.10.18 국가/도시 조건을 SQL로 내림 — UI는 표시명으로 선택하므로 A3 코드로 역변환 by Claude */
+      /* 2026.10.19 '위치 정보 없음' 항목은 국가 코드가 아니므로 분리해서 처리 by Claude */
+      const noLocationLabel = t("othersNoLocation", "Others (no location)");
+      const includeNoLocation =
+        currentFilter.countries.includes(noLocationLabel);
+      const selectedCountryNames = currentFilter.countries.filter(
+        (name) => name !== noLocationLabel,
+      );
+      const mappedCountryCodes = selectedCountryNames
+        .map((name) => countryCodeForDisplayName(name))
+        .filter((code): code is string => !!code);
+      if (mappedCountryCodes.length !== selectedCountryNames.length) return null;
+
+      /* 선택한 도시 라벨을 같은 장소의 모든 이름(정밀/근사)으로 확장 */
+      const expandedCities = Array.from(
+        new Set(
+          currentFilter.cities.flatMap(
+            (label) => cityAliasesRef.current[label] ?? [label],
+          ),
+        ),
+      );
+      return {
+        countryCodes: mappedCountryCodes,
+        cities: expandedCities,
+        includeNoLocation,
+      };
+    },
+    [t],
+  );
+
   const tryLoadPhotosFromDbForDateTime = useCallback(
     async (
       currentFilter: FilterState,
@@ -3677,23 +3388,16 @@ export default function HomeScreen() {
       const syncState = await getPhotoSyncState();
       const isIndexComplete = !syncState.hasNextPage;
       setDbIndexComplete(isIndexComplete);
+      /* 2026.11.08 인덱싱 중 조회한 결과는 판별이 덜 된 상태 — 인덱싱 완료 후 새로 고침 대상으로 표시 by yen */
+      if (!isIndexComplete) listLoadedWhileIndexingRef.current = true;
       const queryDateStartMs = dayStartMs(currentFilter.dateStart);
       const queryDateEndNextMs = dayEndNextMs(currentFilter.dateEnd);
-      /* 2026.10.18 국가/도시 조건을 SQL로 내림 — UI는 표시명으로 선택하므로 A3 코드로 역변환 by Claude */
-      /* 2026.10.19 '위치 정보 없음' 항목은 국가 코드가 아니므로 분리해서 처리 by Claude */
-      const noLocationLabel = t("othersNoLocation", "Others (no location)");
-      const includeNoLocation =
-        currentFilter.countries.includes(noLocationLabel);
-      const selectedCountryNames = currentFilter.countries.filter(
-        (name) => name !== noLocationLabel,
-      );
-      const mappedCountryCodes = selectedCountryNames
-        .map((name) => countryCodeForDisplayName(name))
-        .filter((code): code is string => !!code);
+      /* 2026.11.11 장소 조건 계산을 buildDbPlaceFilter로 분리(지도 마커 조회와 같은 기준 사용) by yen */
+      const placeFilter = buildDbPlaceFilter(currentFilter);
 
       /* 2026.10.18 선택한 국가명 중 하나라도 코드로 변환되지 않으면(지오코더 표기 등 카탈로그 외 값)
          SQL 조건이 과소/누락되어 결과가 틀어지므로 기존 경로로 양보 by Claude */
-      if (mappedCountryCodes.length !== selectedCountryNames.length) {
+      if (!placeFilter) {
         recordPerfMetric(
           "home.db_datetime_query.ms",
           Date.now() - dbLoadStartedAt,
@@ -3702,7 +3406,6 @@ export default function HomeScreen() {
               usedDb: false,
               reason: "country_code_unmapped",
               selected: currentFilter.countries.length,
-              mapped: mappedCountryCodes.length,
             },
             logEvery: 1,
           },
@@ -3717,19 +3420,6 @@ export default function HomeScreen() {
         };
       }
 
-      /* 선택한 도시 라벨을 같은 장소의 모든 이름(정밀/근사)으로 확장 */
-      const expandedCities = Array.from(
-        new Set(
-          currentFilter.cities.flatMap(
-            (label) => cityAliasesRef.current[label] ?? [label],
-          ),
-        ),
-      );
-      const placeFilter = {
-        countryCodes: mappedCountryCodes,
-        cities: expandedCities,
-        includeNoLocation,
-      };
       const totalCount = await countPhotoMetadataByDateTime({
         dateStartMs: queryDateStartMs,
         dateEndNextMs: queryDateEndNextMs,
@@ -3776,7 +3466,9 @@ export default function HomeScreen() {
       const photosFromDb = sortPhotosForDisplay(dbMapped);
 
       /* 2026.04.22 인덱싱 미완료 상태에서 DB 결과가 비어 있으면 MediaLibrary fallback을 허용해 false-empty를 방지하기 위해 가드 추가 by June */
-      if (!isIndexComplete && photosFromDb.length === 0) {
+      /* 2026.11.11 위치 조건이 있으면 PicQly-T처럼 DB만 답한다 — 폴백(MediaLibrary)은 사진마다 GPS를 다시 읽어
+         느리고 위치 시트/스크롤을 막았음. GPS가 아직 안 읽힌 사진은 백그라운드 보강 후 매칭됨 by yen */
+      if (!isIndexComplete && photosFromDb.length === 0 && !hasLocationFilter) {
         /* 2026.04.22 인덱싱 미완료 false-empty fallback을 계측해 재탐색 발생 빈도를 추적하기 위해 추가 by June */
         recordPerfMetric(
           "home.db_datetime_query.ms",
@@ -3839,8 +3531,37 @@ export default function HomeScreen() {
       mapDbRowsToPhotos,
       sortPhotosForDisplay,
       showLocationSearchPhaseText,
+      buildDbPlaceFilter,
     ],
   );
+
+  /* 2026.11.11 지도 마커는 DB에서 현재 필터에 맞는 좌표 보유 사진 전체를 바로 조회(사진 파일별 GPS 읽기 없음) by yen */
+  const [mapPhotos, setMapPhotos] = useState<Photo[]>([]);
+  const loadMapPhotos = useCallback(async () => {
+    try {
+      /* Screenshots 선택 중에는 장소 조건을 걸지 않음(목록과 동일) */
+      const currentFilter = withLocationIgnoredForScreenshots(filterRef.current);
+      const place = buildDbPlaceFilter(currentFilter);
+      if (!place) {
+        /* 장소 조건을 SQL로 못 바꾸는 예외 경우에는 그리드에 로드된 사진으로 대체 */
+        setMapPhotos(photosAllRef.current);
+        return;
+      }
+      const rows = await queryPhotoMapPointsByDateTime({
+        dateStartMs: dayStartMs(currentFilter.dateStart),
+        dateEndNextMs: dayEndNextMs(currentFilter.dateEnd),
+        timeStart: currentFilter.timeStart,
+        timeEnd: currentFilter.timeEnd,
+        limit: MAP_POINTS_LIMIT,
+        place,
+        mediaKind: currentFilter.mediaKind,
+      });
+      setMapPhotos(mapDbRowsToPhotos(rows));
+    } catch (error) {
+      console.log("[Map] marker query failed", String(error));
+      setMapPhotos(photosAllRef.current);
+    }
+  }, [buildDbPlaceFilter, dayEndNextMs, dayStartMs, mapDbRowsToPhotos]);
 
   const loadAllPhotosFromDbForDateTime = useCallback(
     async (currentFilter: FilterState) => {
@@ -4691,6 +4412,8 @@ export default function HomeScreen() {
       void hydratePersistedDisplayUriCache(initialBase, "initial-medialibrary");
       setPhotos(initial);
       setPhotosAll(initialBase);
+      /* 2026.11.08 바로 아래 markLoadedBaseRange가 ref를 읽으므로 즉시 동기화(effect 반영 전엔 이전 목록이 기록됐음) by yen */
+      photosAllRef.current = initialBase;
       /* 2026.04.22 초기 MediaLibrary 경로에서도 현재 표출 건수를 progress에 반영해 사용자에게 로드 상태를 보여주기 위해 추가 by June */
       void refreshFilterProgress(
         {
@@ -4761,6 +4484,8 @@ export default function HomeScreen() {
   const reloadPhotosForFilter = useCallback(async () => {
     /* 2026.11.04 전체 재조회(필터 변경/새로고침)가 일어나면 세그먼트 캐시는 낡은 것이므로 비움 by yen */
     mediaKindCacheRef.current = null;
+    /* 2026.11.08 새 조회가 시작되면 이전 Photos/Screenshots 대기는 중단(필요하면 이 조회 끝에서 다시 시작) by yen */
+    stopMediaKindIndexWait();
     const currentFilter = filterRef.current;
     const requestId = beginPhotoLoad("idle", currentFilter);
 
@@ -4837,9 +4562,17 @@ export default function HomeScreen() {
       if (reusedLoadedBase) {
         reloadPath = "db";
         await showLocationSearchPhaseText(locationSearchPhaseLabels.apply);
-        setEmptyMessage(
-          photosRef.current.length === 0 ? EMPTY_DEFAULT_MESSAGE : null,
-        );
+        /* 2026.11.08 인덱싱 중(이 경로는 인덱스 미완성일 때만 탐) Photos/Screenshots가 비면 빈 안내 대신 DB 재확인 대기 by yen */
+        if (
+          photosRef.current.length === 0 &&
+          currentFilter.mediaKind !== "all"
+        ) {
+          startMediaKindIndexWait();
+        } else {
+          setEmptyMessage(
+            photosRef.current.length === 0 ? EMPTY_DEFAULT_MESSAGE : null,
+          );
+        }
         return;
       }
 
@@ -4851,9 +4584,17 @@ export default function HomeScreen() {
         reloadPath = "db";
         setCurrentDataSource("db");
         await showLocationSearchPhaseText(locationSearchPhaseLabels.apply);
-        setEmptyMessage(
-          photosRef.current.length === 0 ? EMPTY_DEFAULT_MESSAGE : null,
-        );
+        /* 2026.11.08 인덱싱 중(이 경로는 인덱스 미완성일 때만 탐) Photos/Screenshots가 비면 빈 안내 대신 DB 재확인 대기 by yen */
+        if (
+          photosRef.current.length === 0 &&
+          currentFilter.mediaKind !== "all"
+        ) {
+          startMediaKindIndexWait();
+        } else {
+          setEmptyMessage(
+            photosRef.current.length === 0 ? EMPTY_DEFAULT_MESSAGE : null,
+          );
+        }
         return;
       }
 
@@ -4929,6 +4670,8 @@ export default function HomeScreen() {
       await showLocationSearchPhaseText(locationSearchPhaseLabels.apply);
       setPhotos(sorted);
       setPhotosAll(sortedBase);
+      /* 2026.11.08 바로 아래 markLoadedBaseRange가 ref를 읽으므로 즉시 동기화(effect 반영 전엔 이전 목록이 기록됐음) by yen */
+      photosAllRef.current = sortedBase;
       pruneDisplayUriCacheForPhotos(sortedBase);
       /* 2026.04.22 MediaLibrary 경로에서도 현재 필터의 표출/전체 건수를 동기화해 append 전 진행률 기준을 맞추기 위해 추가 by June */
       void refreshFilterProgress(currentFilter, sorted.length);
@@ -4936,7 +4679,16 @@ export default function HomeScreen() {
       setHasNextPage(nextHasPage);
       markLoadedBaseRange(currentFilter, !nextHasPage);
 
-      if (sorted.length === 0 && !nextHasPage) {
+      /* 2026.11.08 인덱싱 중 Photos/Screenshots: MediaLibrary 최근 30장에는 해당 종류가 없을 수 있으므로
+         빈 화면으로 두지 않고 DB가 채워질 때까지 재확인 by yen */
+      if (
+        reloadPath === "medialibrary" &&
+        currentFilter.mediaKind !== "all" &&
+        sorted.length === 0 &&
+        !dbResult.isIndexComplete
+      ) {
+        startMediaKindIndexWait();
+      } else if (sorted.length === 0 && !nextHasPage) {
         setEmptyMessage(EMPTY_DEFAULT_MESSAGE);
       } else {
         setEmptyMessage(null);
@@ -4988,6 +4740,8 @@ export default function HomeScreen() {
       tryApplyIncrementalDateRangeReload,
       tryLoadPhotosFromDbForDateTime,
       showLocationSearchPhaseText,
+      startMediaKindIndexWait,
+      stopMediaKindIndexWait,
     ]);
 
   /** append/background 공용 로드 처리 */
@@ -5115,6 +4869,8 @@ export default function HomeScreen() {
         void hydratePersistedDisplayUriCache(sortedBase, `${mode}-medialibrary`);
         setPhotos(sorted);
         setPhotosAll(sortedBase);
+        /* 2026.11.08 바로 아래 markLoadedBaseRange가 ref를 읽으므로 즉시 동기화(effect 반영 전엔 이전 목록이 기록됐음) by yen */
+        photosAllRef.current = sortedBase;
         pruneDisplayUriCacheForPhotos(sortedBase);
         /* 2026.04.22 MediaLibrary append에서도 누적 표출 건수를 프로그레스바에 반영해 사용자 체감 진행률을 맞추기 위해 추가 by June */
         void refreshFilterProgress(currentFilter, sorted.length);
@@ -5607,7 +5363,8 @@ export default function HomeScreen() {
         let batchCount = 0;
         try {
           while (!backgroundMetadataSyncCancelledRef.current) {
-            if (requestInFlightRef.current || foregroundBusyRef.current) {
+            /* 2026.11.11 썸네일 페인트(foregroundBusy) 대기 제거 — PicQly-T처럼 연속 처리, 사진 조회 중에만 잠깐 양보 by yen */
+            if (requestInFlightRef.current) {
               await sleep(COORD_BACKFILL_BUSY_RETRY_MS);
               continue;
             }
@@ -5675,6 +5432,23 @@ export default function HomeScreen() {
               try {
                 await updatePhotoCoordinatesByAssetIds(writes);
                 errorStreak = 0;
+                /* 2026.11.11 읽은 좌표는 바로 오프라인 국가/도시(lib/geo)로 변환해 저장 — 전체 GPS가 끝날 때까지
+                   위치 목록이 비어 있지 않도록 최신 사진부터 국가가 채워짐 by yen */
+                if (resolved.length > 0) {
+                  await updatePhotoPlacesByAssetIds(
+                    resolved.map((row) => {
+                      const code = lookupCountryCode(row.latitude, row.longitude);
+                      return {
+                        assetId: row.assetId,
+                        countryCode: code ?? "XX",
+                        city: null,
+                        cityApprox: code
+                          ? approxCityForCoords(row.latitude, row.longitude, code)
+                          : null,
+                      };
+                    }),
+                  );
+                }
               } catch (err) {
                 errorStreak += 1;
                 console.log("coord backfill write error:", err);
@@ -5690,6 +5464,10 @@ export default function HomeScreen() {
             /* 2026.10.12 COUNT 2건을 매 배치마다 돌리지 않도록 10배치마다 예상치 갱신 by Claude */
             if (batchCount % 10 === 0) {
               void refreshSearchWorkEstimate(filterRef.current);
+            }
+            /* 2026.11.11 새로 채워진 국가가 위치 시트 목록에 보이도록 5배치마다 갱신 by yen */
+            if (batchCount % 5 === 0) {
+              refreshDbPlaceOptionsRef.current();
             }
             await sleep(COORD_BACKFILL_IDLE_DELAY_MS);
           }
@@ -5722,7 +5500,8 @@ export default function HomeScreen() {
       let errorStreak = 0;
       try {
         while (!backgroundMetadataSyncCancelledRef.current) {
-          if (requestInFlightRef.current || foregroundBusyRef.current) {
+          /* 2026.11.11 로컬 연산이므로 썸네일 페인트 대기 제거 — 사진 조회 중에만 양보 by yen */
+          if (requestInFlightRef.current) {
             await sleep(PLACE_BACKFILL_BUSY_RETRY_MS);
             continue;
           }
@@ -5801,6 +5580,8 @@ export default function HomeScreen() {
       try {
         await sleep(BACKGROUND_SYNC_INITIAL_DELAY_MS);
         let errorStreak = 0;
+        /* 2026.11.08 인덱싱이 실제로 끝났을 때만 목록 새로 고침 by yen */
+        let indexCompleted = false;
         while (!backgroundMetadataSyncCancelledRef.current) {
           /* 2026.09.02 사용자 요청이 진행 중이면 동기화를 양보해 6월 장애(초기 로드 경합) 재발을 방지 by Claude */
           /* 2026.10.18 썸네일이 그려지는 중에도 양보 — 사진 API 경합으로 첫 화면이 밀리는 것을 방지 by Claude */
@@ -5824,8 +5605,14 @@ export default function HomeScreen() {
             continue;
           }
           const syncState = await getPhotoSyncState();
-          if (!syncState.hasNextPage) break;
+          if (!syncState.hasNextPage) {
+            indexCompleted = true;
+            break;
+          }
           await sleep(BACKGROUND_SYNC_IDLE_DELAY_MS);
+        }
+        if (indexCompleted && !backgroundMetadataSyncCancelledRef.current) {
+          refreshMediaKindAfterIndexRef.current();
         }
       } finally {
         backgroundMetadataSyncActiveRef.current = false;
@@ -6309,28 +6096,16 @@ export default function HomeScreen() {
          다시 거르는 것으로는 결과가 바뀌지 않는다 — SQL 페이징이 켜져 있으면 deriveVisiblePhotos는
          입력을 그대로 돌려준다. 그래서 '위치만 바꾸면 사진이 그대로'인 문제가 있었다.
          날짜/시간 변경(handleDateTimeChange)과 똑같이 워크플로를 재무장해 실제 재조회를 돌린다 by Claude */
-      if (dbDateTimePagingRef.current.enabled) {
-        void prefetchLocationSearchTargetTotalCount(nextFilter);
-        armLocationSearchWorkflowForFilter(nextFilter);
-        return;
-      }
-
-      /* SQL 페이징이 꺼진 폴백 경로(MediaLibrary 스캔)에서는 메모리 필터가 실제 필터다 */
-      const nextVisible = deriveVisiblePhotos(photosAllRef.current, nextFilter);
-      setPhotos(nextVisible);
-      void refreshFilterProgress(nextFilter, nextVisible.length);
-      setEmptyMessage(
-        nextVisible.length === 0 ? EMPTY_DEFAULT_MESSAGE : null,
-      );
+      /* 2026.11.11 PicQly-T처럼 위치 변경은 항상 DB 재조회 — 이전엔 목록이 폴백(MediaLibrary)으로 올라온 경우
+         메모리에 있던 사진(첫 페이지)만 걸러서 다른 나라 사진이 빠지거나 같은 사진이 보였음 by yen */
+      void prefetchLocationSearchTargetTotalCount(nextFilter);
+      armLocationSearchWorkflowForFilter(nextFilter);
     },
     [
-      EMPTY_DEFAULT_MESSAGE,
       areSelectionListsEqual,
       armLocationSearchWorkflowForFilter,
-      deriveVisiblePhotos,
       normalizeEffectiveLocationSelection,
       prefetchLocationSearchTargetTotalCount,
-      refreshFilterProgress,
     ],
   );
 
@@ -6389,12 +6164,15 @@ export default function HomeScreen() {
       const signature = mediaKindCacheSignature(nextFilter);
       const entries = getMediaKindCacheEntries(signature);
       /* 떠나는 세그먼트의 현재 상태(스크롤로 더 읽은 분량 포함)를 저장 */
-      entries[prevFilter.mediaKind] = {
-        photos: photosAllRef.current,
-        after: dbDateTimePagingRef.current.after,
-        hasNextPage,
-        totalCount: locationSearchTargetTotalCount,
-      };
+      /* 2026.11.08 빈 Photos/Screenshots(인덱싱 대기 중일 수 있음)는 저장하지 않음 — 다시 들어오면 새로 확인 by yen */
+      if (!(prevFilter.mediaKind !== "all" && photosAllRef.current.length === 0)) {
+        entries[prevFilter.mediaKind] = {
+          photos: photosAllRef.current,
+          after: dbDateTimePagingRef.current.after,
+          hasNextPage,
+          totalCount: locationSearchTargetTotalCount,
+        };
+      }
 
       const token = ++mediaKindSwitchTokenRef.current;
       const cached = entries[nextFilter.mediaKind];
@@ -6420,7 +6198,20 @@ export default function HomeScreen() {
           null,
         );
         if (token !== mediaKindSwitchTokenRef.current) return;
-        if (!dbResult.usedDb) {
+        if (
+          !dbResult.usedDb &&
+          nextFilter.mediaKind !== "all" &&
+          !dbResult.isIndexComplete
+        ) {
+          /* 2026.11.08 인덱싱 중 Photos/Screenshots가 비면 MediaLibrary 폴백(최근 30장만 거름) 대신 빈 목록 + DB 재확인 대기 by yen */
+          applyMediaKindEntry(nextFilter, {
+            photos: [],
+            after: null,
+            hasNextPage: false,
+            totalCount: null,
+          });
+          startMediaKindIndexWait();
+        } else if (!dbResult.usedDb) {
           fallback = true;
         } else {
           const entry: MediaKindCacheEntry = {
@@ -6442,6 +6233,14 @@ export default function HomeScreen() {
         fallback = true;
       } finally {
         requestInFlightRef.current = false;
+        /* 2026.11.08 전환 조회 중에 들어온 필터 변경(Search/초기화)은 대기열에 쌓이는데, 다른 경로와 달리
+           여기서 꺼내 실행하지 않아 검색이 사라졌다. 최신 필터로 재조회하므로 폴백 재조회는 생략 by yen */
+        if (pendingReloadRef.current) {
+          pendingReloadRef.current = false;
+          setPendingReloadVisible(false);
+          fallback = false;
+          void reloadPhotosForFilterRef.current();
+        }
       }
 
       if (fallback && token === mediaKindSwitchTokenRef.current) {
@@ -6455,6 +6254,7 @@ export default function HomeScreen() {
       hasNextPage,
       locationSearchTargetTotalCount,
       mediaKindCacheSignature,
+      startMediaKindIndexWait,
       tryLoadPhotosFromDbForDateTime,
     ],
   );
@@ -6469,6 +6269,8 @@ export default function HomeScreen() {
       const nextFilter = { ...prev, mediaKind };
       filterRef.current = nextFilter;
       setFilter(nextFilter);
+      /* 2026.11.08 세그먼트를 바꾸면 이전 대기는 중단 by yen */
+      stopMediaKindIndexWait();
 
       /* 2026.11.04 DB 페이징 중이면 가벼운 전환 경로 사용(Screenshots의 위치 무시도 DB 조회가 처리) by yen */
       if (dbDateTimePagingRef.current.enabled) {
@@ -6492,15 +6294,145 @@ export default function HomeScreen() {
       const nextVisible = deriveVisiblePhotos(photosAllRef.current, nextFilter);
       setPhotos(nextVisible);
       void refreshFilterProgress(nextFilter, nextVisible.length);
+      /* 2026.11.08 메모리 경로(SQL 페이징 꺼짐 = 인덱싱 중)에서 Photos/Screenshots가 비면 DB 재확인 대기 by yen */
+      if (mediaKind !== "all" && nextVisible.length === 0) {
+        startMediaKindIndexWait();
+        return;
+      }
       setEmptyMessage(nextVisible.length === 0 ? EMPTY_DEFAULT_MESSAGE : null);
     },
     [
       EMPTY_DEFAULT_MESSAGE,
       deriveVisiblePhotos,
       refreshFilterProgress,
+      startMediaKindIndexWait,
+      stopMediaKindIndexWait,
       switchMediaKindFromDb,
     ],
   );
+
+  /* 2026.11.08 인덱싱이 끝나면, 인덱싱 중에 그려진 Photos/Screenshots 목록을 완성된 인덱스로 한 번 다시 조회.
+     (인덱싱 중에는 판별 안 된 사진이 빠져 있거나 순서가 덜 채워져 있음) All은 판별과 무관하므로 그대로 둠 by yen */
+  const refreshMediaKindAfterIndex = useCallback(async () => {
+    if (!listLoadedWhileIndexingRef.current) return;
+    listLoadedWhileIndexingRef.current = false;
+    const currentFilter = filterRef.current;
+    if (currentFilter.mediaKind === "all") return;
+    if (requestInFlightRef.current) return;
+    const switchToken = mediaKindSwitchTokenRef.current;
+    try {
+      const result = await tryLoadPhotosFromDbForDateTime(
+        currentFilter,
+        FILTER_RESET_TARGET_COUNT,
+        null,
+      );
+      if (
+        filterRef.current !== currentFilter ||
+        requestInFlightRef.current ||
+        switchToken !== mediaKindSwitchTokenRef.current
+      ) {
+        return;
+      }
+      if (!result.usedDb || !result.isIndexComplete) return;
+      const entry: MediaKindCacheEntry = {
+        photos: result.photos,
+        after: result.nextAfter,
+        hasNextPage: result.dbHasMore,
+        totalCount: result.totalCount > 0 ? result.totalCount : null,
+      };
+      getMediaKindCacheEntries(mediaKindCacheSignature(currentFilter))[
+        currentFilter.mediaKind
+      ] = entry;
+      /* 대기 중이었다면 여기서 끝내고 결과(없으면 빈 안내)를 표시 */
+      stopMediaKindIndexWait();
+      applyMediaKindEntry(currentFilter, entry);
+      console.log("[MediaKind] refreshed after indexing", {
+        kind: currentFilter.mediaKind,
+        count: result.photos.length,
+      });
+    } catch (error) {
+      console.log("[MediaKind] refresh after indexing failed", error);
+    }
+  }, [
+    FILTER_RESET_TARGET_COUNT,
+    applyMediaKindEntry,
+    getMediaKindCacheEntries,
+    mediaKindCacheSignature,
+    stopMediaKindIndexWait,
+    tryLoadPhotosFromDbForDateTime,
+  ]);
+  useEffect(() => {
+    refreshMediaKindAfterIndexRef.current = () => {
+      void refreshMediaKindAfterIndex();
+    };
+  }, [refreshMediaKindAfterIndex]);
+
+  /* 2026.11.08 Photos/Screenshots 인덱싱 대기 — 2초마다 DB를 다시 확인해 결과가 생기면 바로 표시.
+     인덱싱이 끝났는데도 없으면 빈 안내(No photos found)를 띄우고 대기 종료 by yen */
+  useEffect(() => {
+    if (!mediaKindIndexWaiting) return;
+    const waitToken = mediaKindIndexWaitTokenRef.current;
+    let checking = false;
+    const check = async () => {
+      if (checking || requestInFlightRef.current) return;
+      if (waitToken !== mediaKindIndexWaitTokenRef.current) return;
+      const currentFilter = filterRef.current;
+      if (currentFilter.mediaKind === "all") {
+        stopMediaKindIndexWait();
+        return;
+      }
+      checking = true;
+      try {
+        const result = await tryLoadPhotosFromDbForDateTime(
+          currentFilter,
+          FILTER_RESET_TARGET_COUNT,
+          null,
+        );
+        if (waitToken !== mediaKindIndexWaitTokenRef.current) return;
+        if (filterRef.current !== currentFilter || requestInFlightRef.current) {
+          return;
+        }
+        if (!result.usedDb || (result.photos.length === 0 && !result.isIndexComplete)) {
+          return;
+        }
+        const entry: MediaKindCacheEntry = {
+          photos: result.photos,
+          after: result.nextAfter,
+          hasNextPage: result.dbHasMore || !result.isIndexComplete,
+          totalCount: result.totalCount > 0 ? result.totalCount : null,
+        };
+        if (result.isIndexComplete) {
+          getMediaKindCacheEntries(mediaKindCacheSignature(currentFilter))[
+            currentFilter.mediaKind
+          ] = entry;
+        }
+        stopMediaKindIndexWait();
+        /* 결과가 비어 있으면 applyMediaKindEntry가 빈 안내를 설정(C) */
+        applyMediaKindEntry(currentFilter, entry);
+        console.log("[MediaKind] ready after indexing wait", {
+          kind: currentFilter.mediaKind,
+          count: result.photos.length,
+          isIndexComplete: result.isIndexComplete,
+        });
+      } catch (error) {
+        console.log("[MediaKind] screenshots wait check failed", error);
+      } finally {
+        checking = false;
+      }
+    };
+    const timer = setInterval(() => {
+      void check();
+    }, MEDIA_KIND_INDEX_POLL_MS);
+    return () => clearInterval(timer);
+  }, [
+    FILTER_RESET_TARGET_COUNT,
+    applyMediaKindEntry,
+    getMediaKindCacheEntries,
+    mediaKindCacheSignature,
+    mediaKindIndexWaiting,
+    stopMediaKindIndexWait,
+    tryLoadPhotosFromDbForDateTime,
+  ]);
 
   /* 2026.11.04 현재 세그먼트가 표시된 뒤, 나머지 세그먼트의 첫 페이지를 조용히 미리 읽어 첫 전환도 즉시 되도록 함.
      다른 조회가 시작되거나 조건이 바뀌면 중단 by yen */
@@ -6620,17 +6552,29 @@ export default function HomeScreen() {
     ],
   );
 
+  /* 2026.11.11 바쁠 때(검색/다른 로드 진행 중) 들어온 추가 로드 요청을 기억했다가 끝나면 실행 by yen */
+  const pendingAutoAppendRef = useRef(false);
+
   const handleAutoLoadMoreOnScroll = useCallback(() => {
-    if (refreshing || filterLoading || appendLoading || initialLoading) return;
-    if (locationSearchWorkflowStatus === "preparing") return;
+    if (!hasNextPage) return;
+    /* 2026.11.11 이전엔 바쁜 상태에서 요청을 그냥 버렸고, 아래 '같은 길이' 기록이 먼저 남아
+       그 뒤의 탭/스크롤도 계속 무시되어 하단 버튼이 먹통이 됐음. 바쁘면 대기열에 넣고 기록하지 않음 by yen */
     if (
-      locationSearchWorkflowStatus === "ad-required" ||
-      locationSearchWorkflowStatus === "search-prompt"
+      refreshing ||
+      filterLoading ||
+      appendLoading ||
+      backgroundLoading ||
+      initialLoading ||
+      requestInFlightRef.current ||
+      /* search-prompt는 곧바로 preparing으로 넘어가는 일시 상태라 막지 않음(고착 시 먹통 방지) */
+      locationSearchWorkflowStatus === "preparing" ||
+      locationSearchWorkflowStatus === "ad-required"
     ) {
+      pendingAutoAppendRef.current = true;
       return;
     }
-    if (!hasNextPage) return;
 
+    pendingAutoAppendRef.current = false;
     const contentLength = photosAllRef.current.length;
     if (contentLength <= 0) return;
     if (lastAutoAppendContentLengthRef.current === contentLength) return;
@@ -6639,10 +6583,37 @@ export default function HomeScreen() {
     void loadMorePhotos({ mode: "append" });
   }, [
     appendLoading,
+    backgroundLoading,
     filterLoading,
     hasNextPage,
     initialLoading,
     loadMorePhotos,
+    locationSearchWorkflowStatus,
+    refreshing,
+  ]);
+
+  /* 2026.11.11 대기 중인 추가 로드는 바쁜 상태가 풀리면 실행 by yen */
+  useEffect(() => {
+    if (!pendingAutoAppendRef.current) return;
+    if (
+      refreshing ||
+      filterLoading ||
+      appendLoading ||
+      backgroundLoading ||
+      initialLoading ||
+      locationSearchWorkflowStatus === "preparing" ||
+      locationSearchWorkflowStatus === "ad-required"
+    ) {
+      return;
+    }
+    const timer = setTimeout(() => handleAutoLoadMoreOnScroll(), 0);
+    return () => clearTimeout(timer);
+  }, [
+    appendLoading,
+    backgroundLoading,
+    filterLoading,
+    handleAutoLoadMoreOnScroll,
+    initialLoading,
     locationSearchWorkflowStatus,
     refreshing,
   ]);
@@ -6653,6 +6624,8 @@ export default function HomeScreen() {
       offset: photoGridScrollOffsetRef.current + screenHeight * 0.72,
       animated: true,
     });
+    /* 2026.11.11 버튼은 사용자가 직접 누른 것이므로 '같은 길이' 기록과 관계없이 항상 다음 페이지를 시도 by yen */
+    lastAutoAppendContentLengthRef.current = -1;
     void handleAutoLoadMoreOnScroll();
   }, [handleAutoLoadMoreOnScroll, screenHeight]);
 
@@ -6930,16 +6903,19 @@ export default function HomeScreen() {
                   activeOpacity={0.9}
                 >
                   <ShowOnMap
-                    images={photosAll}
+                    /* 2026.11.11 그리드에 로드된 사진 대신 DB에서 조회한 현재 필터의 좌표 보유 사진 전체 by yen */
+                    images={mapPhotos}
                     /* 2026.06.23 [포인트2] 지도를 열기 전에 리워드 팝업(메인 화면 위)을 먼저 표시.
                        광고를 보면 지도 열기 진행, 닫으면 지도 미오픈(앱은 계속 정상 이용) — Modal 중첩 프리즈 방지 by yen */
                     onOpenRequest={async () => {
                       const granted = await requestRewardAccess("map");
                       if (!granted) return false;
+                      await loadMapPhotos();
                       return requestLocationFeatureOpen("map");
                     }}
                     openToken={mapOpenToken}
-                    preparingLocations={visibleLocationPreparing}
+                    /* 2026.11.11 마커는 DB 조회로 바로 준비되므로 사진별 보강 대기 문구를 띄우지 않음 by yen */
+                    preparingLocations={false}
                     preparingMessage="Preparing map markers. Please wait..."
                   />
                 </TouchableOpacity>
@@ -6994,7 +6970,20 @@ export default function HomeScreen() {
                   borderRadius: 10,
                 }}
                 ListEmptyComponent={
-                  !initialLoading &&
+                  /* 2026.11.08 인덱싱 중 Photos/Screenshots 대기 표시 — 빈 안내 대신 로딩 by yen */
+                  mediaKindIndexWaiting ? (
+                    <View style={styles.emptyWrap}>
+                      <ActivityIndicator />
+                      <Text style={styles.loadingSubText}>
+                        {filter.mediaKind === "photos"
+                          ? t("mediaKindFindingPhotos", "Finding photos...")
+                          : t(
+                              "mediaKindFindingScreenshots",
+                              "Finding screenshots...",
+                            )}
+                      </Text>
+                    </View>
+                  ) : !initialLoading &&
                   !filterLoading &&
                   !appendLoading &&
                   !isScanning &&
@@ -7017,7 +7006,8 @@ export default function HomeScreen() {
                   handleAutoLoadMoreOnScroll();
                 }}
                 ListFooterComponent={
-                  !initialLoading && !filterLoading ? (
+                  /* 2026.11.08 Photos/Screenshots 대기 중에는 '모두 로드됨' 문구를 숨김 by yen */
+                  !initialLoading && !filterLoading && !mediaKindIndexWaiting ? (
                     <View style={{ paddingVertical: 12, alignItems: "center" }}>
                       {appendLoading || backgroundLoading ? (
                         <View style={{ alignItems: "center", gap: 8 }}>

@@ -565,7 +565,12 @@ export default function MapView({
     let localFileUri = "";
     if (sourceUri.startsWith("file://")) {
       localFileUri = sourceUri;
-    } else if (sourceUri.startsWith("ph://")) {
+    } else if (
+      sourceUri.startsWith("ph://") ||
+      /* 2026.11.11 Android는 DB/네이티브 동기화 사진 주소가 content://라 썸네일이 항상 기본 점으로 표시됐음 —
+         assetId로 실제 파일 경로(file://)를 받아 같은 방식으로 썸네일 생성 by yen */
+      sourceUri.startsWith("content://")
+    ) {
       try {
         const assetId = img.assetId ?? getAssetIdFromPhUri(sourceUri);
         if (assetId) {
