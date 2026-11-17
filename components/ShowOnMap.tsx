@@ -1088,7 +1088,8 @@ export default function MapView({
                 ? item.takenAt
                 : null,
           }))
-          .filter((item) => item.sourceUri);
+          /* 2026.11.16 암시적 any 타입 오류 수정(동작 변경 없음) by yen */
+          .filter((item: { sourceUri: string }) => item.sourceUri);
         if (sourceUris.length === 0) return;
 
         setDetailItems(detailMeta);
@@ -1100,7 +1101,8 @@ export default function MapView({
         void (async () => {
           try {
             const resolved = await Promise.all(
-              sourceUris.map((uri) => resolveDetailUri(uri)),
+              /* 2026.11.16 암시적 any 타입 오류 수정(동작 변경 없음) by yen */
+              sourceUris.map((uri: string) => resolveDetailUri(uri)),
             );
             setDetailUris(resolved);
           } catch {

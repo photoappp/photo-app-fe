@@ -1,6 +1,6 @@
 import { Ionicons } from "@expo/vector-icons";
 import { LinearGradient } from "expo-linear-gradient";
-import { useMemo } from "react";
+import { useMemo, type ComponentType } from "react";
 import {
   StyleSheet,
   Text,
@@ -10,6 +10,11 @@ import {
 import ImageViewing from "react-native-image-viewing";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import IconPlay from "@/assets/icons/ic_play.svg";
+
+/* 2026.11.16 라이브러리의 React 타입 버전 차이로 JSX 컴포넌트 타입 오류(TS2786)가 나 타입만 맞춤(동작 변경 없음) by yen */
+const ImageViewingComponent = ImageViewing as unknown as ComponentType<
+  Parameters<typeof ImageViewing>[0]
+>;
 
 type Props = {
   visible: boolean;
@@ -131,7 +136,7 @@ export default function PhotoDetailViewer({
   );
 
   return (
-    <ImageViewing
+    <ImageViewingComponent
       images={images}
       imageIndex={imageIndex}
       visible={visible}
