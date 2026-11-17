@@ -1,19 +1,23 @@
 /* 2026.11.04 사진 영역과 날짜 필터 사이의 All | Photos | Screenshots 3분할 세그먼트 버튼 by yen */
+/* 2026.11.15 Photos | Screenshots | Others 다중 선택으로 변경 — 처음엔 모두 선택, 최소 1개는 선택 유지.
+   디자인(색/그라데이션)은 그대로 by yen */
 import { useI18n } from "@/components/context/useI18n";
-import type { MediaKind } from "@/lib/db/photoMetadataDb";
+import { ALL_MEDIA_KINDS, type MediaKind } from "@/lib/db/photoMetadataDb";
 import { LinearGradient } from "expo-linear-gradient";
 import { StyleSheet, Text, TouchableOpacity, View } from "react-native";
 
 type Props = {
-  value: MediaKind;
-  onChange: (value: MediaKind) => void;
+  /* 2026.11.15 선택된 종류 목록 by yen */
+  value: MediaKind[];
+  onChange: (value: MediaKind[]) => void;
   disabled?: boolean;
 };
 
 const OPTIONS = [
-  { value: "all", key: "mediaKindAll", fallback: "All" },
   { value: "photos", key: "mediaKindPhotos", fallback: "Photos" },
   { value: "screenshots", key: "mediaKindScreenshots", fallback: "Screenshots" },
+  /* 2026.11.15 Others 추가 by yen */
+  { value: "others", key: "mediaKindOthers", fallback: "Others" },
 ] as const;
 
 export default function MediaKindSegment({ value, onChange, disabled }: Props) {
@@ -22,7 +26,7 @@ export default function MediaKindSegment({ value, onChange, disabled }: Props) {
   return (
     <View style={styles.container}>
       {OPTIONS.map((option) => {
-        const selected = option.value === value;
+        const selected = value.includes(option.value);
         const label = (
           <Text
             style={[styles.label, selected && styles.labelSelected]}
@@ -40,7 +44,19 @@ export default function MediaKindSegment({ value, onChange, disabled }: Props) {
             style={styles.segment}
             activeOpacity={0.8}
             disabled={disabled}
-            onPress={() => onChange(option.value)}
+            onPress={() => {
+              /* 2026.11.15 토글 — 마지막 남은 선택은 해제하지 않음 by yen */
+              if (selected) {
+                if (value.length <= 1) return;
+                onChange(value.filter((kind) => kind !== option.value));
+              } else {
+                onChange(
+                  ALL_MEDIA_KINDS.filter(
+                    (kind) => kind === option.value || value.includes(kind),
+                  ),
+                );
+              }
+            }}
             accessibilityRole="button"
             accessibilityState={{ selected, disabled }}
           >

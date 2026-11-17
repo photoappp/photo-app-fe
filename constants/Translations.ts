@@ -12,6 +12,9 @@ export const TRANSLATIONS = {
 		/* 2026.11.08 인덱싱 중 Photos/Screenshots 대기 문구 by yen */
 		mediaKindFindingScreenshots: 'Finding screenshots...',
 		mediaKindFindingPhotos: 'Finding photos...',
+		/* 2026.11.15 Others(카메라 정보/위치 없는 이미지) 세그먼트 by yen */
+		mediaKindOthers: 'Others',
+		mediaKindFindingOthers: 'Finding other images...',
 		settings: 'Settings',
 		userData: 'User Data',
 		startDate: 'Start Date',
@@ -140,6 +143,9 @@ export const TRANSLATIONS = {
 		/* 2026.11.08 인덱싱 중 Photos/Screenshots 대기 문구 by yen */
 		mediaKindFindingScreenshots: '스크린샷을 찾는 중...',
 		mediaKindFindingPhotos: '사진을 찾는 중...',
+		/* 2026.11.15 Others(카메라 정보/위치 없는 이미지) 세그먼트 by yen */
+		mediaKindOthers: '기타',
+		mediaKindFindingOthers: '기타 이미지를 찾는 중...',
 		settings: '설정',
 		userData: '사용자 데이터',
 		startDate: '시작일',
@@ -235,6 +241,9 @@ export const TRANSLATIONS = {
 		/* 2026.11.08 인덱싱 중 Photos/Screenshots 대기 문구 by yen */
 		mediaKindFindingScreenshots: 'スクリーンショットを検索中...',
 		mediaKindFindingPhotos: '写真を検索中...',
+		/* 2026.11.15 Others(카메라 정보/위치 없는 이미지) 세그먼트 by yen */
+		mediaKindOthers: 'その他',
+		mediaKindFindingOthers: 'その他の画像を検索中...',
 		settings: '設定',
 		userData: 'ユーザーデータ',
 		startDate: '開始日',
@@ -328,6 +337,9 @@ export const TRANSLATIONS = {
 		/* 2026.11.08 인덱싱 중 Photos/Screenshots 대기 문구 by yen */
 		mediaKindFindingScreenshots: '正在尋找螢幕截圖...',
 		mediaKindFindingPhotos: '正在尋找照片...',
+		/* 2026.11.15 Others(카메라 정보/위치 없는 이미지) 세그먼트 by yen */
+		mediaKindOthers: '其他',
+		mediaKindFindingOthers: '正在尋找其他圖片...',
 		settings: '設定',
 		userData: '用戶資訊',
 		startDate: '開始日期',
@@ -421,6 +433,9 @@ export const TRANSLATIONS = {
 		/* 2026.11.08 인덱싱 중 Photos/Screenshots 대기 문구 by yen */
 		mediaKindFindingScreenshots: '正在查找截图...',
 		mediaKindFindingPhotos: '正在查找照片...',
+		/* 2026.11.15 Others(카메라 정보/위치 없는 이미지) 세그먼트 by yen */
+		mediaKindOthers: '其他',
+		mediaKindFindingOthers: '正在查找其他图片...',
 		settings: '设置',
 		userData: '用户数据',
 		startDate: '开始日期',
@@ -514,6 +529,9 @@ export const TRANSLATIONS = {
 		/* 2026.11.08 인덱싱 중 Photos/Screenshots 대기 문구 by yen */
 		mediaKindFindingScreenshots: 'Recherche des captures...',
 		mediaKindFindingPhotos: 'Recherche des photos...',
+		/* 2026.11.15 Others(카메라 정보/위치 없는 이미지) 세그먼트 by yen */
+		mediaKindOthers: 'Autres',
+		mediaKindFindingOthers: 'Recherche des autres images...',
 		settings: 'Settings',
 		userData: 'User Data',
 		startDate: 'Start Date',
@@ -607,6 +625,9 @@ export const TRANSLATIONS = {
 		/* 2026.11.08 인덱싱 중 Photos/Screenshots 대기 문구 by yen */
 		mediaKindFindingScreenshots: 'Buscando capturas...',
 		mediaKindFindingPhotos: 'Buscando fotos...',
+		/* 2026.11.15 Others(카메라 정보/위치 없는 이미지) 세그먼트 by yen */
+		mediaKindOthers: 'Otros',
+		mediaKindFindingOthers: 'Buscando otras imágenes...',
 		settings: 'Settings',
 		userData: 'Données utilisateur',
 		startDate: 'Date de début',
