@@ -82,6 +82,8 @@ export default function MediaKindSegment({ value, onChange, disabled }: Props) {
 const styles = StyleSheet.create({
   container: {
     flexDirection: "row",
+    /* 2026.11.16 다중 선택 시 버튼이 붙어 보이지 않도록 버튼 사이 간격 추가 by yen */
+    gap: 4,
     height: 48,
     padding: 4,
     marginBottom: 12,
