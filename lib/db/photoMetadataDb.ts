@@ -399,6 +399,12 @@ export const initPhotoMetadataDb = async () => {
         ON photo_metadata (is_deleted, country_code, taken_at DESC);
       CREATE INDEX IF NOT EXISTS idx_photo_metadata_place_backlog
         ON photo_metadata (is_deleted, country_code, latitude);
+      /* 2026.11.16 Others/Screenshots 단독 선택 조회용 인덱스 — 해당 사진만 최신순으로 바로 읽음.
+         (없으면 기간 내 전체 사진을 훑고 정렬해야 해서, 개수가 적은 Others일수록 느렸음) by yen */
+      CREATE INDEX IF NOT EXISTS idx_photo_metadata_kind_others
+        ON photo_metadata (is_deleted, is_screenshot, camera_exif, latitude, longitude, taken_at DESC, asset_id DESC);
+      CREATE INDEX IF NOT EXISTS idx_photo_metadata_kind_screenshots
+        ON photo_metadata (is_deleted, is_screenshot, taken_at DESC, asset_id DESC);
     `);
 
     await db.execAsync(`PRAGMA user_version = ${DB_SCHEMA_VERSION};`);
@@ -654,6 +660,16 @@ export const getPhotoMetadataCount = async () => {
     `SELECT COUNT(*) as count FROM photo_metadata WHERE is_deleted = 0`
   );
   return row?.count ?? 0;
+};
+
+/* 2026.11.16 사진 목록 조회 때 '사진이 하나라도 있는지'만 필요해 전체 COUNT 대신 1건 확인으로 대체 by yen */
+export const hasPhotoMetadata = async () => {
+  await initPhotoMetadataDb();
+  const db = await getDb();
+  const row = await db.getFirstAsync<{ found: number }>(
+    `SELECT 1 as found FROM photo_metadata WHERE is_deleted = 0 LIMIT 1`
+  );
+  return !!row;
 };
 
 /* 2026.04.22 All Dates 프리셋 시작일을 1970 고정값이 아닌 실제 보유 사진의 최저 촬영일로 계산하기 위해 최소 taken_at 조회 함수를 추가 by June */
@@ -1129,12 +1145,24 @@ const buildPlaceClause = (place?: PlaceFilter) => {
    판별이 끝난 사진(0)만 Photos로 표시. All에는 판별 여부와 관계없이 모두 포함 by yen */
 /* 2026.11.15 다중 선택 — 선택된 종류의 조건을 OR로 묶음. 셋 다 선택이면 조건 없음(전체).
    Others = 스크린샷 아님 + GPS 없음 확인(0/0) + 카메라 EXIF 없음 확인(0), 나머지 비스크린샷은 Photos by yen */
+/* 2026.11.16 인덱스(idx_photo_metadata_kind_others)를 탈 수 있도록 IS 대신 = 비교(값이 NULL이면 어차피 Others 아님) by yen */
 const OTHERS_SQL =
-  "(is_screenshot = 0 AND latitude IS 0 AND longitude IS 0 AND camera_exif IS 0)";
+  "(is_screenshot = 0 AND camera_exif = 0 AND latitude = 0 AND longitude = 0)";
 const MEDIA_KIND_SQL: Record<MediaKind, string> = {
   screenshots: "is_screenshot = 1",
   photos: `(is_screenshot = 0 AND NOT (latitude IS 0 AND longitude IS 0 AND camera_exif IS 0))`,
   others: OTHERS_SQL,
+};
+/* 2026.11.16 Others/Screenshots 단독 선택이면 전용 인덱스를 강제 — 통계(ANALYZE)가 없는 앱 DB에서는
+   SQLite가 다른 인덱스를 골라 기간 전체를 훑는 경우가 있었음. 이 두 선택은 위치 조건이 없으므로(위치 비활성)
+   항상 이 인덱스로 조회 가능 by yen */
+const buildMediaKindIndexHint = (mediaKinds?: readonly MediaKind[]) => {
+  if (!mediaKinds || mediaKinds.length !== 1) return "";
+  if (mediaKinds[0] === "others") return "INDEXED BY idx_photo_metadata_kind_others";
+  if (mediaKinds[0] === "screenshots") {
+    return "INDEXED BY idx_photo_metadata_kind_screenshots";
+  }
+  return "";
 };
 const buildMediaKindClause = (mediaKinds?: readonly MediaKind[]) => {
   if (isAllMediaKinds(mediaKinds)) return "";
@@ -1330,6 +1358,8 @@ export const queryPhotoMetadataByDateTime = async (params: {
            /* 2026.11.15 Others 판별용 by yen */
            camera_exif as cameraExif
     FROM photo_metadata
+    /* 2026.11.16 Others/Screenshots 단독 선택 시 전용 인덱스 by yen */
+    ${buildMediaKindIndexHint(params.mediaKinds)}
     WHERE is_deleted = 0
       /* 2026.04.22 날짜 검색 정확도 우선 정책으로 unknown timestamp row를 제외해 잘못된 연도 노출을 방지하기 위해 조건 수정 by June */
       AND taken_at IS NOT NULL
@@ -1655,6 +1685,8 @@ export const countPhotoMetadataByDateTime = async (params: {
     `
     SELECT COUNT(*) as count
     FROM photo_metadata
+    /* 2026.11.16 Others/Screenshots 단독 선택 시 전용 인덱스 by yen */
+    ${buildMediaKindIndexHint(params.mediaKinds)}
     WHERE is_deleted = 0
       AND taken_at IS NOT NULL
       AND taken_at >= ?

@@ -64,6 +64,8 @@ import {
   getDisplayUriCacheBySourceUris,
   getOldestPhotoTakenAt,
   getPhotoMetadataCount,
+  /* 2026.11.16 목록 조회 시 전체 COUNT 대신 존재 여부만 확인 by yen */
+  hasPhotoMetadata,
   getPhotoSyncState,
   getPhotosMissingCoords,
   initPhotoMetadataDb,
@@ -3422,8 +3424,14 @@ export default function HomeScreen() {
       /* 2026.10.19 장소 준비 여부로 기존 경로에 양보하던 가드 제거 — PicQly-T처럼 항상 DB가
          답한다(아직 보강되지 않은 사진은 country_code가 없으므로 자연스럽게 매칭되지 않음) by Claude */
 
-      const metadataCount = await getPhotoMetadataCount();
-      if (metadataCount <= 0) {
+      /* 2026.11.16 전체 사진 COUNT(매번 전체 스캔) 대신 존재 여부만 확인하고, 동기화 상태 조회와 동시에 실행 by yen */
+      const metaStartedAt = Date.now();
+      const [hasMetadata, syncState] = await Promise.all([
+        hasPhotoMetadata(),
+        getPhotoSyncState(),
+      ]);
+      const metaMs = Date.now() - metaStartedAt;
+      if (!hasMetadata) {
         /* 2026.04.22 DB 미적재 상태 분기를 계측해 초기 동기화 완료 전 fallback 비율을 확인하기 위해 추가 by June */
         recordPerfMetric(
           "home.db_datetime_query.ms",
@@ -3443,7 +3451,7 @@ export default function HomeScreen() {
         };
       }
       /* 2026.04.22 인덱싱 완료 여부를 함께 확인해 DB 단독 신뢰 여부를 결정하기 위해 동기화 상태 조회 추가 by June */
-      const syncState = await getPhotoSyncState();
+      /* 2026.11.16 동기화 상태는 위에서 함께 조회 by yen */
       const isIndexComplete = !syncState.hasNextPage;
       setDbIndexComplete(isIndexComplete);
       /* 2026.11.08 인덱싱 중 조회한 결과는 판별이 덜 된 상태 — 인덱싱 완료 후 새로 고침 대상으로 표시 by yen */
@@ -3478,7 +3486,9 @@ export default function HomeScreen() {
         };
       }
 
-      const totalCount = await countPhotoMetadataByDateTime({
+      /* 2026.11.16 전체 건수(COUNT)와 첫 페이지 조회를 순서대로 기다리지 않고 동시에 실행 by yen */
+      const queryStartedAt = Date.now();
+      const totalCountPromise = countPhotoMetadataByDateTime({
         dateStartMs: queryDateStartMs,
         dateEndNextMs: queryDateEndNextMs,
         timeStart: currentFilter.timeStart,
@@ -3488,18 +3498,7 @@ export default function HomeScreen() {
         mediaKinds: currentFilter.mediaKinds,
       });
 
-      console.log("[PhotoLoad] db query range", {
-        dateStart: new Date(queryDateStartMs).toISOString(),
-        dateEndNext: new Date(queryDateEndNextMs).toISOString(),
-        timeStart: currentFilter.timeStart,
-        timeEnd: currentFilter.timeEnd,
-        limit,
-        after: after ? after.takenAt : null,
-        isIndexComplete,
-        indexedCount: metadataCount,
-      });
-
-      const rows = await queryPhotoMetadataByDateTime({
+      const rowsPromise = queryPhotoMetadataByDateTime({
         dateStartMs: queryDateStartMs,
         dateEndNextMs: queryDateEndNextMs,
         timeStart: currentFilter.timeStart,
@@ -3512,6 +3511,25 @@ export default function HomeScreen() {
         /* 2026.11.04 사진/스크린샷 조건도 SQL로 by yen */
         mediaKinds: currentFilter.mediaKinds,
       });
+      const [totalCount, rows] = await Promise.all([
+        totalCountPromise,
+        rowsPromise,
+      ]);
+      const queryMs = Date.now() - queryStartedAt;
+
+      console.log("[PhotoLoad] db query range", {
+        dateStart: new Date(queryDateStartMs).toISOString(),
+        dateEndNext: new Date(queryDateEndNextMs).toISOString(),
+        timeStart: currentFilter.timeStart,
+        timeEnd: currentFilter.timeEnd,
+        limit,
+        after: after ? after.takenAt : null,
+        isIndexComplete,
+        /* 2026.11.16 단계별 소요 시간(상태 확인 / COUNT+페이지 조회) by yen */
+        metaMs,
+        queryMs,
+        kinds: currentFilter.mediaKinds.join("+"),
+      });
 
       /* 2026.04.22 limit+1 조회 결과에서 초과 1건 존재 여부를 hasMore로 변환해 스크롤 추가 로딩 가능 여부를 계산하기 위해 추가 by June */
       const dbHasMore = rows.length > limit;
@@ -3520,7 +3538,8 @@ export default function HomeScreen() {
 
       const dbMapped = dedupePhotosByUri(mapDbRowsToPhotos(trimmedRows));
       /* 2026.04.15 DB 조회 함수는 필터링/정렬만 담당하고 URI 정규화는 실제 노출 개수 확정 후 호출하도록 분리해 장기 범위 성능을 개선하기 위해 수정 by June */
-      await showLocationSearchPhaseText(locationSearchPhaseLabels.sort);
+      /* 2026.11.16 정렬은 수십 건이라 즉시 끝나므로 단계 문구 표시용 렌더 양보(await)를 생략 — 문구만 바로 갱신 by yen */
+      setLocationSearchPhaseText(locationSearchPhaseLabels.sort);
       const photosFromDb = sortPhotosForDisplay(dbMapped);
 
       /* 2026.04.22 인덱싱 미완료 상태에서 DB 결과가 비어 있으면 MediaLibrary fallback을 허용해 false-empty를 방지하기 위해 가드 추가 by June */
