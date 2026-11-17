@@ -888,6 +888,45 @@ export default function HomeScreen() {
       getDateRangeDayCountInclusive(currentFilter) > DEFAULT_LOCATION_RANGE_DAYS,
     [getDateRangeDayCountInclusive],
   );
+  /* 2026.11.16 아래 콜백들(커버리지 병합 등)이 선언 전에 참조해 타입 오류(TS2448)가 나던 두 함수를 앞으로 옮김(동작 변경 없음) by yen */
+  /** 사진 정렬 처리: 최신순 + timestamp 없는 사진 최하단 표출 */
+  /* 2026.04.15 정렬 함수 참조를 고정해 DB 조회 콜백이 렌더마다 재생성되지 않도록 하기 위해 useCallback 적용 by June */
+  const sortPhotosForDisplay = useCallback((items: Photo[]) => {
+    return [...items].sort((a, b) => {
+      const aHasTs =
+        typeof a.takenAt === "number" && Number.isFinite(a.takenAt);
+      const bHasTs =
+        typeof b.takenAt === "number" && Number.isFinite(b.takenAt);
+
+      if (aHasTs && bHasTs) {
+        /* 2026.05.28 기획상 최신 사진이 상단에 고정되어야 하므로 append 후에도 최신순 정렬을 유지하도록 수정 by June */
+        return (b.takenAt as number) - (a.takenAt as number);
+      }
+
+      if (aHasTs && !bHasTs) return -1;
+      if (!aHasTs && bHasTs) return 1;
+
+      return 0;
+    });
+  }, []);
+
+  /** 중복 제거 함수 - append 때 같은 사진이 두 번 붙는 것 방지 */
+  /* 2026.04.15 중복제거 함수 참조를 고정해 tryLoadPhotosFromDbForDateTime 재생성을 줄이고 초기 로드 루프를 방지하기 위해 useCallback 적용 by June */
+  const dedupePhotosByUri = useCallback((items: Photo[]) => {
+    const seen = new Set<string>();
+    const out: Photo[] = [];
+
+    for (const item of items) {
+      /* 2026.11.04 uri 대신 자산 id 기준으로 중복 제거 by yen */
+      const key = photoIdentityKey(item);
+      if (seen.has(key)) continue;
+      seen.add(key);
+      out.push(item);
+    }
+
+    return out;
+  }, []);
+
   const buildBaseDateTimeFilter = useCallback(
     (currentFilter: FilterState): FilterState => ({
       dateStart: new Date(currentFilter.dateStart),
@@ -2942,43 +2981,6 @@ export default function HomeScreen() {
     }
   }, [deriveVisiblePhotos]);
 
-  /** 사진 정렬 처리: 최신순 + timestamp 없는 사진 최하단 표출 */
-  /* 2026.04.15 정렬 함수 참조를 고정해 DB 조회 콜백이 렌더마다 재생성되지 않도록 하기 위해 useCallback 적용 by June */
-  const sortPhotosForDisplay = useCallback((items: Photo[]) => {
-    return [...items].sort((a, b) => {
-      const aHasTs =
-        typeof a.takenAt === "number" && Number.isFinite(a.takenAt);
-      const bHasTs =
-        typeof b.takenAt === "number" && Number.isFinite(b.takenAt);
-
-      if (aHasTs && bHasTs) {
-        /* 2026.05.28 기획상 최신 사진이 상단에 고정되어야 하므로 append 후에도 최신순 정렬을 유지하도록 수정 by June */
-        return (b.takenAt as number) - (a.takenAt as number);
-      }
-
-      if (aHasTs && !bHasTs) return -1;
-      if (!aHasTs && bHasTs) return 1;
-
-      return 0;
-    });
-  }, []);
-
-  /** 중복 제거 함수 - append 때 같은 사진이 두 번 붙는 것 방지 */
-  /* 2026.04.15 중복제거 함수 참조를 고정해 tryLoadPhotosFromDbForDateTime 재생성을 줄이고 초기 로드 루프를 방지하기 위해 useCallback 적용 by June */
-  const dedupePhotosByUri = useCallback((items: Photo[]) => {
-    const seen = new Set<string>();
-    const out: Photo[] = [];
-
-    for (const item of items) {
-      /* 2026.11.04 uri 대신 자산 id 기준으로 중복 제거 by yen */
-      const key = photoIdentityKey(item);
-      if (seen.has(key)) continue;
-      seen.add(key);
-      out.push(item);
-    }
-
-    return out;
-  }, []);
 
   /* 2026.04.15 iOS에서 ph:// URI를 file://(localUri)로 정규화해 RCTImageURLLoaders 충돌 에러를 회피하기 위해 추가 by June */
   const resolveDisplayUri = useCallback(async (uri: string) => {
@@ -6908,6 +6910,8 @@ export default function HomeScreen() {
     //   .replace("{minutes}", `${min}`)
     //   .replace("{seconds}", `${sec}`)
     //   .trim();
+    /* 2026.11.16 위 return이 주석 처리돼 undefined(void)를 반환해 <Text> 타입 오류 — 지금처럼 아무것도 표시하지 않도록 빈 문자열 반환(동작 동일) by yen */
+    return "";
   }, [
     effectiveLocationSearchEstimatedSeconds,
     locationSearchProgressPercent,
