@@ -1,3 +1,5 @@
+import type { MediaKind } from "@/lib/db/photoMetadataDb";
+
 export type Photo = {
   uri: string;
   assetId?: string;
@@ -10,6 +12,8 @@ export type Photo = {
   country?: string;
   /* 2026.11.04 사진/스크린샷 세그먼트 필터용 by yen */
   isScreenshot?: boolean;
+  /* 2026.11.15 Photos/Screenshots/Others 판별 결과(DB 경로에서 채움, 없으면 isScreenshot 기준) by yen */
+  mediaKind?: MediaKind;
   location?: {
     latitude: string | number;
     longitude: string | number;
