@@ -632,7 +632,7 @@ const styles = StyleSheet.create({
   // 2026-05-12: 푸터를 60px 위로 올리기 위해 marginBottom 추가 by yen
   footer: {
     flexDirection: "row",
-    justifyContent: "space-evenly",
+    justifyContent: "space-between",
     flexWrap: "nowrap",
     padding: 15,
     borderTopWidth: 1,
