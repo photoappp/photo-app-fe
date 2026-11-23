@@ -9,6 +9,7 @@
     "userInterfaceStyle": "automatic",
     "newArchEnabled": true,
     "plugins": [
+      "./plugins/withOptionalPortrait.cjs",
       "expo-router",
       "expo-dev-client",
       [
