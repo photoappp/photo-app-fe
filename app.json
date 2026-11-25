@@ -51,7 +51,7 @@
         "NSPhotoLibraryAddUsageDescription": "Allow photo-app-fe to save photos to your device.",
         "ITSAppUsesNonExemptEncryption": false
       },
-      "bundleIdentifier": "com.photoapp.fe",
+      "bundleIdentifier": "com.sunnyinnolab.phoview",
       "icon": "./assets/images/ios-icon.png"
     },
     "android": {
