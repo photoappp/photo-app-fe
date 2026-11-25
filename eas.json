@@ -7,15 +7,24 @@
     "development": {
       "environment": "development",
       "developmentClient": true,
-      "distribution": "internal"
+      "distribution": "internal",
+      "env": {
+        "EXPO_PUBLIC_USE_TEST_ADS": "true"
+      }
     },
     "preview": {
       "environment": "preview",
-      "distribution": "internal"
+      "distribution": "internal",
+      "env": {
+        "EXPO_PUBLIC_USE_TEST_ADS": "true"
+      }
     },
     "production": {
       "environment": "production",
       "autoIncrement": true,
+      "env": {
+        "EXPO_PUBLIC_USE_TEST_ADS": "true"
+      },
       "ios": {
         "credentialsSource": "local"
       }

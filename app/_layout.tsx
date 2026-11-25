@@ -5,7 +5,8 @@ import { StatusBar } from 'expo-status-bar';
 import { useEffect } from 'react';
 import { AppState, Platform } from 'react-native';
 import 'react-native-reanimated';
-import mobileAds from "react-native-google-mobile-ads";
+/* 2026.11.25 광고 SDK 초기화를 동의(UMP) 확인 후로 변경 by yen */
+import { initializeAdsWithConsent } from "@/lib/ads/adsConsent";
 
 import { LanguageProvider } from '@/components/context/LanguageContext';
 import { RewardGateProvider } from '@/components/context/RewardGateContext';
@@ -35,9 +36,8 @@ export default function RootLayout() {
   }, [loaded]);
 
   useEffect(() => {
-    void mobileAds().initialize().catch(() => {
-      // no-op
-    });
+    /* 2026.11.25 동의 확인(필요한 지역만 폼 표시) → 광고 요청 가능할 때만 SDK 초기화 by yen */
+    void initializeAdsWithConsent();
   }, []);
 
   useEffect(() => {
