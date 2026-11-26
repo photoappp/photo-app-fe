@@ -14,7 +14,6 @@ const USE_TEST_ADS =
 /* 2026.11.25 AdMob에서 발급받은 실제 광고 단위 ID를 여기에 입력(현재 미발급) by yen */
 const REAL_AD_UNIT_IDS = {
   banner: Platform.select({ android: "", ios: "" }) ?? "",
-  interstitial: Platform.select({ android: "", ios: "" }) ?? "",
   rewarded: Platform.select({ android: "", ios: "" }) ?? "",
 };
 
@@ -28,9 +27,5 @@ const pickAdUnitId = (testId: string, realId: string) =>
 
 export const AdUnitIds = {
   banner: pickAdUnitId(TestIds.BANNER, REAL_AD_UNIT_IDS.banner),
-  interstitial: pickAdUnitId(
-    TestIds.INTERSTITIAL,
-    REAL_AD_UNIT_IDS.interstitial,
-  ),
   rewarded: pickAdUnitId(TestIds.REWARDED, REAL_AD_UNIT_IDS.rewarded),
 };

@@ -42,5 +42,3 @@ type LibrarySyncModule = {
 
 export const librarySync =
   requireOptionalNativeModule<LibrarySyncModule>("PicQlyPhotoSync");
-
-export const hasNativeLibrarySync = () => !!librarySync;

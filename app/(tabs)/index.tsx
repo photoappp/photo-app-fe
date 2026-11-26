@@ -54,7 +54,6 @@ import * as amplitude from "@amplitude/analytics-react-native";
 import {
   countPhotoMetadataByDateTime,
   countPhotosMissingCoordsByDateTime,
-  countPhotosMissingPlace,
   getDistinctPlaces,
   hasPhotosWithoutLocation,
   getPhotosMissingPlace,
