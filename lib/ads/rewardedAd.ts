@@ -4,6 +4,8 @@ import {
   AdEventType,
 } from "react-native-google-mobile-ads";
 import { AdUnitIds } from "@/lib/ads/adUnitIds";
+/* 2026.11.25 동의(UMP) 확인 후에만 광고 로드 by yen */
+import { whenAdsReady } from "@/lib/ads/adsConsent";
 
 const rewarded = RewardedAd.createForAdRequest(AdUnitIds.rewarded, {
   requestNonPersonalizedAdsOnly: true,
@@ -13,16 +15,28 @@ let rewardedLoaded = false;
 /* 2026.11.04 로드 중복 호출 방지 — 사용자가 Watch Ad를 눌렀을 때 즉시 로드를 시작할 수 있도록 상태 추적 by yen */
 let rewardedLoading = false;
 
+/* 2026.11.25 광고 요청 불가(동의 거부 등)일 때 호출부(리워드 게이트)에 기존 실패 경로로 알리기 위한 콜백 by yen */
+let notifyLoadBlocked: ((message: string) => void) | null = null;
+
 /* 2026.11.04 이미 로드됐거나 로드 중이면 다시 요청하지 않음 by yen */
+/* 2026.11.25 동의 확인이 끝난 뒤에만 로드 — 광고 요청 불가면 로드하지 않고 오류로 알림 by yen */
 function requestLoad() {
   if (rewardedLoaded || rewardedLoading) return;
   rewardedLoading = true;
-  try {
-    rewarded.load();
-  } catch (error) {
-    rewardedLoading = false;
-    console.log("[RewardedAd] load call failed:", error);
-  }
+  void whenAdsReady().then((allowed) => {
+    if (!allowed) {
+      rewardedLoading = false;
+      console.log("[RewardedAd] ads not allowed (consent), skip load");
+      notifyLoadBlocked?.("ads not allowed (consent)");
+      return;
+    }
+    try {
+      rewarded.load();
+    } catch (error) {
+      rewardedLoading = false;
+      console.log("[RewardedAd] load call failed:", error);
+    }
+  });
 }
 let loadedUnsub: (() => void) | null = null;
 let earnedUnsub: (() => void) | null = null;
@@ -57,6 +71,8 @@ export function loadRewardedAd(handlers: RewardedAdHandlers | (() => void)) {
   openedUnsub?.();
 
   let earnedThisShow = false;
+  /* 2026.11.25 광고 요청 불가 시 기존 오류 콜백으로 전달 by yen */
+  notifyLoadBlocked = (message) => normalized.onError?.(message);
 
   loadedUnsub = rewarded.addAdEventListener(RewardedAdEventType.LOADED, () => {
     rewardedLoaded = true;
@@ -115,6 +131,7 @@ export function loadRewardedAd(handlers: RewardedAdHandlers | (() => void)) {
     closedUnsub = null;
     errorUnsub = null;
     openedUnsub = null;
+    notifyLoadBlocked = null;
   };
 }
 

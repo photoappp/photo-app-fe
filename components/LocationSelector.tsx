@@ -20,7 +20,8 @@ import { useI18n } from "@/components/context/useI18n";
 /* 2026.06.23 [포인트3] 메뉴 내부 버튼 게이트 팝업을 이 Modal 안에서 직접 렌더하기 위해 추가 by yen */
 import { useRewardGate } from "@/components/context/RewardGateContext";
 import RewardPopup from "@/components/RewardPopup";
-import { SUPPORTED_LANGUAGES, SupportedLanguage } from "@/constants/Translations";
+/* 2026.11.25 CSV 번역 제거로 SUPPORTED_LANGUAGES 미사용 — 타입만 사용 by yen */
+import type { SupportedLanguage } from "@/constants/Translations";
 /* 2026.04.22 위치 선택 번역 재구현을 위해 지원 언어 기반 로컬라이즈 라벨 타입을 명시적으로 정의 by June */
 type LocalizedLabel = {
   en: string;
@@ -109,78 +110,58 @@ const LocationSelector = forwardRef<LocationSelectorHandle, Props>(
       return left.every((item, index) => item === right[index]);
     }, []);
 
+    /* 2026.11.25 Google Sheets 국가명 번역 CSV 다운로드 제거 — 국가명은 이미 lib/geo/countryNames.ts가
+       앱 언어로 번역해 전달(availablePlaces/photos의 country)하므로 CSV 번역은 표시에 쓰이지 않았음.
+       목록 구성이 다운로드 완료(.then) 안에 있어 오프라인/다운로드 실패 시 위치 목록이 비었고,
+       장소 목록이 바뀔 때마다 시트를 다시 받았음. 이제 전달받은 장소로 바로 목록 구성 by yen */
     useEffect(() => {
-      // Fetch Translations from Google Sheets
-      fetch(
-        `https://docs.google.com/spreadsheets/d/e/2PACX-1vRUqmYxjUnGRx-JgOO8CP_gxaa2LNeX1c1grP2z3iVJExf3di7Rj1oWEIe5kTAsEaO2-B0dQM0KIefX/pub?gid=905203283&single=true&output=csv`,
-      )
-        .then((res) => res.text())
-        .then((csvText) => {
-          const rows = csvText.split("\n").map((row) => row.split(","));
-          const countryTranslationMap: Record<string, LocalizedLabel> = {};
-          const langCodes = rows[0];
-          const allCountriesSet = new Set<string>();
-          const allCitiesSet = new Set<string>();
-          const nextLocationMap: LocationMap = {};
+      const allCountriesSet = new Set<string>();
+      const allCitiesSet = new Set<string>();
+      const nextLocationMap: LocationMap = {};
 
-          rows.slice(1).forEach((row) => {
-            const enName = row[0];
-            countryTranslationMap[enName] = { en: enName };
+      /* 2026.10.19 목록 구성 소스: DB 전체 장소 목록(availablePlaces)이 있으면 그것을 쓰고,
+         없으면(인덱스/보강 전) 기존처럼 로드된 사진에서 구성 by Claude */
+      const placeEntries: { country: string; city: string | null }[] =
+        availablePlaces && availablePlaces.length > 0
+          ? availablePlaces
+          : photos.map(({ country, city, cityApprox }) => ({
+              country: country ?? "",
+              city: city ?? cityApprox ?? null,
+            }));
 
-            row.forEach((val, i) => {
-              const code = langCodes[i] as string;
-              if (val && SUPPORTED_LANGUAGES.includes(code as SupportedLanguage)) {
-                const normalizedCode = code as SupportedLanguage;
-                countryTranslationMap[enName][normalizedCode] = val;
-              }
-            });
-          });
+      placeEntries.forEach(({ country, city: cityLabel }) => {
+        if (!country) return;
 
-          /* 2026.10.19 목록 구성 소스: DB 전체 장소 목록(availablePlaces)이 있으면 그것을 쓰고,
-             없으면(인덱스/보강 전) 기존처럼 로드된 사진에서 구성 by Claude */
-          const placeEntries: { country: string; city: string | null }[] =
-            availablePlaces && availablePlaces.length > 0
-              ? availablePlaces
-              : photos.map(({ country, city, cityApprox }) => ({
-                  country: country ?? "",
-                  city: city ?? cityApprox ?? null,
-                }));
+        if (!nextLocationMap[country]) {
+          nextLocationMap[country] = {
+            country: { en: country },
+            cities: [],
+          };
+        }
 
-          placeEntries.forEach(({ country, city: cityLabel }) => {
-            if (!country) return;
+        allCountriesSet.add(country);
+        if (cityLabel) {
+          const exists = nextLocationMap[country].cities.some(
+            (c) => c.en === cityLabel,
+          );
+          allCitiesSet.add(cityLabel);
+          if (!exists) {
+            nextLocationMap[country].cities.push({ en: cityLabel });
+          }
+        }
+      });
 
-            if (!nextLocationMap[country]) {
-              nextLocationMap[country] = {
-                country: countryTranslationMap[country] ?? { en: country },
-                cities: [],
-              };
-            }
+      const nextCountries = Array.from(allCountriesSet).sort();
+      const nextCities = Array.from(allCitiesSet).sort();
 
-            allCountriesSet.add(country);
-            if (cityLabel) {
-              const exists = nextLocationMap[country].cities.some(
-                (c) => c.en === cityLabel,
-              );
-              allCitiesSet.add(cityLabel);
-              if (!exists) {
-                nextLocationMap[country].cities.push({ en: cityLabel });
-              }
-            }
-          });
-
-          const nextCountries = Array.from(allCountriesSet).sort();
-          const nextCities = Array.from(allCitiesSet).sort();
-
-          setLocationMap(nextLocationMap);
-          setAllCountries(nextCountries);
-          setAllCities(nextCities);
-          setSelectedCountries((prev) => prev.filter((item) => allCountriesSet.has(item)));
-          setSelectedCities((prev) => {
-            const filtered = prev.filter((item) => allCitiesSet.has(item));
-            return filtered.length > 0 ? filtered : [];
-          });
-        })
-        .catch(console.error);
+      setLocationMap(nextLocationMap);
+      setAllCountries(nextCountries);
+      setAllCities(nextCities);
+      setSelectedCountries((prev) => prev.filter((item) => allCountriesSet.has(item)));
+      setSelectedCities((prev) => {
+        const filtered = prev.filter((item) => allCitiesSet.has(item));
+        return filtered.length > 0 ? filtered : [];
+      });
     }, [photos, availablePlaces]);
 
     const getCitiesForCountry = useCallback(
