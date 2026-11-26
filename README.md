@@ -19,12 +19,20 @@ PicQly is an Expo SDK 54 and React Native app for searching the device photo lib
 ## Configuration
 
 - Android package ID is `com.photoapp.fe`. The iOS bundle ID is `com.sunnyinnolab.phoview`.
-- The development, preview, and production EAS profiles currently select Google test ad units. UMP is integrated at startup. The app currently includes banner and rewarded ad placements.
 - Country and city filter options are built from indexed places or available photos. They do not require a Google Sheets download. Map tiles use CARTO.
+
+## Advertising and Android QA
+
+Location, map, and extended photo search share a two-hour grant issued when the ads SDK confirms that the user earned the reward. UMP checks consent at startup. When Google requires a privacy-options entry, it is shown in Settings.
+
+- The `development`, `preview`, and `production` profiles use Google test ad units.
+- The `android-qa-apk` profile is for signed Android APKs with official test units and a separate, 60-second earned grant. It keeps the standard popup copy and uses normal UMP behavior. Building it requires access to the configured EAS project and its existing Android signing credentials. Check actual ad playback and reward expiry on the device.
+- The `store` profile requires live ads. Set the real AdMob app ID in `app.json` and match it in `ios/PicQly/Info.plist` for iOS. For Android, set `EXPO_PUBLIC_ADMOB_ANDROID_BANNER_ID` and `EXPO_PUBLIC_ADMOB_ANDROID_REWARDED_ID`. For iOS, set `EXPO_PUBLIC_ADMOB_IOS_BANNER_ID` and `EXPO_PUBLIC_ADMOB_IOS_REWARDED_ID`. The build preflight rejects missing or sample live values.
 
 ## Checks
 
-`npm run lint` runs the Expo ESLint checks. The repository does not currently register an `npm test` script or ship an automated test target.
+- `npm run lint` runs Expo ESLint.
+- `npm test` runs the Node.js advertising configuration tests. They check profile isolation, reward duration and storage, and live-ad preflight rejection. They do not exercise the native ad SDK or UMP.
 
 ## Project layout
 

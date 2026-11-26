@@ -27,13 +27,7 @@ export default function BottomBannerAd({
         width: "100%",
       }}
     >
-      <BannerAd
-        unitId={AdUnitIds.banner}
-        size={size}
-        requestOptions={{
-          requestNonPersonalizedAdsOnly: true,
-        }}
-      />
+      <BannerAd unitId={AdUnitIds.banner} size={size} />
     </View>
   );
 }

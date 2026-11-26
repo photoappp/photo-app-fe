@@ -1,4 +1,5 @@
-import { useMemo, useState } from "react";
+import { useCallback, useMemo, useState } from "react";
+import { useFocusEffect } from "@react-navigation/native";
 
 import {
   FlatList,
@@ -19,6 +20,8 @@ import { Edges, SafeAreaView } from "react-native-safe-area-context";
 
 import TextRow from "@/components/TextRow";
 import BottomBannerAd from "@/components/ads/BottomBannerAd";
+import { showAdPrivacyOptions, useAdsConsentState } from "@/lib/ads/adsConsent";
+import { retryRewardedAd } from "@/lib/ads/rewardedAd";
 
 // Context (state management)
 import { useLanguage } from "@/components/context/LanguageContext";
@@ -51,12 +54,16 @@ interface CreditsItem {
 // ===== Main Component =====
 
 export default function SimplifiedSettings() {
+  useFocusEffect(useCallback(() => {
+    void retryRewardedAd();
+  }, []));
   // ===== Context Hooks =====
   // 테마 상태 (다크모드 여부, 색상 테마)
   const { isDarkTheme, setIsDarkTheme, colors } = useTheme();
 
   // 언어 상태
   const { language, setLanguage } = useLanguage();
+  const consent = useAdsConsentState();
 
   // 슬라이드쇼 시간 설정
   const { slideshowTime, setSlideshowTime } = useSlideshowTime();
@@ -414,6 +421,19 @@ export default function SimplifiedSettings() {
             data={data}
             keyExtractor={(item) => item.id}
             renderItem={renderMainItem}
+            ListFooterComponent={consent.privacyOptionsRequired ? (
+              <TouchableOpacity
+                accessibilityRole="button"
+                disabled={consent.allowed === null}
+                accessibilityState={{ disabled: consent.allowed === null }}
+                onPress={() => { void showAdPrivacyOptions(); }}
+                style={styles.adPrivacyRow}
+              >
+                <Text style={{ color: colors.text, fontSize: 16 }} allowFontScaling={false}>
+                  {t.adPrivacyChoices}
+                </Text>
+              </TouchableOpacity>
+            ) : null}
             ItemSeparatorComponent={() => (
               <View
                 style={[
@@ -640,6 +660,12 @@ const styles = StyleSheet.create({
     alignItems: "center",
     backgroundColor: "#2c2c2e",
     marginBottom: 0,
+  },
+  adPrivacyRow: {
+    minHeight: 48,
+    justifyContent: "center",
+    paddingHorizontal: 16,
+    paddingVertical: 10,
   },
   settingsBannerWrap: {
     backgroundColor: "#fff",
