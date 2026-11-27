@@ -392,7 +392,7 @@
 				);
 				OTHER_SWIFT_FLAGS = "$(inherited) -D EXPO_CONFIGURATION_DEBUG";
 				PRODUCT_BUNDLE_IDENTIFIER = com.sunnyinnolab.phoview;
-				PRODUCT_NAME = PicQly;
+				PRODUCT_NAME = "PicQly";
 				PROVISIONING_PROFILE_SPECIFIER = "";
 				"PROVISIONING_PROFILE_SPECIFIER[sdk=iphoneos*]" = Phoview;
 				SWIFT_OBJC_BRIDGING_HEADER = "PicQly/PicQly-Bridging-Header.h";
@@ -430,7 +430,7 @@
 				);
 				OTHER_SWIFT_FLAGS = "$(inherited) -D EXPO_CONFIGURATION_RELEASE";
 				PRODUCT_BUNDLE_IDENTIFIER = com.sunnyinnolab.phoview;
-				PRODUCT_NAME = PicQly;
+				PRODUCT_NAME = "PicQly";
 				PROVISIONING_PROFILE_SPECIFIER = "";
 				"PROVISIONING_PROFILE_SPECIFIER[sdk=iphoneos*]" = Phoview;
 				SWIFT_OBJC_BRIDGING_HEADER = "PicQly/PicQly-Bridging-Header.h";
