@@ -1,61 +1,118 @@
-/* 2026.11.25 광고 요청 전 동의(UMP) 확인 — Google은 EEA/영국/스위스 사용자에게 광고 요청 전 동의 메시지를 요구.
-   앱 시작 시 한 번 동의를 받고(필요한 지역에서만 폼이 뜸) canRequestAds가 true일 때만 SDK 초기화/광고 로드.
-   동의 정보를 받을 수 없으면(AdMob 동의 메시지 미설정, 샘플 App ID, 네트워크 오류 등) 기존처럼 비개인화 광고를 허용(fail-safe).
-   동의 거부 등으로 광고를 못 띄울 때 리워드 게이트 동작은 별도 결정 예정 — 여기서는 광고 로드만 막음 by yen */
-import { useEffect, useState } from "react";
-import mobileAds, { AdsConsent } from "react-native-google-mobile-ads";
+import { useSyncExternalStore } from "react";
+import { Platform } from "react-native";
+import mobileAds, {
+  AdsConsent,
+  AdsConsentPrivacyOptionsRequirementStatus,
+  type AdsConsentInfo,
+} from "react-native-google-mobile-ads";
+import { hasAdUnitConfiguration } from "@/lib/ads/adUnitIds";
 
-let readyPromise: Promise<boolean> | null = null;
-/* null = 아직 확인 중 */
-let adsAllowed: boolean | null = null;
+type ConsentState = {
+  allowed: boolean | null;
+  privacyOptionsRequired: boolean;
+  privacyOptionsOpen: boolean;
+  initializationFailed: boolean;
+};
 
-export const initializeAdsWithConsent = (): Promise<boolean> => {
-  if (readyPromise) return readyPromise;
-  readyPromise = (async () => {
-    let allowed = true;
+let state: ConsentState = {
+  allowed: null,
+  privacyOptionsRequired: false,
+  privacyOptionsOpen: false,
+  initializationFailed: false,
+};
+let startup: Promise<boolean> | null = null;
+let initialized = false;
+let lastConsent: AdsConsentInfo | null = null;
+const listeners = new Set<() => void>();
+
+function publish(next: Partial<ConsentState>) {
+  state = { ...state, ...next };
+  listeners.forEach((listener) => listener());
+}
+
+export function subscribeToAdsConsent(listener: () => void) {
+  listeners.add(listener);
+  return () => { listeners.delete(listener); };
+}
+
+export const getAdsConsentState = () => state;
+
+async function readConsentInfo() {
+  try {
+    return await AdsConsent.getConsentInfo();
+  } catch (error) {
+    console.warn("[AdsConsent] status unavailable", error);
+    return null;
+  }
+}
+
+async function applyConsent(info: AdsConsentInfo | null) {
+  lastConsent = info;
+  let allowed = info?.canRequestAds === true && hasAdUnitConfiguration;
+  let initializationFailed = false;
+  if (allowed && !initialized) {
     try {
-      const info = await AdsConsent.gatherConsent();
-      allowed = info.canRequestAds;
-      console.log("[AdsConsent] gathered", {
-        status: info.status,
-        canRequestAds: info.canRequestAds,
-      });
+      await mobileAds().initialize();
+      initialized = true;
     } catch (error) {
-      /* 동의 정보를 받을 수 없음 — 기존 동작(비개인화 광고)을 유지 */
-      console.log(
-        "[AdsConsent] consent unavailable, keeping non-personalized ads:",
-        String(error),
-      );
-      allowed = true;
+      console.warn("[AdsConsent] initialization failed", error);
+      allowed = false;
+      initializationFailed = true;
     }
-    if (allowed) {
-      try {
-        await mobileAds().initialize();
-      } catch (error) {
-        console.log("[AdsConsent] mobile ads initialize failed:", String(error));
-      }
-    }
-    adsAllowed = allowed;
-    return allowed;
-  })();
-  return readyPromise;
-};
-
-/* 광고 로드 전에 호출 — 동의 확인이 끝날 때까지 기다린 뒤 광고 요청 가능 여부를 반환 */
-export const whenAdsReady = () => initializeAdsWithConsent();
-
-/* 컴포넌트용 — 확인 중이면 null, 끝나면 광고 요청 가능 여부 */
-export const useAdsAllowed = () => {
-  const [allowed, setAllowed] = useState<boolean | null>(adsAllowed);
-  useEffect(() => {
-    if (allowed !== null) return;
-    let mounted = true;
-    void whenAdsReady().then((value) => {
-      if (mounted) setAllowed(value);
-    });
-    return () => {
-      mounted = false;
-    };
-  }, [allowed]);
+  }
+  publish({
+    allowed,
+    initializationFailed,
+    privacyOptionsOpen: false,
+    privacyOptionsRequired: info?.privacyOptionsRequirementStatus ===
+      AdsConsentPrivacyOptionsRequirementStatus.REQUIRED,
+  });
   return allowed;
-};
+}
+
+export function initializeAdsWithConsent() {
+  startup ??= (async () => {
+    if (Platform.OS !== "android" && Platform.OS !== "ios") return applyConsent(null);
+    if (!hasAdUnitConfiguration) {
+      console.warn("[AdsConsent] live ad unit configuration is missing or invalid");
+    }
+    try {
+      return await applyConsent(await AdsConsent.gatherConsent());
+    } catch (error) {
+      console.warn("[AdsConsent] update failed", error);
+      return applyConsent(await readConsentInfo());
+    }
+  })();
+  return startup;
+}
+
+export async function whenAdsReady() {
+  await initializeAdsWithConsent();
+  return state.allowed === true && !state.privacyOptionsOpen;
+}
+
+export async function retryAdsInitialization() {
+  if (!state.initializationFailed || state.privacyOptionsOpen) return false;
+  publish({ allowed: null, initializationFailed: false });
+  return applyConsent(lastConsent);
+}
+
+export async function showAdPrivacyOptions() {
+  if (!state.privacyOptionsRequired || state.privacyOptionsOpen ||
+      state.allowed === null) return;
+  publish({ allowed: null, privacyOptionsOpen: true });
+  try {
+    await AdsConsent.showPrivacyOptionsForm();
+  } catch (error) {
+    console.warn("[AdsConsent] privacy options form failed", error);
+  }
+  await applyConsent(await readConsentInfo());
+}
+
+export function useAdsConsentState() {
+  return useSyncExternalStore(subscribeToAdsConsent, getAdsConsentState, getAdsConsentState);
+}
+
+export function useAdsAllowed() {
+  return useAdsConsentState().allowed;
+}

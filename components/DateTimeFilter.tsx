@@ -9,6 +9,7 @@ import {
   useState,
 } from "react";
 import {
+  AppState,
   Modal,
   Platform,
   Pressable,
@@ -190,6 +191,7 @@ type DateTimeFilterProps = {
   }) => void;
   /* 2026.06.23 [포인트3] 위치 메뉴 내부 버튼용 리워드 게이트 콜백을 LocationSelector로 전달 by yen */
   onLocationGate?: () => Promise<boolean>;
+  locationUnlockedUntil: number;
 };
 
 type TimePreset = {
@@ -306,6 +308,7 @@ export default function DateTimeFilter({
   locationDisabled = false,
   onLocationChange,
   onLocationGate,
+  locationUnlockedUntil,
 }: DateTimeFilterProps) {
   // ---- 필터 상태 ----
   const [dateStart, setDateStart] = useState(recent31DaysStart);
@@ -504,9 +507,27 @@ export default function DateTimeFilter({
   };
 
   useEffect(() => {
-    if (!locationOpenToken) return;
+    if (!locationOpenToken || locationUnlockedUntil <= Date.now()) return;
     performOpenLocationSheet();
+    // Only a new deferred-open token should open the sheet.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [locationOpenToken]);
+
+  useEffect(() => {
+    if (!locationModalVisible) return;
+    const closeIfExpired = () => {
+      if (locationUnlockedUntil <= Date.now()) setLocationModalVisible(false);
+    };
+    closeIfExpired();
+    const timer = setTimeout(closeIfExpired, Math.max(0, locationUnlockedUntil - Date.now()));
+    const subscription = AppState.addEventListener("change", (state) => {
+      if (state === "active") closeIfExpired();
+    });
+    return () => {
+      clearTimeout(timer);
+      subscription.remove();
+    };
+  }, [locationModalVisible, locationUnlockedUntil]);
 
   /* 2026.10.19 값이 바뀌면 디바운스 후 자동으로 onChange를 쏘던 effect를 제거했다 —
      시트를 닫는 것만으로 검색이 돌던 동작의 원인이었다. 지금은 Search 버튼과

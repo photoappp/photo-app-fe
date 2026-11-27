@@ -3,15 +3,20 @@
    - 게이트 로직은 RewardGateContext가 담당하고, 이 컴포넌트는 표시만 담당해 재사용 가능하게 분리 */
 import { Ionicons } from "@expo/vector-icons";
 import { LinearGradient } from "expo-linear-gradient";
+import { useEffect } from "react";
 import {
   ActivityIndicator,
+  BackHandler,
   Modal,
+  ScrollView,
   StyleSheet,
   Text,
   TouchableOpacity,
   View,
 } from "react-native";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useI18n } from "@/components/context/useI18n";
+import type { RewardedAdStatus } from "@/lib/ads/rewardedAd";
 
 type RewardBenefit = {
   icon: keyof typeof Ionicons.glyphMap;
@@ -48,6 +53,9 @@ type Props = {
   onClose: () => void;
   /* 2026.06.23 다른 Modal(지도/장소 메뉴) 위에 띄울 때는 Modal 중첩 대신 절대위치 오버레이로 렌더해 iOS 프리즈를 방지 by yen */
   asOverlay?: boolean;
+  locationStatus?: RewardedAdStatus;
+  adStatus?: RewardedAdStatus;
+  onRetry?: () => void;
 };
 
 export default function RewardPopup({
@@ -56,12 +64,31 @@ export default function RewardPopup({
   onWatchAd,
   onClose,
   asOverlay = false,
+  locationStatus,
+  adStatus,
+  onRetry,
 }: Props) {
-  const { t } = useI18n();
+  const { language, t } = useI18n();
+  const insets = useSafeAreaInsets();
+  const isLocation = locationStatus !== undefined;
+  const status = locationStatus ?? adStatus;
+  const watchDisabled = loading || (status !== undefined && status !== "ready");
+  const locationStatusText = locationStatus === "preparing"
+    ? t("locationRewardPreparing")
+    : locationStatus === "unavailable" || locationStatus === "retryable"
+      ? t("locationRewardUnavailable") : "";
 
-  const content = (
-    <View style={styles.backdrop}>
-      <View style={styles.card}>
+  useEffect(() => {
+    if (!visible || !asOverlay) return;
+    const subscription = BackHandler.addEventListener("hardwareBackPress", () => {
+      onClose();
+      return true;
+    });
+    return () => subscription.remove();
+  }, [asOverlay, onClose, visible]);
+
+  const cardContent = (
+    <>
           {/* 상단 그라데이션 헤더 */}
           <LinearGradient
             colors={["#2B7FFF", "#AD46FF"]}
@@ -82,8 +109,8 @@ export default function RewardPopup({
               <Ionicons name="gift" size={36} color="#FFFFFF" />
             </View>
 
-            <Text style={styles.title}>
-              {t(
+            <Text style={styles.title} allowFontScaling={isLocation ? false : undefined}>
+              {isLocation ? t("locationRewardTitle") : t(
                 "rewardPopupTitle",
                 "Watch an ad to unlock all features for 2 hours.",
               )}
@@ -92,7 +119,11 @@ export default function RewardPopup({
 
           {/* 혜택 목록 + Watch Ad 버튼 */}
           <View style={styles.body}>
-            {BENEFITS.map((benefit) => (
+            {isLocation ? (
+              <Text style={styles.locationDescription} allowFontScaling={false}>
+                {t("locationRewardDescription")}
+              </Text>
+            ) : BENEFITS.map((benefit) => (
               <View key={benefit.labelKey} style={styles.benefitRow}>
                 <View
                   style={[styles.benefitIcon, { backgroundColor: benefit.color }]}
@@ -104,12 +135,25 @@ export default function RewardPopup({
                 </Text>
               </View>
             ))}
+            {status !== undefined && (
+              <View style={styles.locationStatus}>
+                {locationStatusText ? (
+                  <Text accessibilityLiveRegion="polite" style={styles.locationStatusText} allowFontScaling={false}>
+                    {locationStatusText}
+                  </Text>
+                ) : status === "preparing" ? (
+                  <ActivityIndicator color="#57615C" />
+                ) : null}
+              </View>
+            )}
 
             <TouchableOpacity
               activeOpacity={0.9}
               onPress={onWatchAd}
-              disabled={loading}
-              style={styles.watchButtonWrap}
+              disabled={watchDisabled}
+              accessibilityRole="button"
+              accessibilityState={{ disabled: watchDisabled }}
+              style={[styles.watchButtonWrap, watchDisabled && styles.disabledWatchButton]}
             >
               <LinearGradient
                 colors={["#2B7FFF", "#AD46FF"]}
@@ -122,14 +166,44 @@ export default function RewardPopup({
                 ) : (
                   <>
                     <Ionicons name="play" size={18} color="#FFFFFF" />
-                    <Text style={styles.watchButtonText}>
-                      {t("watchAd", "Watch Ad")}
+                    <Text style={styles.watchButtonText} allowFontScaling={isLocation ? false : undefined}>
+                      {isLocation && language === "ko" ? "광고 보기" : t("watchAd", "Watch Ad")}
                     </Text>
                   </>
                 )}
               </LinearGradient>
             </TouchableOpacity>
+            {onRetry && (
+              <View style={styles.retrySlot}>
+                {status === "retryable" && !loading && (
+                  <TouchableOpacity
+                    accessibilityRole="button"
+                    onPress={onRetry}
+                    style={styles.retryButton}
+                  >
+                    <Text style={styles.retryText} allowFontScaling={false}>
+                      {t("rewardAdRetry")}
+                    </Text>
+                  </TouchableOpacity>
+                )}
+              </View>
+            )}
           </View>
+    </>
+  );
+
+  const content = (
+    <View style={[
+      styles.backdrop,
+      status !== undefined && {
+        paddingTop: insets.top + 12,
+        paddingBottom: insets.bottom + 12,
+        paddingLeft: insets.left + 24,
+        paddingRight: insets.right + 24,
+      },
+    ]} collapsable={false}>
+      <View style={[styles.card, status !== undefined && styles.locationCard]} accessibilityViewIsModal={asOverlay}>
+        {status !== undefined ? <ScrollView bounces={false}>{cardContent}</ScrollView> : cardContent}
       </View>
     </View>
   );
@@ -177,6 +251,44 @@ const styles = StyleSheet.create({
     borderRadius: 28,
     overflow: "hidden",
     backgroundColor: "#FFFFFF",
+  },
+  locationCard: {
+    flexShrink: 1,
+  },
+  locationDescription: {
+    color: "#1F2937",
+    fontSize: 16,
+    lineHeight: 23,
+    textAlign: "center",
+  },
+  locationStatus: {
+    minHeight: 66,
+    justifyContent: "center",
+    paddingVertical: 6,
+  },
+  locationStatusText: {
+    color: "#57615C",
+    fontSize: 14,
+    lineHeight: 19,
+    textAlign: "center",
+  },
+  disabledWatchButton: {
+    opacity: 0.55,
+  },
+  retrySlot: {
+    minHeight: 44,
+  },
+  retryButton: {
+    minHeight: 44,
+    justifyContent: "center",
+    alignItems: "center",
+    paddingHorizontal: 12,
+  },
+  retryText: {
+    color: "#245DC1",
+    fontSize: 16,
+    fontWeight: "700",
+    textAlign: "center",
   },
   header: {
     paddingTop: 28,

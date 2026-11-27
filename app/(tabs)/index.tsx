@@ -54,7 +54,6 @@ import * as amplitude from "@amplitude/analytics-react-native";
 import {
   countPhotoMetadataByDateTime,
   countPhotosMissingCoordsByDateTime,
-  countPhotosMissingPlace,
   getDistinctPlaces,
   hasPhotosWithoutLocation,
   getPhotosMissingPlace,
@@ -213,8 +212,6 @@ const DISPLAY_URI_CACHE_MAX = 300;
 const THUMBNAIL_BLOCKING_TARGET_COUNT = 20;
 const SLIDESHOW_PREP_TIMEOUT_MS = 1200;
 const DEFAULT_LOCATION_RANGE_DAYS = 31;
-const LOCATION_FEATURE_UNLOCK_STORAGE_KEY = "locationFeatureUnlockedUntil";
-const LOCATION_FEATURE_UNLOCK_MS = 2 * 60 * 60 * 1000;
 const INCREMENTAL_DATE_RELOAD_MAX_SHIFT_DAYS = 1;
 const INCREMENTAL_DATE_RELOAD_MAX_BASE_SIZE = 600;
 /* 2026.05.28 DB 인덱스가 아직 과거 날짜까지 도달하지 않은 경우 false-empty를 막기 위해 날짜 범위 도달까지 MediaLibrary를 제한 스캔하는 상한 by June */
@@ -804,6 +801,7 @@ export default function HomeScreen() {
   /* 2026.06.23 해금 상태를 공용 리워드 게이트로 통합 — 광고 시청 시 모든 기능이 2시간 해금되고 위치 검색 게이트도 같은 해금을 공유 by yen */
   const {
     unlockedUntil: locationFeatureUnlockedUntil,
+    locationUnlockedUntil: earnedLocationUnlockedUntil,
     isUnlocked: isLocationFeatureUnlockActive,
     requestAccess: requestRewardAccess,
   } = useRewardGate();
@@ -7295,15 +7293,17 @@ export default function HomeScreen() {
               /* 2026.04.22 DateTimeFilter의 All Dates 프리셋이 DB 최소 날짜를 사용하도록 resolver prop을 연결하기 위해 추가 by June */
               resolveOldestPhotoDate={resolveOldestPhotoDate}
               onLocationChange={handleLocationChange}
-              /* 2026.06.23 [포인트3] 위치 메뉴 내부 버튼 클릭 시 공용 리워드 팝업 게이트 by yen */
-              onLocationGate={() => requestRewardAccess("placeSearch")}
+              /* Keep an open location sheet from applying changes after expiry. */
+              onLocationGate={async () => earnedLocationUnlockedUntil > Date.now()}
               locationPreparing={isLocationListPreparing}
               locationPreparingMessage={locationPreparingMessage}
               geocodePendingCount={geocodeQueuePending}
               availablePlaces={dbPlaceOptions}
-              onOpenLocationRequest={() =>
+              onOpenLocationRequest={async () =>
+                (await requestRewardAccess("location")) &&
                 requestLocationFeatureOpen("location-filter")
               }
+              locationUnlockedUntil={earnedLocationUnlockedUntil}
               locationOpenToken={locationFilterOpenToken}
               interactionBlocked={isMainInteractionBlocked}
               interactionBlockedReason={mainInteractionBlockReason}

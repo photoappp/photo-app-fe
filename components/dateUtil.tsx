@@ -27,19 +27,9 @@ import {
     return setDate(moved, Math.min(originalDay, daysInTargetMonth));
   }
   
-  /**
-   * 미래 날짜 미노출
-   */
-  export function assertNotFuture(date: Date, now = new Date()) {
-    if (isAfter(startOfDay(date), startOfDay(now))) {
-      throw new Error("Future dates are not allowed");
-    }
-  }
-
   // 미래 날짜면 오늘로 이동처리
   export function clampToToday(d: Date, now = new Date()): Date {
     const dd = startOfDay(d);
     const nn = startOfDay(now);
     return isAfter(dd, nn) ? nn : dd;
   }
-  
