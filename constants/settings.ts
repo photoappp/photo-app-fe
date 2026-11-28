@@ -1,9 +1,14 @@
+/* 2026.11.27 설정의 앱 버전/빌드 번호를 설치된 앱에서 직접 읽도록 변경 — 기존에는 deprecated된
+   Constants.nativeBuildVersion이 비어 app.json의 ios.buildNumber("1")가 표시되어 실제 빌드(24 등)와 달랐음.
+   expo-application은 Android versionCode / iOS CFBundleVersion을 그대로 반환 by yen */
 import Constants from "expo-constants";
+import * as Application from "expo-application";
 
-const appVersion = Constants.expoConfig?.version ?? "1.0.0";
-const buildVersion =
-  Constants.nativeBuildVersion ??
-  Constants.expoConfig?.ios?.buildNumber;
+const appVersion =
+  Application.nativeApplicationVersion ??
+  Constants.expoConfig?.version ??
+  "1.0.0";
+const buildVersion = Application.nativeBuildVersion;
 const appVersionLabel = buildVersion
   ? `${appVersion} (${buildVersion})`
   : appVersion;

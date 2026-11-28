@@ -11,11 +11,12 @@ import {
   Modal,
   Pressable,
   StyleSheet,
-  Text,
   TouchableOpacity,
   View,
   useWindowDimensions,
 } from "react-native";
+/* 2026.11.27 시스템 글꼴 크기 영향 차단(allowFontScaling 기본 false) by yen */
+import { Text } from "@/components/FixedText";
 import { useI18n } from "@/components/context/useI18n";
 /* 2026.06.23 [포인트3] 메뉴 내부 버튼 게이트 팝업을 이 Modal 안에서 직접 렌더하기 위해 추가 by yen */
 import { useRewardGate } from "@/components/context/RewardGateContext";

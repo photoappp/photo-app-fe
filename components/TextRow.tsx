@@ -1,4 +1,6 @@
-import { Text, View, StyleSheet } from 'react-native';
+import { View, StyleSheet } from 'react-native';
+/* 2026.11.27 시스템 글꼴 크기 영향 차단(allowFontScaling 기본 false) by yen */
+import { Text } from "@/components/FixedText";
 import { useTheme } from '@/components/context/ThemeContext';
 
 interface TextRowProps {

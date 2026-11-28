@@ -31,13 +31,15 @@ import {
   PermissionsAndroid,
   Platform,
   StyleSheet,
-  Text,
   TouchableOpacity,
   useColorScheme,
   View,
 } from "react-native";
+/* 2026.11.27 시스템 글꼴 크기 영향 차단(allowFontScaling 기본 false) by yen */
+import { Text } from "@/components/FixedText";
 import { Edges, SafeAreaView } from "react-native-safe-area-context";
-import Share from "react-native-share";
+/* 2026.11.27 사진 공유는 공용 함수(캐시 복사 후 공유)로 처리 by yen */
+import { sharePhoto } from "@/lib/share/sharePhoto";
 
 import { useRewardGate } from "@/components/context/RewardGateContext";
 import { useSlideshowTime } from "@/components/context/SlideshowTimeContext";
@@ -6058,13 +6060,12 @@ export default function HomeScreen() {
       const message = viewerLocationText
         ? `${messagePrefix} ${viewerLocationText}`
         : messagePrefix;
-      await Share.open({
+      /* 2026.11.27 Android의 file:// 접두 오류(content:// 주소에 덧붙여 항상 실패)와 iOS의 ph:// 링크 공유를 고치기 위해
+         실제 파일을 캐시에 복사해 공유하는 공용 함수 사용 by yen */
+      await sharePhoto({
+        uri: currentViewerPhoto.uri,
+        assetId: currentViewerPhoto.assetId,
         message,
-        url:
-          Platform.OS === "android"
-            ? `file://${currentViewerPhoto.uri}`
-            : currentViewerPhoto.uri,
-        type: "image/jpeg",
       });
     } catch (err: unknown) {
       const errMessage = err instanceof Error ? err.message : "";
@@ -6075,7 +6076,7 @@ export default function HomeScreen() {
         );
       }
     }
-  }, [currentViewerPhoto?.uri, t, viewerLocationText]);
+  }, [currentViewerPhoto?.assetId, currentViewerPhoto?.uri, t, viewerLocationText]);
 
   const handleViewerDelete = useCallback(() => {
     Alert.alert(

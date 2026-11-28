@@ -4,7 +4,9 @@
 import { useI18n } from "@/components/context/useI18n";
 import { ALL_MEDIA_KINDS, type MediaKind } from "@/lib/db/photoMetadataDb";
 import { LinearGradient } from "expo-linear-gradient";
-import { StyleSheet, Text, TouchableOpacity, View } from "react-native";
+import { StyleSheet, TouchableOpacity, View } from "react-native";
+/* 2026.11.27 시스템 글꼴 크기 영향 차단(allowFontScaling 기본 false) by yen */
+import { Text } from "@/components/FixedText";
 
 type Props = {
   /* 2026.11.15 선택된 종류 목록 by yen */

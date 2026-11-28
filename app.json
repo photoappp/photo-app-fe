@@ -10,6 +10,7 @@
     "newArchEnabled": true,
     "plugins": [
       "./plugins/withOptionalPortrait.cjs",
+      "./plugins/withFixedFontScale.cjs",
       "expo-router",
       "expo-dev-client",
       [
@@ -46,7 +47,6 @@
     ],
     "ios": {
       "supportsTablet": true,
-      "buildNumber": "1",
       "infoPlist": {
         "NSPhotoLibraryUsageDescription": "Allow photo-app-fe to access your photos.",
         "NSPhotoLibraryAddUsageDescription": "Allow photo-app-fe to save photos to your device.",

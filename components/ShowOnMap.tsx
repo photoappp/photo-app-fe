@@ -12,17 +12,19 @@ import {
   Alert,
   Dimensions,
   Modal,
-  Platform,
+  /* 2026.11.27 공유 처리를 공용 함수로 옮겨 Platform 미사용 — import 제거 by yen */
   StyleSheet,
-  Text,
   TouchableOpacity,
   View,
 } from "react-native";
+/* 2026.11.27 시스템 글꼴 크기 영향 차단(allowFontScaling 기본 false) by yen */
+import { Text } from "@/components/FixedText";
 import { WebView, type WebViewMessageEvent } from "react-native-webview";
 import * as MediaLibrary from "expo-media-library";
 /* 2026.05.26 마커 썸네일을 WebView에 임베드하기 위해 사진을 작은 크기로 리사이즈 + base64 인코딩하는 모듈 by yen */
 import { manipulateAsync, SaveFormat } from "expo-image-manipulator";
-import Share from "react-native-share";
+/* 2026.11.27 사진 공유는 공용 함수(캐시 복사 후 공유)로 처리 by yen */
+import { sharePhoto } from "@/lib/share/sharePhoto";
 import type { WebView as WebViewType } from "react-native-webview";
 
 /* 2026.10.25 키가 비어 있으면 지도 전체가 'API KEY REQUIRED' 타일로 덮이는데 원인이 보이지 않아
@@ -1130,13 +1132,14 @@ export default function MapView({
   };
 
   const onPressShare = async () => {
-    const uri = detailUris[detailIndex] ?? "";
+    /* 2026.11.27 원본 사진 주소(ph:// / content://)로 공용 공유 함수 호출 — Android의 file:// 접두 오류 수정,
+       캐시 복사본을 공유해 두 플랫폼 동일하게 동작 by yen */
+    const uri = detailItems[detailIndex]?.sourceUri || detailUris[detailIndex] || "";
     if (!uri) return;
     try {
-      await Share.open({
+      await sharePhoto({
+        uri,
         message: "Check out this photo!",
-        url: Platform.OS === "android" ? `file://${uri}` : uri,
-        type: "image/jpeg",
       });
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : "";
@@ -1307,7 +1310,9 @@ export default function MapView({
             primaryButtonMode={slideshowOn ? "pause" : "play"}
             onPressPrimary={slideshowOn ? pauseDetailSlideshow : startDetailSlideshow}
             showCloseButton={!slideshowOn}
-            backgroundColor="transparent"
+            /* 2026.11.27 홈 사진 보기와 같은 배경색(기본값 rgba(0,0,0,0.98))으로 변경 — 투명이라 뒤의 지도가 비쳐 보였음.
+               overFullScreen은 유지해 닫을 때 지도가 다시 로드되지 않도록 함 by yen */
+            backgroundColor="rgba(0,0,0,0.98)"
             animationType="fade"
             presentationStyle="overFullScreen"
             dateText={fmtDateTime(detailItems[detailIndex]?.takenAt ?? null)}
