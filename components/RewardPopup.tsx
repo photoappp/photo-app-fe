@@ -10,10 +10,11 @@ import {
   Modal,
   ScrollView,
   StyleSheet,
-  Text,
   TouchableOpacity,
   View,
 } from "react-native";
+/* 2026.11.27 시스템 글꼴 크기 영향 차단(allowFontScaling 기본 false) by yen */
+import { Text } from "@/components/FixedText";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useI18n } from "@/components/context/useI18n";
 import type { RewardedAdStatus } from "@/lib/ads/rewardedAd";

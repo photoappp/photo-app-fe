@@ -31,11 +31,12 @@ import {
   PermissionsAndroid,
   Platform,
   StyleSheet,
-  Text,
   TouchableOpacity,
   useColorScheme,
   View,
 } from "react-native";
+/* 2026.11.27 시스템 글꼴 크기 영향 차단(allowFontScaling 기본 false) by yen */
+import { Text } from "@/components/FixedText";
 import { Edges, SafeAreaView } from "react-native-safe-area-context";
 /* 2026.11.27 사진 공유는 공용 함수(캐시 복사 후 공유)로 처리 by yen */
 import { sharePhoto } from "@/lib/share/sharePhoto";

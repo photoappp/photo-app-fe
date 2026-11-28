@@ -14,10 +14,11 @@ import {
   Modal,
   /* 2026.11.27 공유 처리를 공용 함수로 옮겨 Platform 미사용 — import 제거 by yen */
   StyleSheet,
-  Text,
   TouchableOpacity,
   View,
 } from "react-native";
+/* 2026.11.27 시스템 글꼴 크기 영향 차단(allowFontScaling 기본 false) by yen */
+import { Text } from "@/components/FixedText";
 import { WebView, type WebViewMessageEvent } from "react-native-webview";
 import * as MediaLibrary from "expo-media-library";
 /* 2026.05.26 마커 썸네일을 WebView에 임베드하기 위해 사진을 작은 크기로 리사이즈 + base64 인코딩하는 모듈 by yen */

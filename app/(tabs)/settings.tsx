@@ -8,11 +8,11 @@ import {
   Platform,
   Pressable,
   StyleSheet,
-  Text,
-  TextInput,
   TouchableOpacity,
   View,
 } from "react-native";
+/* 2026.11.27 시스템 글꼴 크기 영향 차단(allowFontScaling 기본 false) by yen */
+import { Text, TextInput } from "@/components/FixedText";
 
 import { router } from "expo-router";
 import DropDownPicker from "react-native-dropdown-picker";
@@ -169,6 +169,10 @@ export default function SimplifiedSettings() {
             </Text>
             <View style={{ width: 160 }}>
               <DropDownPicker
+                /* 2026.11.27 언어 드롭다운(선택값/목록) 글자도 시스템 글꼴 크기 영향 차단 by yen */
+                labelProps={{ allowFontScaling: false }}
+                /* 2026.11.27 목록 항목 글자용 itemLabelProps는 라이브러리 타입 정의에 빠져 있어(런타임은 지원) 객체 펼침으로 전달 by yen */
+                {...({ itemLabelProps: { allowFontScaling: false } } as object)}
                 listMode="SCROLLVIEW"
                 dropDownDirection="BOTTOM"
                 maxHeight={300}
