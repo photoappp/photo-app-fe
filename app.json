@@ -10,6 +10,7 @@
     "newArchEnabled": true,
     "plugins": [
       "./plugins/withOptionalPortrait.cjs",
+      "./plugins/withFixedFontScale.cjs",
       "expo-router",
       "expo-dev-client",
       [
