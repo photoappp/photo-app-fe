@@ -87,7 +87,9 @@ export default function RewardPopup({
     return () => subscription.remove();
   }, [asOverlay, onClose, visible]);
 
-  const cardContent = (
+  /* 2026.11.27 팝업 내용을 헤더/안내/버튼으로 나눔 — 화면보다 길어질 때 안내만 스크롤되고
+     Watch Ad 버튼은 카드 하단에 항상 온전히 보이도록(Galaxy M33 등 큰 글꼴/화면 확대에서 버튼이 잘리던 문제) by yen */
+  const headerContent = (
     <>
           {/* 상단 그라데이션 헤더 */}
           <LinearGradient
@@ -116,9 +118,11 @@ export default function RewardPopup({
               )}
             </Text>
           </LinearGradient>
+    </>
+  );
 
-          {/* 혜택 목록 + Watch Ad 버튼 */}
-          <View style={styles.body}>
+  const infoContent = (
+    <>
             {isLocation ? (
               <Text style={styles.locationDescription} allowFontScaling={false}>
                 {t("locationRewardDescription")}
@@ -146,7 +150,11 @@ export default function RewardPopup({
                 ) : null}
               </View>
             )}
+    </>
+  );
 
+  const actionContent = (
+    <>
             <TouchableOpacity
               activeOpacity={0.9}
               onPress={onWatchAd}
@@ -188,7 +196,30 @@ export default function RewardPopup({
                 )}
               </View>
             )}
-          </View>
+    </>
+  );
+
+  /* 기존 배치(상태 표시 없는 팝업): 헤더 + 본문(안내 + 버튼) 그대로 */
+  const cardContent = (
+    <>
+      {headerContent}
+      {/* 혜택 목록 + Watch Ad 버튼 */}
+      <View style={styles.body}>
+        {infoContent}
+        {actionContent}
+      </View>
+    </>
+  );
+
+  /* 2026.11.27 상태 표시 팝업(지도/위치 등): 스크롤 영역이 카드 높이에 맞춰 줄어들도록(flexGrow 0, flexShrink 1) 하고,
+     버튼은 스크롤 밖 하단에 고정. 기존에는 ScrollView가 줄지 않아 카드(overflow hidden)에 잘리고 스크롤도 안 됐음 by yen */
+  const scrollableCardContent = (
+    <>
+      <ScrollView style={styles.cardScroll} bounces={false}>
+        {headerContent}
+        <View style={[styles.body, styles.bodyAboveFooter]}>{infoContent}</View>
+      </ScrollView>
+      <View style={styles.cardFooter}>{actionContent}</View>
     </>
   );
 
@@ -203,7 +234,7 @@ export default function RewardPopup({
       },
     ]} collapsable={false}>
       <View style={[styles.card, status !== undefined && styles.locationCard]} accessibilityViewIsModal={asOverlay}>
-        {status !== undefined ? <ScrollView bounces={false}>{cardContent}</ScrollView> : cardContent}
+        {status !== undefined ? scrollableCardContent : cardContent}
       </View>
     </View>
   );
@@ -254,6 +285,21 @@ const styles = StyleSheet.create({
   },
   locationCard: {
     flexShrink: 1,
+  },
+  /* 2026.11.27 카드 높이에 맞춰 줄어들고 넘치면 스크롤 by yen */
+  cardScroll: {
+    flexGrow: 0,
+    flexShrink: 1,
+  },
+  /* 2026.11.27 스크롤 영역 아래 본문 여백은 하단 버튼 영역이 담당 by yen */
+  bodyAboveFooter: {
+    paddingBottom: 0,
+  },
+  /* 2026.11.27 Watch Ad 버튼 고정 영역(본문과 같은 좌우/하단 여백) by yen */
+  cardFooter: {
+    paddingHorizontal: 20,
+    paddingBottom: 24,
+    backgroundColor: "#FFFFFF",
   },
   locationDescription: {
     color: "#1F2937",
